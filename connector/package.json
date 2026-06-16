@@ -1,0 +1,14 @@
+{
+  "name": "silver-connector",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Read-only Oracle data connector for the Silver Industries dashboard.",
+  "scripts": {
+    "discover": "node discover.mjs",
+    "serve": "node serve.mjs"
+  },
+  "dependencies": {
+    "oracledb": "^7.0.0"
+  }
+}
