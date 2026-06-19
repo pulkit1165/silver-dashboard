@@ -135,11 +135,12 @@ export async function ping() {
 export async function listTables(limit = 500) {
   return withConn(async (conn) => {
     const r = await conn.execute(
-      `select owner, table_name, num_rows
-         from all_tables
-        where owner = sys_context('userenv','current_schema')
-        order by table_name
-        fetch first :lim rows only`,
+      `select owner, table_name, num_rows from (
+         select owner, table_name, num_rows
+           from all_tables
+          where owner = sys_context('userenv','current_schema')
+          order by table_name
+       ) where rownum <= :lim`,
       { lim: limit },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );

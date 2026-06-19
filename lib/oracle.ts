@@ -50,7 +50,11 @@ async function remoteJson(path: string, init?: RequestInit): Promise<unknown> {
   const base = remoteBase()!;
   const res = await fetch(base + path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers: {
+      "Content-Type": "application/json",
+      "bypass-tunnel-reminder": "1",
+      ...(init?.headers || {}),
+    },
     cache: "no-store",
   });
   const body = await res.json().catch(() => ({}));
@@ -204,11 +208,12 @@ export async function listTables(limit = 300): Promise<TableInfo[]> {
   if (remoteBase()) return ((await remoteJson("/schema")) as { tables: TableInfo[] }).tables;
   return withReadOnlyConn(async (conn) => {
     const r = await conn.execute(
-      `select owner, table_name, num_rows
-         from all_tables
-        where owner = sys_context('userenv','current_schema')
-        order by table_name
-        fetch first :lim rows only`,
+      `select owner, table_name, num_rows from (
+         select owner, table_name, num_rows
+           from all_tables
+          where owner = sys_context('userenv','current_schema')
+          order by table_name
+       ) where rownum <= :lim`,
       { lim: limit },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     );
