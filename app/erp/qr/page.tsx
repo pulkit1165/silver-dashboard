@@ -1,21 +1,21 @@
 import PageHeader from "@/components/PageHeader";
-import QrLabels from "@/components/erp/QrLabels";
-import { stockLevels } from "@/lib/erp/queries";
+import QrManager from "@/components/erp/QrManager";
+import { qrManagementList } from "@/lib/erp/queries";
+import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 
-export default async function QrLabelsPage() {
-  const items = (await stockLevels()).map((s) => ({
-    id: s.id, sku_code: s.sku_code, name: s.name, category: s.category,
-    qty: s.qty, status: s.status, token: s.qr_token,
-  }));
+export default async function QrManagePage() {
+  const user = await getCurrentUser();
+  const items = await qrManagementList();
   return (
     <>
       <PageHeader
-        title="QR Labels"
-        subtitle="Generate and print SKU QR labels — single or bulk, A4 sheet or thermal roll."
+        title="SKU QR Codes"
+        subtitle="Every SKU's secure QR code — status, scanning, printing, disable & regenerate."
       />
-      <QrLabels items={items} />
+      <QrManager items={items} canWrite={canWrite(user.role, "skus")} />
     </>
   );
 }

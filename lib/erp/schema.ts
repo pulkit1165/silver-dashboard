@@ -39,15 +39,35 @@ export const skus = pgTable("skus", {
   category: text("category").default(""),
   brand: text("brand").default(""),
   unit: text("unit").default("PCS"),
-  price: doublePrecision("price").default(0),
+  price: doublePrecision("price").default(0), // MRP / display price
+  purchasePrice: doublePrecision("purchase_price").default(0),
+  sellingPrice: doublePrecision("selling_price").default(0),
+  hsn: text("hsn").default(""),
+  vendorId: integer("vendor_id"),
   minStock: doublePrecision("min_stock").default(0),
   reorderLevel: doublePrecision("reorder_level").default(0),
   batchTracked: boolean("batch_tracked").default(false),
   serialTracked: boolean("serial_tracked").default(false),
   status: text("status").default("active"),
-  qrToken: text("qr_token").unique().notNull(),
+  qrToken: text("qr_token").unique().notNull(), // mirror of the active qr_codes token
   createdAt: createdAt(),
 });
+
+// Secure QR identifiers per SKU, with status + full history (regenerate keeps old rows).
+export const qrCodes = pgTable(
+  "qr_codes",
+  {
+    id: serial("id").primaryKey(),
+    skuId: integer("sku_id").notNull(),
+    skuCode: text("sku_code"),
+    token: text("token").unique().notNull(),
+    status: text("status").default("active"), // active | disabled | replaced
+    printed: boolean("printed").default(false),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ bySku: index("qr_sku_idx").on(t.skuId), byToken: index("qr_token_idx").on(t.token) }),
+);
 
 export const inventory = pgTable(
   "inventory",

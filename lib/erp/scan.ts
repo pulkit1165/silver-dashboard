@@ -1,7 +1,13 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { getSql } from "./db";
-import { getSkuByToken, totalQty, inventoryForSku, stockStatus } from "./queries";
+import { resolveQrToken, totalQty, inventoryForSku, stockStatus } from "./queries";
+
+const TOKEN_ERROR: Record<string, string> = {
+  unknown: "Unknown or invalid QR code.",
+  disabled: "QR Code Disabled.",
+  replaced: "This QR code has been replaced by a newer one.",
+};
 import type { ScanAction, Sku } from "./types";
 
 export interface ScanInput {
@@ -75,8 +81,11 @@ async function skuView(sku: Sku) {
 /** Validate a scanned QR token — used by the scanner before showing actions. */
 export async function validateToken(rawToken: string) {
   const token = extractToken(rawToken);
-  const sku = await getSkuByToken(token);
-  if (!sku) return { ok: false as const, error: "Unknown or invalid QR code." };
+  const resolved = await resolveQrToken(token);
+  if (resolved.state !== "active" || !resolved.sku) {
+    return { ok: false as const, error: TOKEN_ERROR[resolved.state] ?? "Unknown or invalid QR code." };
+  }
+  const sku = resolved.sku;
   if (sku.status !== "active") return { ok: false as const, error: `SKU ${sku.sku_code} is inactive.` };
   const openOrders = await getSql()`
     SELECT so.so_no, so.status, so.invoice_no, l.qty, l.picked_qty, l.packed_qty, l.dispatched_qty
@@ -116,14 +125,16 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
   const sql = getSql();
   const token = extractToken(input.token);
   const device = input.device ?? "web";
-  const sku = await getSkuByToken(token);
+  const resolved = await resolveQrToken(token);
+  const sku = resolved.sku;
 
-  if (!sku) {
+  if (resolved.state !== "active" || !sku) {
+    const error = TOKEN_ERROR[resolved.state] ?? "Unknown or invalid QR code.";
     const id = await recordEvent(sql, {
       token, skuId: null, user: input.user, action: input.action, qty: input.qty ?? 0,
-      status: "failure", error: "Unknown or invalid QR code", device,
+      status: "failure", error, device,
     });
-    return { ok: false, message: "Scan rejected", error: "Unknown or invalid QR code.", eventId: id };
+    return { ok: false, message: "Scan rejected", error, eventId: id };
   }
 
   const qty = input.qty && input.qty > 0 ? input.qty : 1;

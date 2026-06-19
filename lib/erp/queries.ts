@@ -26,9 +26,21 @@ export async function getSku(id: number): Promise<Sku | undefined> {
   return row as Sku | undefined;
 }
 
+export type TokenState = "active" | "disabled" | "replaced" | "unknown";
+/** Resolve a scanned token via qr_codes so disabled/replaced codes are rejected. */
+export async function resolveQrToken(token: string): Promise<{ state: TokenState; sku?: Sku }> {
+  const sql = getSql();
+  const [qr] = await sql`SELECT * FROM qr_codes WHERE token=${token}`;
+  if (!qr) return { state: "unknown" };
+  const status = (qr as { status: string }).status;
+  if (status !== "active") return { state: status === "replaced" ? "replaced" : "disabled" };
+  const [sku] = await sql`SELECT * FROM skus WHERE id=${(qr as { sku_id: number }).sku_id}`;
+  return sku ? { state: "active", sku: sku as Sku } : { state: "unknown" };
+}
+
 export async function getSkuByToken(token: string): Promise<Sku | undefined> {
-  const [row] = await getSql()`SELECT * FROM skus WHERE qr_token=${token}`;
-  return row as Sku | undefined;
+  const r = await resolveQrToken(token);
+  return r.state === "active" ? r.sku : undefined;
 }
 
 export async function totalQty(skuId: number): Promise<number> {
@@ -118,6 +130,22 @@ export async function getScans(f: ScanFilter = {}): Promise<ScanEvent[]> {
     FROM scan_events e LEFT JOIN skus s ON s.id=e.sku_id
     ${where ? sql`WHERE ${where}` : sql``}
     ORDER BY e.id DESC LIMIT ${f.limit ?? 200}`) as unknown as ScanEvent[];
+}
+
+export interface QrRow {
+  sku_id: number; sku_code: string; name: string; category: string; token: string;
+  qr_status: string | null; printed: boolean; qty: number; scanned: boolean;
+}
+export async function qrManagementList(): Promise<QrRow[]> {
+  return (await getSql()`
+    SELECT s.id AS sku_id, s.sku_code, s.name, s.category, s.qr_token AS token,
+      q.status AS qr_status, COALESCE(q.printed,false) AS printed,
+      COALESCE(inv.qty,0)::float8 AS qty,
+      EXISTS(SELECT 1 FROM scan_events e WHERE e.sku_id=s.id AND e.status='success') AS scanned
+    FROM skus s
+    LEFT JOIN qr_codes q ON q.token=s.qr_token
+    LEFT JOIN (SELECT sku_id, SUM(qty) qty FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
+    ORDER BY s.sku_code`) as unknown as QrRow[];
 }
 
 export async function getNotifications(role: string) {
