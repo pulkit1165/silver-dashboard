@@ -1,0 +1,9 @@
+# Netlify config for the Next.js 16 ERP. Netlify auto-installs the Next.js
+# runtime; this makes the build explicit. Set DATABASE_URL (Neon pooled) and
+# AUTH_SECRET in Netlify → Site settings → Environment variables.
+[build]
+  command = "npm run build"
+  publish = ".next"
+
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
