@@ -1,5 +1,6 @@
 import postgres from "postgres";
 import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 import { config } from "dotenv";
 
 config({ path: ".env.local" });
@@ -28,8 +29,9 @@ await sql.begin(async (sql) => {
     ["Anita (Accounts)", "accounts@silver.local", "accounts"],
     ["Viewer", "viewer@silver.local", "viewer"],
   ];
+  const pwHash = bcrypt.hashSync(process.env.SEED_PASSWORD || "silverup123", 10);
   for (const [name, email, role] of users)
-    await sql`INSERT INTO users (name,email,role) VALUES (${name},${email},${role})`;
+    await sql`INSERT INTO users (name,email,role,password_hash) VALUES (${name},${email},${role},${pwHash})`;
 
   const [whMain] = await sql`INSERT INTO warehouses (code,name,address) VALUES ('WH-MAIN','Main Warehouse','Plot 12, Industrial Area') RETURNING id`;
   const [whNorth] = await sql`INSERT INTO warehouses (code,name,address) VALUES ('WH-NORTH','North Depot','Sector 8, North Hub') RETURNING id`;

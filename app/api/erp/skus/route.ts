@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSql, genToken } from "@/lib/erp/db";
 import { getSkus } from "@/lib/erp/queries";
-import { getCurrentUser } from "@/lib/erp/session";
+import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
@@ -12,7 +12,8 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-  const user = await getCurrentUser();
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!canWrite(user.role, "skus")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot create SKUs.` }, { status: 403 });
   }

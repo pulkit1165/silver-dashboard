@@ -1,13 +1,14 @@
 import { NextResponse } from "next/server";
 import { performScan } from "@/lib/erp/scan";
-import { getCurrentUser } from "@/lib/erp/session";
+import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { SCAN_ACTIONS, type ScanAction } from "@/lib/erp/types";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const user = await getCurrentUser();
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const body = await req.json().catch(() => ({}));
   const action = body.action as ScanAction;
   const code = String(body.code ?? body.token ?? "");

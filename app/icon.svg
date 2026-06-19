@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Silver Up Auto Parts">
+  <defs>
+    <clipPath id="rc"><rect width="512" height="512" rx="104"/></clipPath>
+    <pattern id="silver" width="56" height="56" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="56" height="56" fill="#cdd0d2"/>
+      <rect width="28" height="56" fill="#8d9296"/>
+    </pattern>
+  </defs>
+  <g clip-path="url(#rc)">
+    <rect width="512" height="512" fill="#e11d23"/>
+    <text x="256" y="212" text-anchor="middle" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="120" letter-spacing="-3">SILVER</text>
+    <text x="256" y="330" text-anchor="middle" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="800" font-size="120" letter-spacing="-3">UP</text>
+    <text x="256" y="388" text-anchor="middle" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="700" font-size="34" letter-spacing="12">AUTO PARTS</text>
+    <rect x="0" y="420" width="512" height="92" fill="url(#silver)"/>
+  </g>
+</svg>
