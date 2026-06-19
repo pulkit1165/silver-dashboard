@@ -44,6 +44,42 @@ where we left off.
    real service name), confirmation no client certificate is required, ideally a
    **read-only** DB user, and the SQL/views behind the home-screen figures.
 
+## ERP modules (added on top of the read-only dashboard)
+The Home screen (`/`) is unchanged. A full ERP lives under `/erp/*` on a
+**production PostgreSQL** data layer (managed) — independent of the read-only
+Oracle reporting link, which can sync in later.
+
+- **Database:** PostgreSQL. Schema in `lib/erp/schema.ts` (Drizzle); migrations via
+  `npm run db:push`; seed via `npm run db:seed` (idempotent). Runtime queries use
+  **postgres.js** (`lib/erp/db.ts` → `getSql()`), returning snake_case rows.
+  Connection via `DATABASE_URL` (dev = local Postgres `brew services start postgresql@16`;
+  prod = **Neon** on Vercel — see `DEPLOY.md`).
+- **Data/logic:** `lib/erp/db.ts` (postgres.js client), `lib/erp/schema.ts` (Drizzle),
+  `lib/erp/queries.ts` (async reads), `lib/erp/scan.ts` (async scan engine, transactions),
+  `lib/erp/qr.ts` (QR images), `lib/erp/rbac.ts` (roles + NAV + permissions),
+  `lib/erp/session.ts` (cookie user/role), `scripts/db-seed.mjs` (seed).
+- **QR is fully working** (priority): secure random token per SKU (`SQR-…`, not the
+  SKU code), backend validation (unknown/inactive rejected), camera scanning via
+  `getUserMedia`+`jsQR` (`components/erp/Scanner.tsx`, continuous mode, permission
+  handling, manual-entry fallback), all actions (lookup/inward/outward/transfer/
+  count/pick/pack/dispatch/damage/verify) updating inventory atomically, dispatch
+  matching against sales orders (wrong-item + over-dispatch rejected), full audit
+  trail (success AND failures with reason) in `scan_events`.
+- **APIs:** `/api/erp/scan/validate`, `/api/erp/scan/action`, `/api/erp/scans`,
+  `/api/erp/qr/[token]`, `/api/erp/qr/bulk`, `/api/erp/skus`, `/api/erp/sales-orders/[id]`,
+  `/api/erp/auth` (role switch).
+- **Screens:** `/erp` (dashboard), `/erp/scan`, `/erp/scan/dispatch`, `/erp/scan/history`,
+  `/erp/qr` (bulk labels: A4 + thermal, print CSS), `/erp/skus` (+`/[id]` QR detail),
+  `/erp/inventory`, `/erp/sales` (+`/[id]`), `/erp/customers`, `/erp/vendors`,
+  `/erp/purchase`, `/erp/warehouses`, `/erp/finance`, `/erp/reports`, `/erp/users`.
+- **Roles** (sidebar switcher, demo): admin/sales/purchase/inventory/warehouse/
+  dispatch/accounts/viewer. Nav + write actions gated by `rbac.ts`.
+- **Note:** phone camera needs HTTPS (secure context). On `http://<lan-ip>` use the
+  manual token box, or serve over HTTPS / a tunnel for real phone scanning.
+- **Deeper vs foundational:** QR + inventory + sales/dispatch are deep; vendors/
+  customers/purchase/finance/reports/users are DB-backed list/summary screens ready
+  to extend. Real auth/2FA, Excel/PDF export, and Oracle sync are the next layers.
+
 ## Run / build
 - `npm install`, then `npm run dev` → http://localhost:3000
 - Connection settings live in `.env.local` (gitignored — recreate from
