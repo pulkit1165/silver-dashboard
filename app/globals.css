@@ -183,6 +183,29 @@ body {
   font-weight: 700;
 }
 
+/* print: show only the label/document area */
+@media print {
+  body * { visibility: hidden !important; }
+  .print-area, .print-area * { visibility: visible !important; }
+  .print-area { position: absolute; inset: 0; margin: 0; padding: 0; }
+  .no-print { display: none !important; }
+  @page { margin: 8mm; }
+}
+
+.qr-label {
+  border: 1px solid #111;
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  break-inside: avoid;
+  background: #fff;
+  color: #000;
+}
+.qr-label svg { width: 84px; height: 84px; }
+.qr-label.thermal { width: 50mm; }
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
