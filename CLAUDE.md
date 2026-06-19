@@ -6,43 +6,103 @@ a new Claude Code session — including on a different computer — continues ex
 where we left off.
 
 ## Current status
-- UI is complete and runs on **sample data**. Premium **white + red** theme
-  (Manrope font), modeled on the TransfersX dashboard.
+- UI is complete. Premium **white + red** theme (Manrope font), modeled on
+  the TransfersX dashboard.
 - The **Home** screen mirrors the client's legacy app: SALE, PURCHASE,
   RECEIVABLE, BANK BALANCE, TOTAL DR/CR, with a DATE/DAY header, Refresh button,
-  Sale-Purchase / Stock tabs, and a KPI strip. Figures come from
-  `lib/sample-data.ts`.
-- **Not yet connected to live Oracle** — see below.
+  Sale-Purchase / Stock tabs, and a KPI strip.
+- **Connected to live Oracle as of 2026-06-20** (`/api/health` confirms real
+  DB banner) — but the Home screen's actual figures are still
+  `lib/sample-data.ts` placeholders, because the real SQL hasn't been mapped
+  into `lib/queries.ts` yet. See "Oracle connection" below for the full
+  architecture and "Remaining work" for the one task left.
 
-## Oracle connection — what we know (important)
-- DB: **Oracle 11g**, schema `SILVER_2026`, server `73.149.135.125:8152`, TNS
-  alias `DISH`. The original app connects with
-  `Provider=MSDAORA.1;...;Data Source=DISH` (thick-mode OCI on Windows).
-- Port 8152 is an Oracle **TCPS (TLS)** listener; self-signed cert
-  `CN=DISHA-C2`, saved at `certs/DISHA-C2.pem`. One-way TLS (no client cert).
-- **Every generic client is rejected right after the TLS handshake:**
-  node-oracledb thin → TCP reset; Oracle JDBC / SQL Developer → `internal_error`.
-  Reason: 11g + TCPS requires Oracle's **own OCI client**. Thin mode also needs
-  Oracle 12.1+, so it can never work against 11g.
-- **The way in:** Oracle **Instant Client 19c** (newest that still supports an
-  11g server) in **thick mode** + a wallet that trusts the cert — OR run on the
-  Windows machine that already connects. The one remaining unknown is the real
-  **service name** inside the `tnsnames.ora` `DISH` descriptor.
+## Oracle connection — LIVE as of 2026-06-20 (read this carefully)
+- DB: **Oracle 11g** (11.2.0.4.0 Enterprise Edition), schema `SILVER_2026`,
+  TNS alias/service name `DISH`. Real server is at `73.149.135.125:8152`
+  (TCPS) — but we do **not** connect that way; see below.
+- **Root cause found:** Oracle 19c/21c Instant Client cannot connect to this
+  Oracle 11g server over TCPS — the server sends a TLS `internal_error` fatal
+  alert right after the client's TNS CONNECT packet (protocol-version
+  mismatch: client sends v318, 11g doesn't handle it over TCPS). Confirmed
+  with node-oracledb thin, thick (19c), JDBC, SQL Developer — all rejected the
+  same way. Oracle 11g/12c-era clients work fine; nothing 18c+ does over TCPS.
+- **The working setup (current architecture):** the Oracle 11g **database
+  itself runs on a Windows Server 2012 R2 machine** (the client's server,
+  reachable via RDP at `73.149.135.125`, account `pulkit`, **non-admin**).
+  `tnsnames.ora` there resolves `DISH` to `localhost:1521` over **plain TCP**
+  (no TLS at all) — so the version-mismatch problem disappears entirely for a
+  *local* connection. We run the read-only `connector/` **on that server**,
+  pointed at a freshly-downloaded Oracle 19c Instant Client (also on that
+  server, since node-oracledb 7/5/4/3 all refuse to talk to the 11.2 client
+  libraries — they require Oracle Client 18.1+ minimum), talking to Oracle
+  over localhost TCP. The dashboard (anywhere) reaches that connector through
+  an HTTPS tunnel (`REMOTE_DATA_URL`), since the server's router only forwards
+  port 8152 (Oracle) — not whatever port the connector uses.
+- Login: SILVER_2026 / SILVER_2026.
 
-## How to go live (all strictly read-only)
-1. **On Windows (recommended):** install the Oracle 11g client / Instant Client;
-   configure `tnsnames.ora` (the `DISH` entry) + `sqlnet.ora`
-   (`WALLET_LOCATION`, `SSL_SERVER_DN_MATCH=no`); build a wallet from
-   `certs/DISHA-C2.pem` (the server cert we captured). Test with
-   `sqlplus SILVER_2026/<pwd>@DISH`. Then either set thick mode in `.env.local`
-   (`ORACLE_CLIENT_LIB_DIR` + `ORACLE_CONFIG_DIR`) or run `connector/serve.mjs`
-   there and point the UI at it with `REMOTE_DATA_URL`. See `SETUP-WINDOWS.md`.
-2. Discover the schema (Data Explorer page, or `connector/discover.mjs`), then
-   fill the live SQL into `lib/queries.ts` (analytics pages) and `OPS_QUERIES`
-   (home screen). The dashboards switch to live data automatically.
-3. **From the client's developer**, get: the `tnsnames.ora` `DISH` entry (the
-   real service name), confirmation no client certificate is required, ideally a
-   **read-only** DB user, and the SQL/views behind the home-screen figures.
+### Exact paths on the server (Windows Server 2012 R2, `73.149.135.125`)
+- Oracle DB home: `D:\app\product\11.2.0\dbhome_1` (listener binary, tnsnames,
+  `lsnrctl`). Also an old Oracle 10g client at `D:\oracle\product\10.2.0\client_1`
+  (unused by us).
+- Our connector: `D:\connector2\` (oracle.mjs, serve.mjs, package.json —
+  plain copies of `connector/`, not a git checkout). `node_modules` here has
+  **oracledb@5** installed (has `initOracleClient()`; oracledb 4/3 also work
+  but lack ESM niceties — 5 is what's currently installed).
+- Oracle 19c Instant Client (downloaded fresh, not the same as this repo's
+  `C:\oracle\instantclient_19_31` which is on the Windows 11 dev PC, not the
+  server): `D:\instantclient_19_31\instantclient_19_31\` (note the **doubled**
+  folder — the zip extracts a nested `instantclient_19_31` subfolder; the
+  actual `oci.dll` is one level deeper than you'd expect).
+- Node.js **16.20.2** is installed on the server — Node 18+ throws a hard
+  compatibility warning on Windows Server 2012 R2 and is unreliable there.
+- `lsnrctl status` lives at `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl.exe`.
+  **If the ERP on the 10 client PCs ever shows "TNS not listening,"** RDP in
+  and run `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl start`. This happened
+  once during testing (cause unclear, possibly unrelated) — always check
+  `lsnrctl status` (look for service "DISH" status READY) before AND after
+  touching anything on that server.
+
+### Persistence (fragile — read before assuming it "just works")
+- `D:\connector2\run-persistent.bat` starts the connector (port 8151) +
+  `npx localtunnel --port 8151`, logging output to `connector.log` /
+  `tunnel.log` in the same folder (both run minimized/hidden).
+- Auto-start is wired via a **per-user registry Run key** (`HKCU\Software\
+  Microsoft\Windows\CurrentVersion\Run\SilverConnector`) — **not** a Windows
+  Service or Scheduled Task, because the `pulkit` account has no admin rights
+  and Task Scheduler itself denied every attempt (even `/sc onlogon` with no
+  stored credentials). This means:
+  - ✅ Survives RDP **disconnect** (closing the RDP window without logging off)
+    — the Windows session and its processes keep running in the background.
+  - ❌ Does **not** survive a full **log off** or **server reboot** — the Run
+    key only fires the next time `pulkit` actually logs back in.
+  - ❌ **The tunnel URL changes every time it restarts** (free localtunnel
+    gives a new random subdomain each run). When that happens, `REMOTE_DATA_URL`
+    in both `.env.local` (dev) and Vercel's env vars (prod) goes stale and the
+    site silently falls back to sample data until someone RDPs in, reads the
+    new URL from `D:\connector2\tunnel.log`, and updates both places.
+  - To make this properly durable later, we need either admin rights on that
+    server (to install a real Windows Service + a *named* Cloudflare Tunnel
+    with a fixed hostname), or the client's router admin to forward a port
+    (e.g. 8088) so we can drop the tunnel entirely.
+- Current live tunnel URL (**will go stale on next restart** — check
+  `D:\connector2\tunnel.log` if the site stops showing live data):
+  `https://stale-emus-flash.loca.lt`
+
+## How to go live (all strictly read-only) — DONE, see above. Remaining work:
+1. **Map real SQL.** Connection is live (`/api/health` confirms real Oracle
+   11g banner; Vercel home screen shows "Connected to Oracle ✓" but still
+   "sample figures" banner). Use the **Data Explorer** page to browse real
+   table names (the `listTables`/`describeTable` queries were already fixed
+   for 11g — see below), then fill `lib/queries.ts` (`QUERIES` +
+   `OPS_QUERIES`) with real SQL against those tables. This is the one
+   concrete task left to make the dashboards show real numbers instead of
+   sample data.
+2. Oracle 11g doesn't support `FETCH FIRST n ROWS ONLY` (12c+ only) — already
+   fixed in both `lib/oracle.ts` and `connector/oracle.mjs` to use a
+   `rownum <=` subquery instead. Keep this in mind for any *new* SQL written
+   against this database — 11g syntax only (no `FETCH FIRST`, no `LISTAGG`
+   improvements from 12c, etc).
 
 ## ERP modules (added on top of the read-only dashboard)
 The Home screen (`/`) is unchanged. A full ERP lives under `/erp/*` on a
