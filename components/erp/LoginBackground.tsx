@@ -195,7 +195,7 @@ export default function LoginBackground() {
       ];
       function pick<T>(arr: T[]): T { return arr[Math.floor(Math.random() * arr.length)]; }
 
-      const COUNT = isMobile ? 8 : 16;
+      const COUNT = isMobile ? 12 : 22;
       const group = new THREE.Group();
       scene.add(group);
       const parts: any[] = [];
@@ -217,82 +217,6 @@ export default function LoginBackground() {
         parts.push(obj);
       }
 
-      // ---- floating brand logo plates (license-safe text references) + bike silhouettes ----
-      const plateMat = new THREE.MeshStandardMaterial({ color: 0x23272e, metalness: 0.95, roughness: 0.35 });
-      function textTexture(text: string, color: string) {
-        const c = document.createElement("canvas");
-        c.width = 512; c.height = 256;
-        const x = c.getContext("2d")!;
-        x.clearRect(0, 0, 512, 256);
-        x.textAlign = "center"; x.textBaseline = "middle";
-        x.shadowColor = color; x.shadowBlur = 26; x.fillStyle = color;
-        x.font = "bold 84px Arial, Helvetica, sans-serif";
-        const words = text.split(" ");
-        if (text.length > 9 && words.length > 1) {
-          const mid = Math.ceil(words.length / 2);
-          x.fillText(words.slice(0, mid).join(" "), 256, 98);
-          x.fillText(words.slice(mid).join(" "), 256, 166);
-        } else x.fillText(text, 256, 128);
-        const tex = new THREE.CanvasTexture(c);
-        tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-        return tex;
-      }
-      function roundedRect(w: number, h: number, r: number) {
-        const s = new THREE.Shape();
-        s.moveTo(-w / 2 + r, -h / 2);
-        s.lineTo(w / 2 - r, -h / 2); s.quadraticCurveTo(w / 2, -h / 2, w / 2, -h / 2 + r);
-        s.lineTo(w / 2, h / 2 - r); s.quadraticCurveTo(w / 2, h / 2, w / 2 - r, h / 2);
-        s.lineTo(-w / 2 + r, h / 2); s.quadraticCurveTo(-w / 2, h / 2, -w / 2, h / 2 - r);
-        s.lineTo(-w / 2, -h / 2 + r); s.quadraticCurveTo(-w / 2, -h / 2, -w / 2 + r, -h / 2);
-        return s;
-      }
-      function makePlate(label: string, color: string) {
-        const g = new THREE.Group();
-        const geo = new THREE.ExtrudeGeometry(roundedRect(2.3, 0.96, 0.18), { depth: 0.12, bevelEnabled: true, bevelThickness: 0.05, bevelSize: 0.05, bevelSegments: 2, curveSegments: 12 }).center();
-        g.add(new THREE.Mesh(geo, plateMat));
-        const tp = new THREE.Mesh(new THREE.PlaneGeometry(2.05, 0.9), new THREE.MeshBasicMaterial({ map: textTexture(label, color), transparent: true, depthWrite: false }));
-        tp.position.z = 0.13;
-        g.add(tp);
-        return g;
-      }
-      function makeSilhouette() {
-        const c = document.createElement("canvas");
-        c.width = 512; c.height = 256;
-        const x = c.getContext("2d")!;
-        x.clearRect(0, 0, 512, 256);
-        x.fillStyle = "#171a20";
-        x.beginPath(); x.arc(150, 175, 48, 0, 7); x.fill();
-        x.beginPath(); x.arc(372, 175, 48, 0, 7); x.fill();
-        x.beginPath();
-        x.moveTo(110, 150); x.lineTo(175, 120); x.lineTo(250, 116); x.lineTo(300, 96);
-        x.lineTo(345, 100); x.lineTo(362, 132); x.lineTo(420, 150); x.lineTo(395, 168);
-        x.lineTo(135, 168); x.closePath(); x.fill();
-        x.fillRect(150, 108, 64, 16);
-        x.strokeStyle = "rgba(226,59,70,0.85)"; x.lineWidth = 5; x.stroke();
-        const tex = new THREE.CanvasTexture(c);
-        tex.colorSpace = THREE.SRGBColorSpace;
-        return new THREE.Mesh(new THREE.PlaneGeometry(3.4, 1.7), new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: 0.42, depthWrite: false }));
-      }
-
-      const brands: [string, string][] = [
-        ["HONDA", "#ffffff"], ["HERO HONDA", "#ff5a63"], ["BAJAJ", "#ffffff"],
-        ["ROYAL ENFIELD", "#ff5a63"], ["JAWA", "#ffffff"], ["TVS", "#ffffff"],
-      ];
-      (isMobile ? brands.slice(0, 4) : brands).forEach(([label, color]) => {
-        const g = makePlate(label, color);
-        g.position.set((Math.random() - 0.5) * 20, (Math.random() - 0.5) * 12, -7 + Math.random() * 8);
-        g.scale.setScalar(0.5 + Math.random() * 0.18);
-        g.userData = { sway: true, baseRotY: (Math.random() - 0.5) * 0.5, swayAmp: 0.3, speed: 0.18 + Math.random() * 0.22, phase: Math.random() * 6.28, amp: 0.18 + Math.random() * 0.3, baseY: g.position.y };
-        group.add(g); parts.push(g);
-      });
-      for (let i = 0; i < (isMobile ? 1 : 3); i++) {
-        const m = makeSilhouette();
-        m.position.set((Math.random() - 0.5) * 18, (Math.random() - 0.5) * 9, -10 + Math.random() * 4);
-        m.scale.setScalar(0.8 + Math.random() * 0.5);
-        m.userData = { sway: true, baseRotY: (Math.random() - 0.5) * 0.3, swayAmp: 0.2, speed: 0.12 + Math.random() * 0.15, phase: Math.random() * 6.28, amp: 0.2 + Math.random() * 0.25, baseY: m.position.y };
-        group.add(m); parts.push(m);
-      }
-
       const clock = new THREE.Clock();
       const mouse = { x: 0, y: 0, tx: 0, ty: 0 };
       const onMove = (e: MouseEvent) => {
@@ -311,14 +235,9 @@ export default function LoginBackground() {
       function renderFrame() {
         const t = clock.elapsedTime;
         for (const p of parts) {
-          if (p.userData.sway) {
-            p.rotation.y = p.userData.baseRotY + Math.sin(t * p.userData.speed + p.userData.phase) * p.userData.swayAmp;
-            p.rotation.x = Math.sin(t * p.userData.speed * 0.7 + p.userData.phase) * 0.07;
-          } else {
-            p.rotation.x += p.userData.spin.x * 0.016;
-            p.rotation.y += p.userData.spin.y * 0.016;
-            p.rotation.z += p.userData.spin.z * 0.016;
-          }
+          p.rotation.x += p.userData.spin.x * 0.016;
+          p.rotation.y += p.userData.spin.y * 0.016;
+          p.rotation.z += p.userData.spin.z * 0.016;
           p.position.y = p.userData.baseY + Math.sin(t * p.userData.speed + p.userData.phase) * p.userData.amp;
         }
         // parallax: mouse + gentle auto-sway
