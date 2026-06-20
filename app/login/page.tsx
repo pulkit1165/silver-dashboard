@@ -33,7 +33,7 @@ export default async function LoginPage({
       {/* foreground: login card */}
       <div className="relative z-10 flex min-h-screen items-center justify-center px-4">
         <div className="w-full max-w-sm">
-          <div className="rounded-2xl border border-white/60 bg-white/75 p-6 shadow-[0_20px_60px_rgba(20,20,30,0.18)] backdrop-blur-xl">
+          <div className="rounded-2xl border border-white/40 bg-white/45 p-6 shadow-[0_20px_60px_rgba(20,20,30,0.20)] backdrop-blur-2xl">
             <div className="mb-6 flex flex-col items-center gap-3 text-center">
               <Logo size={64} className="rounded-2xl shadow-md" />
               <div>
