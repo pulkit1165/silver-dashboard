@@ -1,5 +1,6 @@
 import "server-only";
 import { getSql } from "./db";
+import { ensureActivityTable } from "./activity";
 
 export interface PackingSlipRow {
   id: number; slip_no: string; so_no: string | null; party: string | null;
@@ -36,9 +37,15 @@ export async function upsertPackingSlip(input: {
   return row as { id: number; updated_at: string };
 }
 
-/** Cheap, append-only change fingerprint used by the live poller. */
+/**
+ * Cheap change fingerprint used by the whole-ERP live poller.
+ * `z` (activity_log MAX id) is the primary signal — every instrumented write
+ * appends there, so any action anywhere bumps it. The per-table maxes/updated_at
+ * are kept as a safety net so even un-instrumented writes still push live.
+ */
 export async function liveFingerprint(): Promise<string> {
-  const [r] = await getSql()`
+  const sql = getSql();
+  const [r] = await sql`
     SELECT
       (SELECT COALESCE(MAX(id),0) FROM scan_events) a,
       (SELECT COALESCE(MAX(id),0) FROM stock_moves) b,
@@ -49,5 +56,15 @@ export async function liveFingerprint(): Promise<string> {
       (SELECT COALESCE(MAX(id),0) FROM qr_codes) g,
       (SELECT COALESCE(MAX(updated_at),'') FROM packing_slips) h`;
   const x = r as Record<string, string | number>;
-  return [x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.h].join("-");
+  const core = [x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.h].join("-");
+
+  // activity_log is the primary signal (every instrumented write bumps it). Query
+  // it separately so a missing table can never break the core live fingerprint.
+  let z: string | number = 0;
+  try {
+    await ensureActivityTable();
+    const [a] = await sql`SELECT COALESCE(MAX(id),0) z FROM activity_log`;
+    z = (a as { z: string | number }).z;
+  } catch { /* fall back to core only */ }
+  return `${z}-${core}`;
 }

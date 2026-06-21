@@ -374,3 +374,22 @@ export const invoiceLines = pgTable(
   },
   (t) => ({ byInvoice: index("invline_inv_idx").on(t.invoiceId) }),
 );
+
+// Org-wide activity / audit feed. Every meaningful write appends one row, and the
+// live-sync fingerprint watches MAX(id) here so any action — by anyone, in any
+// module — pushes to every signed-in device. Also serves as a who-did-what audit.
+export const activityLog = pgTable(
+  "activity_log",
+  {
+    id: serial("id").primaryKey(),
+    actor: text("actor"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
+    entity: text("entity"),
+    entityId: text("entity_id"),
+    summary: text("summary"),
+    meta: jsonb("meta"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byId: index("activity_id_idx").on(t.id) }),
+);

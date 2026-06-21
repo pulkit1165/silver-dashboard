@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 import { createPo } from "@/lib/erp/po-engine";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,13 @@ export async function POST(req: Request) {
 
   try {
     const result = await createPo(vendorId, lines, user.id);
+    await logActivity({
+      actor: user.name, actorRole: user.role,
+      action: "po.create", entity: "purchase_order",
+      entityId: (result as { id?: number; poNo?: string }).id ?? null,
+      summary: `Created PO ${(result as { poNo?: string }).poNo ?? ""} for vendor #${vendorId} (${lines.length} line${lines.length > 1 ? "s" : ""})`.trim(),
+      meta: { vendorId, lineCount: lines.length },
+    });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     return NextResponse.json({ ok: false, error: (e as Error).message }, { status: 400 });

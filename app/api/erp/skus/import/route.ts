@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql, genToken } from "@/lib/erp/db";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -107,5 +108,13 @@ export async function POST(req: Request) {
     }
   }
 
+  if (inserted > 0) {
+    await logActivity({
+      actor: user.name, actorRole: user.role,
+      action: "sku.import", entity: "sku",
+      summary: `Imported ${inserted} SKU(s)${errors.length ? `, ${errors.length} skipped` : ""}`,
+      meta: { inserted, skipped: errors.length },
+    });
+  }
   return NextResponse.json({ ok: true, inserted, skipped: errors.length, errors, created });
 }

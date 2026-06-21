@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 import { listInvoices, createDraftFromSalesOrder } from "@/lib/erp/invoices";
 import { getSalesOrderByNo } from "@/lib/erp/queries";
 
@@ -34,5 +35,10 @@ export async function POST(req: Request) {
     packingSlipId: body.packingSlipId != null ? Number(body.packingSlipId) : null,
   });
   if ("error" in result) return NextResponse.json({ ok: false, error: result.error }, { status: 422 });
+  await logActivity({
+    actor: user.name, actorRole: user.role,
+    action: "invoice.create", entity: "invoice", entityId: result.id,
+    summary: `Created draft invoice from sales order #${soId}`,
+  });
   return NextResponse.json({ ok: true, id: result.id });
 }

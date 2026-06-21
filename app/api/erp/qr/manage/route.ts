@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSql, genToken } from "@/lib/erp/db";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,7 @@ export async function POST(req: Request) {
     switch (b.action) {
       case "disable": {
         await sql`UPDATE qr_codes SET status='disabled' WHERE token=${String(b.token)} AND status='active'`;
+        await logActivity({ actor: user.name, actorRole: user.role, action: "qr.disable", entity: "qr", summary: `Disabled QR ${String(b.token)}` });
         return NextResponse.json({ ok: true, message: "QR code disabled" });
       }
       case "regenerate": {
@@ -28,6 +30,7 @@ export async function POST(req: Request) {
         const token = genToken();
         await sql`INSERT INTO qr_codes (sku_id,sku_code,token,status,created_by) VALUES (${skuId},${(sku as { sku_code: string }).sku_code},${token},'active',${user.name})`;
         await sql`UPDATE skus SET qr_token=${token} WHERE id=${skuId}`;
+        await logActivity({ actor: user.name, actorRole: user.role, action: "qr.regenerate", entity: "sku", entityId: skuId, summary: `Regenerated QR for ${(sku as { sku_code: string }).sku_code}` });
         return NextResponse.json({ ok: true, message: "QR code regenerated", token });
       }
       case "generate-missing": {
@@ -40,6 +43,7 @@ export async function POST(req: Request) {
           await sql`INSERT INTO qr_codes (sku_id,sku_code,token,status,created_by) VALUES (${m.id},${m.sku_code},${token},'active',${user.name})`;
           await sql`UPDATE skus SET qr_token=${token} WHERE id=${m.id}`;
         }
+        if (missing.length) await logActivity({ actor: user.name, actorRole: user.role, action: "qr.generate", entity: "qr", summary: `Generated ${missing.length} missing QR code(s)`, meta: { count: missing.length } });
         return NextResponse.json({ ok: true, message: `Generated ${missing.length} QR code(s)`, count: missing.length });
       }
       case "mark-printed": {
