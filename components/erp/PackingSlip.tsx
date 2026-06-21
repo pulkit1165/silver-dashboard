@@ -136,6 +136,8 @@ export default function PackingSlip() {
 
   const usedCases = useMemo(() => new Set([...completed.map((c) => c.caseNo), ...(activeCaseNo ? [activeCaseNo] : [])]), [completed, activeCaseNo]);
   const available = useMemo(() => Array.from({ length: 200 }, (_, i) => i + 1).filter((n) => !usedCases.has(n)), [usedCases]);
+  // Keep the picker on a case number that is still free (a done case is never re-selectable).
+  useEffect(() => { if (!available.includes(pickCase) && available.length) setPickCase(available[0]); }, [available, pickCase]);
   const totals = useMemo(() => {
     const all = [...completed.flatMap((c) => c.rows), ...activeRows];
     return { box: completed.length + (activeCaseNo && activeRows.length ? 1 : 0), qty: all.reduce((a, r) => a + num(r.quantity), 0) };
@@ -145,6 +147,7 @@ export default function PackingSlip() {
 
   function startCase() {
     if (activeCaseNo) { flash(false, "Finish the current case first (Done Case)."); return; }
+    if (usedCases.has(pickCase)) { flash(false, `Case ${pickCase} already exists for this slip — use Edit to change it.`); return; }
     setActiveCaseNo(pickCase); setActiveRows([]); touch();
   }
   async function handleScan(code: string) {
@@ -166,6 +169,7 @@ export default function PackingSlip() {
   function doneCase() {
     if (!activeCaseNo) return;
     if (activeRows.length === 0) { flash(false, "Add at least one item before closing the case."); return; }
+    if (completed.some((c) => c.caseNo === activeCaseNo)) { flash(false, `Case ${activeCaseNo} already exists — can't duplicate. Use Edit instead.`); return; }
     setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
     setActiveCaseNo(null); setActiveRows([]); touch();
     flash(true, `Case ${activeCaseNo} closed`);
@@ -280,6 +284,11 @@ export default function PackingSlip() {
               </Field>
               <button onClick={startCase} disabled={available.length === 0} className="rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">Start Case {pickCase}</button>
               <span className="text-xs text-[var(--muted)]">Pick a case, then scan items into it.</span>
+              {completed.length > 0 && (
+                <span className="w-full text-xs text-[var(--muted)]">
+                  Already done (can&apos;t reuse — use <b>Edit</b> to change): {completed.map((c) => `Case ${c.caseNo}`).join(", ")}
+                </span>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
