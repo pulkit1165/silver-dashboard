@@ -24,7 +24,8 @@ export const NAV: NavGroup[] = [
     group: "Scanning",
     items: [
       { href: "/erp/scan", label: "QR Scanner", icon: "▣", roles: ["admin", "warehouse", "dispatch", "inventory"] },
-      { href: "/erp/scan/dispatch", label: "Dispatch Scan", icon: "⇪", roles: ["admin", "warehouse", "dispatch"] },
+      { href: "/erp/scan/dispatch", label: "Pack & Dispatch", icon: "⇪", roles: ["admin", "warehouse", "dispatch"] },
+      { href: "/erp/packing-slip", label: "Packing Slip", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
       { href: "/erp/qr", label: "QR Codes", icon: "❒", roles: ["admin", "warehouse", "inventory"] },
       { href: "/erp/scan/history", label: "Scan History", icon: "≣", roles: ["admin", "warehouse", "dispatch", "inventory", "accounts"] },
     ],
