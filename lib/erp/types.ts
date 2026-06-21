@@ -56,5 +56,19 @@ export interface PurchaseOrder {
 
 export const SCAN_ACTIONS = [
   "lookup", "inward", "outward", "transfer", "count", "pick", "pack", "dispatch", "damage", "verify",
+  "pack_case",
 ] as const;
 export type ScanAction = (typeof SCAN_ACTIONS)[number];
+
+// A line on the dispatch/packing screen: what's ordered vs already packed into cases.
+export interface PackingLine {
+  so_line_id: number; sku_id: number; sku_code: string; sku_name: string; qr_token: string;
+  ordered: number; packed: number; remaining: number; on_hand: number;
+}
+// Contents of one case for a sales order.
+export interface PackingCaseItem { sku_code: string; sku_name: string; qty: number }
+export interface PackingCase { package_id: number; case_no: string; status: string; items: PackingCaseItem[]; total_qty: number }
+export interface OrderPacking {
+  id: number; so_no: string; customer_name: string; status: string;
+  lines: PackingLine[]; cases: PackingCase[];
+}

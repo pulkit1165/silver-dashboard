@@ -10,9 +10,12 @@ export async function proxy(req: NextRequest) {
 
   const isLogin = pathname === "/login";
   const isAuthApi = pathname.startsWith("/api/erp/auth/");
+  // Read-only packing CSV mirror for Google Sheets IMPORTDATA — guarded by its
+  // own ?token= (validated in the route), so it must bypass the session gate.
+  const isPublicExport = pathname === "/api/erp/packing/export";
 
   if (!session) {
-    if (isLogin || isAuthApi) return NextResponse.next();
+    if (isLogin || isAuthApi || isPublicExport) return NextResponse.next();
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }

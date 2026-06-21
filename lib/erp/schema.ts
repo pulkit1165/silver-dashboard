@@ -168,13 +168,36 @@ export const soLines = pgTable("so_lines", {
   price: doublePrecision("price"),
 });
 
-export const packages = pgTable("packages", {
-  id: serial("id").primaryKey(),
-  soId: integer("so_id"),
-  packageNo: text("package_no"),
-  status: text("status").default("open"),
-  createdAt: createdAt(),
-});
+// A "case" (carton/box) that items get packed into for dispatch. package_no holds
+// the human case number entered on the packing screen (unique per sales order).
+export const packages = pgTable(
+  "packages",
+  {
+    id: serial("id").primaryKey(),
+    soId: integer("so_id"),
+    packageNo: text("package_no"),
+    status: text("status").default("open"),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ bySo: index("pkg_so_idx").on(t.soId), uniqCase: uniqueIndex("pkg_so_case_uniq").on(t.soId, t.packageNo) }),
+);
+
+// One row per (case, item, qty) — what physically went into a case during packing.
+export const packageLines = pgTable(
+  "package_lines",
+  {
+    id: serial("id").primaryKey(),
+    packageId: integer("package_id").notNull(),
+    soId: integer("so_id").notNull(),
+    soLineId: integer("so_line_id").notNull(),
+    skuId: integer("sku_id").notNull(),
+    qty: doublePrecision("qty").default(0),
+    packedBy: text("packed_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byPkg: index("pkgline_pkg_idx").on(t.packageId), bySo: index("pkgline_so_idx").on(t.soId) }),
+);
 
 export const scanEvents = pgTable(
   "scan_events",

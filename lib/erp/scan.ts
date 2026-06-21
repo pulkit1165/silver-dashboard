@@ -250,6 +250,52 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
           }
           break;
         }
+        case "pack_case": {
+          // Pack a scanned item into a numbered case for dispatch. Per the client's
+          // chosen behaviour, stock is deducted immediately at pack (pack == ship).
+          if (!ref) throw new Error("Sales order required");
+          const caseNo = (input.packageNo ?? "").trim();
+          if (!caseNo) throw new Error("Case number required");
+          const [so] = await tx`SELECT * FROM sales_orders WHERE so_no=${ref}`;
+          if (!so) throw new Error(`Sales order ${ref} not found`);
+          const soRow = so as { id: number; status: string };
+          const [line] = await tx`SELECT * FROM so_lines WHERE so_id=${soRow.id} AND sku_id=${sku.id}`;
+          if (!line) throw new Error(`${sku.sku_code} is not on order ${ref}`);
+          const l = line as { id: number; qty: number; packed_qty: number; dispatched_qty: number };
+          const remaining = l.qty - l.packed_qty;
+          if (remaining <= 0) throw new Error(`${sku.sku_code} already fully packed (${l.qty})`);
+          if (qty > remaining) throw new Error(`Only ${remaining} left to pack for ${sku.sku_code}`);
+
+          const loc = await resolveLoc(tx, sku.id, input.warehouseId, input.binId);
+          const have = await qtyAt(tx, sku.id, loc.warehouseId, loc.binId, batch);
+          if (have < qty) throw new Error(`Insufficient stock to pack (have ${have}, need ${qty})`);
+
+          // find or create the case (one row per so + case number)
+          let [pkg] = await tx`SELECT id FROM packages WHERE so_id=${soRow.id} AND package_no=${caseNo}`;
+          if (!pkg) {
+            [pkg] = await tx`
+              INSERT INTO packages (so_id,package_no,status,created_by) VALUES (${soRow.id},${caseNo},'packed',${input.user.name})
+              RETURNING id`;
+          }
+          const packageId = (pkg as { id: number }).id;
+
+          await tx`INSERT INTO package_lines (package_id,so_id,so_line_id,sku_id,qty,packed_by)
+                   VALUES (${packageId},${soRow.id},${l.id},${sku.id},${qty},${input.user.name})`;
+          await adjustInventory(tx, sku.id, loc.warehouseId, loc.binId, batch, -qty);
+          await logMove(tx, sku.id, loc.warehouseId, loc.binId, "pack-dispatch", qty, `${ref} / Case ${caseNo}`, input.user.id);
+          await tx`UPDATE so_lines SET packed_qty=packed_qty+${qty}, dispatched_qty=dispatched_qty+${qty} WHERE id=${l.id}`;
+
+          const lines = (await tx`SELECT qty,dispatched_qty FROM so_lines WHERE so_id=${soRow.id}`) as unknown as
+            Array<{ qty: number; dispatched_qty: number }>;
+          const allDisp = lines.every((x) => x.dispatched_qty >= x.qty);
+          const anyDisp = lines.some((x) => x.dispatched_qty > 0);
+          const status = allDisp ? "dispatched" : anyDisp ? "partially dispatched" : soRow.status;
+          await tx`UPDATE sales_orders SET status=${status} WHERE id=${soRow.id}`;
+          message = `Packed ${qty} ${sku.sku_code} into Case ${caseNo}`;
+          data = { caseNo, packed: qty, remaining: remaining - qty, orderStatus: status, ordered: l.qty };
+          break;
+        }
+
         default:
           throw new Error(`Unsupported action: ${input.action}`);
       }
