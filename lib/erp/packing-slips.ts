@@ -7,10 +7,29 @@ export interface PackingSlipRow {
   data: unknown; updated_by: string | null; updated_at: string;
 }
 
-export async function listPackingSlips() {
-  return (await getSql()`
-    SELECT id, slip_no, so_no, party, updated_by, updated_at
-    FROM packing_slips ORDER BY updated_at DESC LIMIT 100`) as unknown as Omit<PackingSlipRow, "data">[];
+// One row in the saved-slips archive: the metadata above, plus a few cheap
+// fields pulled straight out of the slip's JSON (its own "slip date", how many
+// cases/boxes it holds, and whether it's a fully-built slip vs a draft).
+export interface PackingSlipListRow {
+  id: number; slip_no: string; so_no: string | null; party: string | null;
+  updated_by: string | null; updated_at: string;
+  slip_date: string | null; box_count: number; is_complete: boolean;
+}
+
+export async function listPackingSlips(): Promise<PackingSlipListRow[]> {
+  const rows = (await getSql()`
+    SELECT id, slip_no, so_no, party, updated_by, updated_at,
+           (data->'hdr'->>'date') AS slip_date,
+           CASE WHEN jsonb_typeof(data->'completed') = 'array'
+                THEN jsonb_array_length(data->'completed') ELSE 0 END AS box_count
+    FROM packing_slips ORDER BY updated_at DESC LIMIT 300`) as unknown as
+    (Omit<PackingSlipListRow, "is_complete" | "box_count"> & { box_count: number })[];
+  // "Fully created" = has a party and at least one closed case (matches the editor's validate()).
+  return rows.map((r) => ({
+    ...r,
+    box_count: Number(r.box_count) || 0,
+    is_complete: !!(r.party && r.party.trim()) && (Number(r.box_count) || 0) > 0,
+  }));
 }
 
 export async function getPackingSlip(idOrNo: string | number): Promise<PackingSlipRow | undefined> {

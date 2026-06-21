@@ -101,11 +101,20 @@ export default function PackingSlip() {
     } catch { setSave("idle"); }
   }
 
-  // load list + last opened slip
+  // load list + last opened slip (a ?open=<id> in the URL — e.g. from the Saved Slips
+  // archive — wins over the last-opened-locally slip)
   useEffect(() => {
     refreshList();
-    const last = (() => { try { return localStorage.getItem("erp_ps_last_id"); } catch { return null; } })();
-    if (last) openById(Number(last));
+    let openId: number | null = null;
+    try {
+      const p = new URLSearchParams(window.location.search).get("open");
+      if (p && /^\d+$/.test(p)) openId = Number(p);
+    } catch { /* ignore */ }
+    if (openId == null) {
+      const last = (() => { try { return localStorage.getItem("erp_ps_last_id"); } catch { return null; } })();
+      if (last) openId = Number(last);
+    }
+    if (openId != null) openById(openId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => { if (slipId) { try { localStorage.setItem("erp_ps_last_id", String(slipId)); } catch { /* ignore */ } } }, [slipId]);
@@ -287,6 +296,7 @@ export default function PackingSlip() {
         </select>
         <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
         <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
+        <a href="/erp/packing-slip/saved" title="Browse all saved packing slips, filter by customer or date" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">🗂 Saved slips</a>
         <span className="ml-auto flex items-center gap-3 text-xs">
           {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
           <span className="font-semibold text-[var(--muted)]">
