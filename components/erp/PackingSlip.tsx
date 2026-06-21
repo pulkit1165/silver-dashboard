@@ -49,20 +49,25 @@ const fmtDate = (iso: string) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(is
 
 // The finished slip is item-wise (not case-wise): one line per item, quantity summed
 // across every case, and the set of cases it lives in shown in the "Case No" column.
-type SlipItem = { code: string; desc: string; mrp: string; cases: number[]; qty: number };
+type SlipItem = { code: string; desc: string; mrp: string; cases: number[]; qty: number; ordered: number; dispatched: number };
 function buildSlipItems(cases: Case[]): SlipItem[] {
   const map = new Map<string, SlipItem>();
   for (const c of cases) for (const r of c.rows) {
     const code = r.itemCode.trim() || "(blank)";
     const qty = num(r.quantity) || num(r.pcs);
+    const ordered = num(r.qtyOrdered);
+    const dispatched = num(r.qtyDispatched);
     const ex = map.get(code);
     if (ex) {
       ex.qty += qty;
+      // Ordered/Dispatched are order-line figures (same on every case row) — keep the value, don't double-count.
+      ex.ordered = Math.max(ex.ordered, ordered);
+      ex.dispatched = Math.max(ex.dispatched, dispatched);
       if (!ex.cases.includes(c.caseNo)) ex.cases.push(c.caseNo);
       if (!ex.desc && r.itemDesc) ex.desc = r.itemDesc;
       if (!ex.mrp && (r.mrp || r.mMrp)) ex.mrp = r.mrp || r.mMrp;
     } else {
-      map.set(code, { code, desc: r.itemDesc, mrp: r.mrp || r.mMrp, cases: [c.caseNo], qty });
+      map.set(code, { code, desc: r.itemDesc, mrp: r.mrp || r.mMrp, cases: [c.caseNo], qty, ordered, dispatched });
     }
   }
   const items = [...map.values()];
@@ -72,16 +77,10 @@ function buildSlipItems(cases: Case[]): SlipItem[] {
   items.sort((a, b) => cat(a.code) - cat(b.code) || a.code.localeCompare(b.code));
   return items;
 }
-// Compress sorted case numbers into slip style: [6,7,8] -> "6-8", [1,6] -> "1, 6", [2,3] -> "2-3".
+// Lists the exact cases an item is packed in, joined with "-".
+// e.g. cases 6 and 8 -> "6-8" (means case 6 AND case 8, not 7); a single case -> "9".
 function casesLabel(cases: number[]): string {
-  const out: string[] = [];
-  for (let i = 0; i < cases.length; ) {
-    let j = i;
-    while (j + 1 < cases.length && cases[j + 1] === cases[j] + 1) j++;
-    out.push(i === j ? String(cases[i]) : `${cases[i]}-${cases[j]}`);
-    i = j + 1;
-  }
-  return out.join(", ");
+  return cases.join("-");
 }
 
 export default function PackingSlip() {
@@ -185,6 +184,8 @@ export default function PackingSlip() {
   }, [completed, activeRows, activeCaseNo]);
   const slipItems = useMemo(() => buildSlipItems(completed), [completed]);
   const slipQty = useMemo(() => slipItems.reduce((a, it) => a + it.qty, 0), [slipItems]);
+  const slipOrdered = useMemo(() => slipItems.reduce((a, it) => a + it.ordered, 0), [slipItems]);
+  const slipDispatched = useMemo(() => slipItems.reduce((a, it) => a + it.dispatched, 0), [slipItems]);
 
   const setHeader = (field: keyof Header, value: string) => { setHdr((h) => ({ ...h, [field]: value })); touch(); };
 
@@ -254,12 +255,14 @@ export default function PackingSlip() {
     aoa.push(["Bill No", hdr.billNo || hdr.slipNo, "", "Bill Date", fmtDate(hdr.date)]);
     aoa.push(["Party", hdr.partyName, "", "Sales Order", hdr.salesOrderNo]);
     aoa.push([]);
-    aoa.push(["Sr No", "Item Code", "Item Description", "L.MRP", "Case No", "Quantity"]);
-    items.forEach((it, i) => aoa.push([i + 1, it.code, it.desc, it.mrp ? num(it.mrp) : "", casesLabel(it.cases), it.qty]));
-    aoa.push(["", "", "", "", "TOTAL", grandQty]);
+    aoa.push(["Sr No", "Item Code", "Item Description", "L.MRP", "Case No", "Qty Ordered", "Qty Dispatched", "Quantity"]);
+    items.forEach((it, i) => aoa.push([i + 1, it.code, it.desc, it.mrp ? num(it.mrp) : "", casesLabel(it.cases), it.ordered || "", it.dispatched || "", it.qty]));
+    const totOrdered = items.reduce((a, it) => a + it.ordered, 0);
+    const totDispatched = items.reduce((a, it) => a + it.dispatched, 0);
+    aoa.push(["", "", "", "", "TOTAL", totOrdered || "", totDispatched || "", grandQty]);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 46 }, { wch: 9 }, { wch: 11 }, { wch: 9 }];
-    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 46 }, { wch: 9 }, { wch: 11 }, { wch: 11 }, { wch: 13 }, { wch: 9 }];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
 
     // ---- Sheet 2: "Case Detail" — every attribute, broken out per case ----
     const det: (string | number)[][] = [];
@@ -436,8 +439,8 @@ export default function PackingSlip() {
               </div>
             </div>
             <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-              <table className="rtable" style={{ minWidth: "720px" }}>
-                <thead><tr><th>Sr No</th><th>Item Code</th><th>Item Description</th><th className="!text-right">L.MRP</th><th className="!text-center">Case No</th><th className="!text-right">Quantity</th></tr></thead>
+              <table className="rtable" style={{ minWidth: "900px" }}>
+                <thead><tr><th>Sr No</th><th>Item Code</th><th>Item Description</th><th className="!text-right">L.MRP</th><th className="!text-center">Case No</th><th className="!text-right">Qty Ordered</th><th className="!text-right">Qty Dispatched</th><th className="!text-right">Quantity</th></tr></thead>
                 <tbody>
                   {slipItems.map((it, i) => (
                     <tr key={it.code}>
@@ -446,18 +449,22 @@ export default function PackingSlip() {
                       <td>{it.desc || "—"}</td>
                       <td className="text-right tabular-nums">{it.mrp ? num(it.mrp).toFixed(2) : "—"}</td>
                       <td className="text-center tabular-nums">{casesLabel(it.cases)}</td>
+                      <td className="text-right tabular-nums">{it.ordered || "—"}</td>
+                      <td className="text-right tabular-nums">{it.dispatched || "—"}</td>
                       <td className="text-right tabular-nums">{it.qty}</td>
                     </tr>
                   ))}
                   <tr className="font-extrabold">
                     <td colSpan={5} className="!text-right">TOTAL</td>
+                    <td className="text-right tabular-nums">{slipOrdered || "—"}</td>
+                    <td className="text-right tabular-nums">{slipDispatched || "—"}</td>
                     <td className="text-right tabular-nums">{slipQty}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="mt-2 text-xs text-[var(--muted)]">
-              One line per item, quantity summed across all cases. A case range like “6-8” means the item is split across cases 6, 7 and 8. The Excel file adds a second <b>Case Detail</b> sheet with every attribute (unit, pcs, ordered/dispatched/pending) broken out per case.
+              One line per item, quantity summed across all cases. “Case No” lists the exact cases an item is packed in — e.g. “6-8” means case 6 and case 8 (not 7). Qty Ordered / Qty Dispatched are the order figures for each item. The Excel file adds a second <b>Case Detail</b> sheet with every attribute broken out per case.
             </p>
           </div>
         </section>
