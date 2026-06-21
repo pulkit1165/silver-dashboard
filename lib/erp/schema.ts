@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, doublePrecision, boolean, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, doublePrecision, boolean, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // text timestamp keeps display/format identical to the prototype and makes
@@ -226,5 +226,18 @@ export const notifications = pgTable("notifications", {
   type: text("type"),
   message: text("message"),
   read: boolean("read").default(false),
+  createdAt: createdAt(),
+});
+
+// Shared packing slips (live across devices). The whole working doc — header +
+// open case + completed cases — is stored as JSON; updatedAt drives live sync.
+export const packingSlips = pgTable("packing_slips", {
+  id: serial("id").primaryKey(),
+  slipNo: text("slip_no").unique().notNull(),
+  soNo: text("so_no"),
+  party: text("party"),
+  data: jsonb("data").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
   createdAt: createdAt(),
 });

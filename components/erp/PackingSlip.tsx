@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Scanner from "./Scanner";
 
@@ -16,8 +16,10 @@ type Header = {
   slipNo: string; salesOrderNo: string; partyName: string; date: string;
   trType: string; trSno: string; remarks: string;
 };
+type SlipDoc = { hdr: Header; activeCaseNo: number | null; activeRows: Row[]; completed: Case[] };
+type SlipMeta = { id: number; slip_no: string; party: string | null; updated_by: string | null; updated_at: string };
 
-const COLS: { key: keyof Row; label: string; w: string; req?: boolean }[] = [
+const COLS: { key: keyof Row; label: string; w: string }[] = [
   { key: "itemCode", label: "Item Code", w: "110px" },
   { key: "itemDesc", label: "Item Description", w: "240px" },
   { key: "unit", label: "Unit", w: "64px" },
@@ -33,115 +35,153 @@ const COLS: { key: keyof Row; label: string; w: string; req?: boolean }[] = [
   { key: "pendingQty", label: "Pending Qty", w: "90px" },
 ];
 const EXPORT_HEADERS = ["Sr.No", ...COLS.map((c) => c.label)];
-const STORE_KEY = "erp_packing_slip_draft_v1";
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
 const blankRow = (csNo: number | null): Row => ({
   id: uid(), itemCode: "", itemDesc: "", unit: "", mPack: "", mMrp: "", mrp: "", slipType: "",
   csNo: csNo ? String(csNo) : "", pcs: "", quantity: "", qtyOrdered: "", qtyDispatched: "", pendingQty: "",
 });
 const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : 0; };
+const emptyHeader = (): Header => ({ slipNo: "", salesOrderNo: "", partyName: "", date: new Date().toISOString().slice(0, 10), trType: "PS26", trSno: "", remarks: "" });
 
 export default function PackingSlip() {
-  const today = new Date().toISOString().slice(0, 10);
-  const [hdr, setHdr] = useState<Header>({ slipNo: "", salesOrderNo: "", partyName: "", date: today, trType: "PS26", trSno: "", remarks: "" });
+  const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
   const [completed, setCompleted] = useState<Case[]>([]);
   const [pickCase, setPickCase] = useState<number>(1);
+  const [slips, setSlips] = useState<SlipMeta[]>([]);
+  const [slipId, setSlipId] = useState<number | null>(null);
+  const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
+  const [collab, setCollab] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
-  const [loaded, setLoaded] = useState(false);
 
-  // load + autosave draft
-  useEffect(() => {
+  // refs so interval callbacks read fresh values without stale closures
+  const stateRef = useRef<SlipDoc>({ hdr, activeCaseNo, activeRows, completed });
+  const slipIdRef = useRef<number | null>(null);
+  const serverAtRef = useRef<string | null>(null);
+  const dirtyRef = useRef(false);
+  const lastEditRef = useRef(0);
+  useEffect(() => { stateRef.current = { hdr, activeCaseNo, activeRows, completed }; }, [hdr, activeCaseNo, activeRows, completed]);
+  useEffect(() => { slipIdRef.current = slipId; }, [slipId]);
+
+  const touch = () => { dirtyRef.current = true; lastEditRef.current = Date.now(); };
+  function flash(ok: boolean, text: string) { setMsg({ ok, text }); setTimeout(() => setMsg(null), 2500); }
+
+  const refreshList = async () => {
+    try { const r = await fetch("/api/erp/packing-slips", { cache: "no-store" }); const d = await r.json(); setSlips(d.slips || []); } catch { /* ignore */ }
+  };
+  function applyDoc(doc: SlipDoc) {
+    setHdr(doc.hdr || emptyHeader());
+    setActiveCaseNo(doc.activeCaseNo ?? null);
+    setActiveRows(doc.activeRows || []);
+    setCompleted(doc.completed || []);
+  }
+  async function openById(id: number) {
     try {
-      const raw = localStorage.getItem(STORE_KEY);
-      if (raw) {
-        const d = JSON.parse(raw);
-        if (d.hdr) setHdr(d.hdr);
-        if (d.activeCaseNo != null) setActiveCaseNo(d.activeCaseNo);
-        if (Array.isArray(d.activeRows)) setActiveRows(d.activeRows);
-        if (Array.isArray(d.completed)) setCompleted(d.completed);
-      }
+      const r = await fetch(`/api/erp/packing-slips/${id}`, { cache: "no-store" });
+      const d = await r.json();
+      if (d.ok) { applyDoc(d.slip.data as SlipDoc); setSlipId(d.slip.id); serverAtRef.current = d.slip.updated_at; dirtyRef.current = false; flash(true, `Opened ${d.slip.slip_no}`); }
     } catch { /* ignore */ }
-    setLoaded(true);
-  }, []);
+  }
+
+  async function doSave() {
+    const s = stateRef.current;
+    if (!s.hdr.slipNo.trim()) return;
+    setSave("saving");
+    try {
+      const r = await fetch("/api/erp/packing-slips", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ slipNo: s.hdr.slipNo.trim(), soNo: s.hdr.salesOrderNo, party: s.hdr.partyName, data: s }),
+      });
+      const d = await r.json();
+      if (d.ok) { setSlipId(d.id); serverAtRef.current = d.updated_at; setSave("saved"); }
+      else setSave("idle");
+    } catch { setSave("idle"); }
+  }
+
+  // load list + last opened slip
   useEffect(() => {
-    if (!loaded) return;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ hdr, activeCaseNo, activeRows, completed })); } catch { /* ignore */ }
-  }, [hdr, activeCaseNo, activeRows, completed, loaded]);
+    refreshList();
+    const last = (() => { try { return localStorage.getItem("erp_ps_last_id"); } catch { return null; } })();
+    if (last) openById(Number(last));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { if (slipId) { try { localStorage.setItem("erp_ps_last_id", String(slipId)); } catch { /* ignore */ } } }, [slipId]);
+
+  // autosave (when the local user changed something) + live poll (pull others' changes)
+  useEffect(() => {
+    const saver = setInterval(() => {
+      if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; doSave(); }
+    }, 1200);
+    const poller = setInterval(async () => {
+      const id = slipIdRef.current;
+      if (!id) return;
+      try {
+        const r = await fetch(`/api/erp/packing-slips/${id}`, { cache: "no-store" });
+        const d = await r.json();
+        if (d.ok && d.slip.updated_at !== serverAtRef.current) {
+          // only adopt remote changes when this user is idle (don't clobber active typing)
+          if (!dirtyRef.current && Date.now() - lastEditRef.current > 2600) {
+            applyDoc(d.slip.data as SlipDoc);
+            serverAtRef.current = d.slip.updated_at;
+            setCollab(`Updated live by ${d.slip.updated_by || "another user"}`);
+            setTimeout(() => setCollab(null), 4000);
+          }
+        }
+      } catch { /* ignore */ }
+    }, 2500);
+    return () => { clearInterval(saver); clearInterval(poller); };
+  }, []);
 
   const usedCases = useMemo(() => new Set([...completed.map((c) => c.caseNo), ...(activeCaseNo ? [activeCaseNo] : [])]), [completed, activeCaseNo]);
   const available = useMemo(() => Array.from({ length: 200 }, (_, i) => i + 1).filter((n) => !usedCases.has(n)), [usedCases]);
-
   const totals = useMemo(() => {
     const all = [...completed.flatMap((c) => c.rows), ...activeRows];
-    const qty = all.reduce((a, r) => a + num(r.quantity), 0);
-    const box = completed.length + (activeCaseNo && activeRows.length ? 1 : 0);
-    return { box, qty };
+    return { box: completed.length + (activeCaseNo && activeRows.length ? 1 : 0), qty: all.reduce((a, r) => a + num(r.quantity), 0) };
   }, [completed, activeRows, activeCaseNo]);
 
-  function flash(ok: boolean, text: string) { setMsg({ ok, text }); setTimeout(() => setMsg(null), 2500); }
+  const setHeader = (field: keyof Header, value: string) => { setHdr((h) => ({ ...h, [field]: value })); touch(); };
 
   function startCase() {
     if (activeCaseNo) { flash(false, "Finish the current case first (Done Case)."); return; }
-    setActiveCaseNo(pickCase);
-    setActiveRows([]);
+    setActiveCaseNo(pickCase); setActiveRows([]); touch();
   }
-
   async function handleScan(code: string) {
     if (!activeCaseNo) return;
+    touch();
     try {
       const r = await fetch("/api/erp/scan/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
       const d = await r.json();
       if (d.ok && d.sku) {
-        setActiveRows((rows) => [...rows, {
-          ...blankRow(activeCaseNo),
-          itemCode: d.sku.sku_code, itemDesc: d.sku.name, unit: d.sku.unit || "",
-          mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "",
-        }]);
+        setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: d.sku.sku_code, itemDesc: d.sku.name, unit: d.sku.unit || "", mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "" }]);
         flash(true, `Added ${d.sku.sku_code}`);
-      } else {
-        setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]);
-        flash(false, `Not in master — added "${code}" to fill manually`);
-      }
-    } catch {
-      setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]);
-      flash(false, "Offline — added scanned code to fill manually");
-    }
+      } else { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); flash(false, `Not in master — added "${code}" to fill manually`); }
+    } catch { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); }
   }
-
-  const updateRow = (id: string, key: keyof Row, value: string) =>
-    setActiveRows((rows) => rows.map((r) => (r.id === id ? { ...r, [key]: value } : r)));
-  const deleteRow = (id: string) => setActiveRows((rows) => rows.filter((r) => r.id !== id));
-  const autoPending = () =>
-    setActiveRows((rows) => rows.map((r) => ({ ...r, pendingQty: String(num(r.qtyOrdered) - num(r.qtyDispatched)) })));
+  const updateRow = (id: string, key: keyof Row, value: string) => { setActiveRows((rows) => rows.map((r) => (r.id === id ? { ...r, [key]: value } : r))); touch(); };
+  const deleteRow = (id: string) => { setActiveRows((rows) => rows.filter((r) => r.id !== id)); touch(); };
+  const autoPending = () => { setActiveRows((rows) => rows.map((r) => ({ ...r, pendingQty: String(num(r.qtyOrdered) - num(r.qtyDispatched)) }))); touch(); };
 
   function doneCase() {
     if (!activeCaseNo) return;
     if (activeRows.length === 0) { flash(false, "Add at least one item before closing the case."); return; }
     setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
-    setActiveCaseNo(null); setActiveRows([]);
+    setActiveCaseNo(null); setActiveRows([]); touch();
     flash(true, `Case ${activeCaseNo} closed`);
   }
-
   function editCase(caseNo: number) {
     if (activeCaseNo) { flash(false, "Finish the current case before editing another."); return; }
     if (!confirm(`Are you sure you want to edit Case ${caseNo}? It will reopen for scanning/editing.`)) return;
-    const c = completed.find((x) => x.caseNo === caseNo);
-    if (!c) return;
-    setCompleted((cs) => cs.filter((x) => x.caseNo !== caseNo));
-    setActiveCaseNo(caseNo); setActiveRows(c.rows);
+    const c = completed.find((x) => x.caseNo === caseNo); if (!c) return;
+    setCompleted((cs) => cs.filter((x) => x.caseNo !== caseNo)); setActiveCaseNo(caseNo); setActiveRows(c.rows); touch();
   }
-  function deleteCase(caseNo: number) {
-    if (!confirm(`Delete Case ${caseNo} and all its items?`)) return;
-    setCompleted((cs) => cs.filter((x) => x.caseNo !== caseNo));
-  }
-  function resetSlip() {
-    if (!confirm("Start a new packing slip? This clears the current draft.")) return;
-    setHdr({ slipNo: "", salesOrderNo: "", partyName: "", date: today, trType: "PS26", trSno: "", remarks: "" });
-    setActiveCaseNo(null); setActiveRows([]); setCompleted([]);
-    try { localStorage.removeItem(STORE_KEY); } catch { /* ignore */ }
+  function deleteCase(caseNo: number) { if (!confirm(`Delete Case ${caseNo}?`)) return; setCompleted((cs) => cs.filter((x) => x.caseNo !== caseNo)); touch(); }
+  function newSlip() {
+    if (!confirm("Start a new packing slip?")) return;
+    setHdr(emptyHeader()); setActiveCaseNo(null); setActiveRows([]); setCompleted([]); setSlipId(null);
+    serverAtRef.current = null; dirtyRef.current = false;
+    try { localStorage.removeItem("erp_ps_last_id"); } catch { /* ignore */ }
   }
 
   function validate(): string[] {
@@ -155,35 +195,26 @@ export default function PackingSlip() {
     if (activeCaseNo) e.push(`Case ${activeCaseNo} is still open — click "Done Case" first.`);
     return e;
   }
-
   function exportExcel() {
-    const e = validate();
-    setErrors(e);
+    const e = validate(); setErrors(e);
     if (e.length) { flash(false, "Fix the highlighted issues before exporting."); return; }
     const aoa: (string | number)[][] = [];
-    aoa.push(["SILVER INDUSTRIES — PACKING SLIP"]);
-    aoa.push([]);
-    aoa.push(["Packing Slip No.", hdr.slipNo, "", "Date", hdr.date]);
-    aoa.push(["Sales Order No.", hdr.salesOrderNo, "", "Tr Type", hdr.trType]);
-    aoa.push(["Party Name", hdr.partyName, "", "Tr Sno", hdr.trSno]);
-    aoa.push(["Remarks", hdr.remarks, "", "Total Box", totals.box]);
-    aoa.push(["", "", "", "Total Qty", totals.qty]);
-    aoa.push([]);
-    aoa.push(EXPORT_HEADERS);
+    aoa.push(["SILVER INDUSTRIES — PACKING SLIP"], [], ["Packing Slip No.", hdr.slipNo, "", "Date", hdr.date],
+      ["Sales Order No.", hdr.salesOrderNo, "", "Tr Type", hdr.trType], ["Party Name", hdr.partyName, "", "Tr Sno", hdr.trSno],
+      ["Remarks", hdr.remarks, "", "Total Box", totals.box], ["", "", "", "Total Qty", totals.qty], [], EXPORT_HEADERS);
     for (const c of completed) {
       aoa.push([`CASE ${c.caseNo}`]);
-      c.rows.forEach((r, i) => {
-        aoa.push([i + 1, r.itemCode, r.itemDesc, r.unit, r.mPack, r.mMrp, r.mrp, r.slipType, r.csNo, r.pcs, r.quantity, r.qtyOrdered, r.qtyDispatched, r.pendingQty]);
-      });
+      c.rows.forEach((r, i) => aoa.push([i + 1, r.itemCode, r.itemDesc, r.unit, r.mPack, r.mMrp, r.mrp, r.slipType, r.csNo, r.pcs, r.quantity, r.qtyOrdered, r.qtyDispatched, r.pendingQty]));
       aoa.push([]);
     }
     const ws = XLSX.utils.aoa_to_sheet(aoa);
     ws["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 7 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 11 }];
-    const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, "Packing Slip");
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Packing Slip");
     XLSX.writeFile(wb, `PackingSlip_${hdr.slipNo || "draft"}.xlsx`);
     flash(true, "Exported to Excel");
   }
+
+  const cellCls = "w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs outline-none focus:border-[var(--accent)]";
 
   return (
     <div className="flex flex-col gap-5">
@@ -194,23 +225,36 @@ export default function PackingSlip() {
         </div>
       )}
 
+      {/* slip bar: open existing / new / save status */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+        <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Open slip</span>
+        <select className="ctl !w-auto" value={slipId ?? ""} onChange={(e) => e.target.value && openById(Number(e.target.value))}>
+          <option value="">— select —</option>
+          {slips.map((s) => <option key={s.id} value={s.id}>{s.slip_no} · {s.party || "—"} · {s.updated_by || ""}</option>)}
+        </select>
+        <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
+        <span className="ml-auto flex items-center gap-3 text-xs">
+          {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
+          <span className="font-semibold text-[var(--muted)]">
+            {save === "saving" ? "Saving…" : save === "saved" ? "✓ Saved · shared live" : hdr.slipNo ? "Enter a Slip No. saves & shares it" : "Not saved"}
+          </span>
+        </span>
+      </div>
+
       {/* HEADER */}
       <section className="panel">
         <div className="panel-hd justify-between">
           <span>Packing Slip Details</span>
-          <div className="flex gap-2">
-            <button onClick={resetSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold normal-case tracking-normal text-[var(--muted)] hover:bg-[var(--surface-2)]">New slip</button>
-            <button onClick={exportExcel} className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold normal-case tracking-normal text-white hover:bg-[var(--accent-strong)]">⤓ Export to Excel</button>
-          </div>
+          <button onClick={exportExcel} className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold normal-case tracking-normal text-white hover:bg-[var(--accent-strong)]">⤓ Export to Excel</button>
         </div>
         <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
-          <Field label="Packing Slip No." req><input className="ctl" value={hdr.slipNo} onChange={(e) => setHdr({ ...hdr, slipNo: e.target.value })} placeholder="PS26/0001" /></Field>
-          <Field label="Sales Order No." req><input className="ctl" value={hdr.salesOrderNo} onChange={(e) => setHdr({ ...hdr, salesOrderNo: e.target.value })} placeholder="SO26/000283" /></Field>
-          <Field label="Customer / Party Name" req><input className="ctl" value={hdr.partyName} onChange={(e) => setHdr({ ...hdr, partyName: e.target.value })} placeholder="SAMY AUTO PARTS" /></Field>
-          <Field label="Packing Slip Date" req><input type="date" className="ctl" value={hdr.date} onChange={(e) => setHdr({ ...hdr, date: e.target.value })} /></Field>
-          <Field label="Tr Type"><input className="ctl" value={hdr.trType} onChange={(e) => setHdr({ ...hdr, trType: e.target.value })} /></Field>
-          <Field label="Tr Sno"><input className="ctl" value={hdr.trSno} onChange={(e) => setHdr({ ...hdr, trSno: e.target.value })} /></Field>
-          <Field label="Remarks"><input className="ctl" value={hdr.remarks} onChange={(e) => setHdr({ ...hdr, remarks: e.target.value })} /></Field>
+          <Field label="Packing Slip No." req><input className="ctl" value={hdr.slipNo} onChange={(e) => setHeader("slipNo", e.target.value)} placeholder="PS26/0001" /></Field>
+          <Field label="Sales Order No." req><input className="ctl" value={hdr.salesOrderNo} onChange={(e) => setHeader("salesOrderNo", e.target.value)} placeholder="SO26/000283" /></Field>
+          <Field label="Customer / Party Name" req><input className="ctl" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="SAMY AUTO PARTS" /></Field>
+          <Field label="Packing Slip Date" req><input type="date" className="ctl" value={hdr.date} onChange={(e) => setHeader("date", e.target.value)} /></Field>
+          <Field label="Tr Type"><input className="ctl" value={hdr.trType} onChange={(e) => setHeader("trType", e.target.value)} /></Field>
+          <Field label="Tr Sno"><input className="ctl" value={hdr.trSno} onChange={(e) => setHeader("trSno", e.target.value)} /></Field>
+          <Field label="Remarks"><input className="ctl" value={hdr.remarks} onChange={(e) => setHeader("remarks", e.target.value)} /></Field>
           <div className="flex items-end gap-2">
             <div className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2"><div className="text-[10px] font-bold uppercase text-[var(--muted-2)]">Total Box</div><div className="text-lg font-extrabold tabular-nums">{totals.box}</div></div>
             <div className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2"><div className="text-[10px] font-bold uppercase text-[var(--muted-2)]">Total Qty</div><div className="text-lg font-extrabold tabular-nums">{totals.qty}</div></div>
@@ -218,8 +262,7 @@ export default function PackingSlip() {
         </div>
         {errors.length > 0 && (
           <div className="mx-4 mb-4 rounded-lg border border-[var(--danger)] bg-[var(--danger-bg)] p-3 text-sm text-[var(--danger)]">
-            <b>Cannot export:</b>
-            <ul className="ml-4 list-disc">{errors.map((er, i) => <li key={i}>{er}</li>)}</ul>
+            <b>Cannot export:</b><ul className="ml-4 list-disc">{errors.map((er, i) => <li key={i}>{er}</li>)}</ul>
           </div>
         )}
       </section>
@@ -243,20 +286,14 @@ export default function PackingSlip() {
               <div>
                 <Scanner onDetect={handleScan} continuous />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <button onClick={() => setActiveRows((r) => [...r, blankRow(activeCaseNo)])} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ Manual row</button>
+                  <button onClick={() => { setActiveRows((r) => [...r, blankRow(activeCaseNo)]); touch(); }} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ Manual row</button>
                   <button onClick={autoPending} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]" title="Pending = Ordered − Dispatched">Auto pending</button>
                 </div>
               </div>
               <div className="min-w-0">
                 <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
                   <table className="rtable" style={{ minWidth: "1100px" }}>
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        {COLS.map((c) => <th key={c.key}>{c.label}</th>)}
-                        <th></th>
-                      </tr>
-                    </thead>
+                    <thead><tr><th>#</th>{COLS.map((c) => <th key={c.key}>{c.label}</th>)}<th></th></tr></thead>
                     <tbody>
                       {activeRows.length === 0 && <tr><td colSpan={COLS.length + 2} className="!py-6 text-center text-[var(--muted)]">Scan an item or add a manual row.</td></tr>}
                       {activeRows.map((r, i) => (
@@ -264,8 +301,7 @@ export default function PackingSlip() {
                           <td className="text-[var(--muted)]">{i + 1}</td>
                           {COLS.map((c) => (
                             <td key={c.key} style={{ minWidth: c.w }}>
-                              <input className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-xs outline-none focus:border-[var(--accent)]"
-                                style={{ minWidth: c.w }} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
+                              <input className={cellCls} style={{ minWidth: c.w }} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
                             </td>
                           ))}
                           <td><button onClick={() => deleteRow(r.id)} className="rounded px-2 py-1 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger-bg)]">✕</button></td>
@@ -288,7 +324,7 @@ export default function PackingSlip() {
       <section className="panel">
         <div className="panel-hd">Completed Cases ({completed.length})</div>
         <div className="flex flex-col gap-2 p-3">
-          {completed.length === 0 && <p className="p-3 text-sm text-[var(--muted)]">No cases closed yet. Close a case above and it appears here.</p>}
+          {completed.length === 0 && <p className="p-3 text-sm text-[var(--muted)]">No cases closed yet.</p>}
           {completed.map((c) => (
             <details key={c.caseNo} className="rounded-lg border border-[var(--border)]">
               <summary className="flex cursor-pointer items-center justify-between px-4 py-2.5 text-sm font-bold">
@@ -301,11 +337,7 @@ export default function PackingSlip() {
               <div className="overflow-x-auto border-t border-[var(--border)]">
                 <table className="rtable" style={{ minWidth: "1000px" }}>
                   <thead><tr><th>#</th>{COLS.map((c2) => <th key={c2.key}>{c2.label}</th>)}</tr></thead>
-                  <tbody>
-                    {c.rows.map((r, i) => (
-                      <tr key={r.id}><td>{i + 1}</td>{COLS.map((c2) => <td key={c2.key} className="text-xs">{r[c2.key] || "—"}</td>)}</tr>
-                    ))}
-                  </tbody>
+                  <tbody>{c.rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td>{COLS.map((c2) => <td key={c2.key} className="text-xs">{r[c2.key] || "—"}</td>)}</tr>)}</tbody>
                 </table>
               </div>
             </details>
