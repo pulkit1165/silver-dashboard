@@ -21,7 +21,7 @@ const COLS: { key: keyof Row; label: string; w: string }[] = [
   { key: "quantity", label: "Quantity", w: "80px" },
   { key: "qtyOrdered", label: "Qty Ordered", w: "90px" },
   { key: "qtyDispatched", label: "Qty Dispatched", w: "95px" },
-  { key: "pendingQty", label: "Pending Qty", w: "90px" },
+  { key: "pendingQty", label: "Gap Qty", w: "90px" },
 ];
 const EXPORT_HEADERS = ["Sr.No", ...COLS.map((c) => c.label)];
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
@@ -157,7 +157,16 @@ export default function PackingSlip() {
       } else { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); flash(false, `Not in master — added "${code}" to fill manually`); }
     } catch { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); }
   }
-  const updateRow = (id: string, key: keyof Row, value: string) => { setActiveRows((rows) => rows.map((r) => (r.id === id ? { ...r, [key]: value } : r))); touch(); };
+  const updateRow = (id: string, key: keyof Row, value: string) => {
+    setActiveRows((rows) => rows.map((r) => {
+      if (r.id !== id) return r;
+      const nr = { ...r, [key]: value };
+      // Gap auto-calculates as Ordered − Dispatched whenever either changes.
+      if (key === "qtyOrdered" || key === "qtyDispatched") nr.pendingQty = String(num(nr.qtyOrdered) - num(nr.qtyDispatched));
+      return nr;
+    }));
+    touch();
+  };
   const deleteRow = (id: string) => { setActiveRows((rows) => rows.filter((r) => r.id !== id)); touch(); };
   const autoPending = () => { setActiveRows((rows) => rows.map((r) => ({ ...r, pendingQty: String(num(r.qtyOrdered) - num(r.qtyDispatched)) }))); touch(); };
 
@@ -206,14 +215,14 @@ export default function PackingSlip() {
     aoa.push(["Bill No", hdr.billNo || hdr.slipNo, "", "Bill Date", fmtDate(hdr.date)]);
     aoa.push(["Party", hdr.partyName, "", "Sales Order", hdr.salesOrderNo]);
     aoa.push([]);
-    aoa.push(["Sr No", "Item Code", "Item Description", "L.MRP", "Case No", "Qty Ordered", "Qty Dispatched", "Quantity"]);
-    items.forEach((it, i) => aoa.push([i + 1, it.code, it.desc, it.mrp ? num(it.mrp) : "", casesLabel(it.cases), it.ordered || "", it.dispatched || "", it.qty]));
+    aoa.push(["Sr No", "Item Code", "Item Description", "L.MRP", "Case No", "Qty Ordered", "Qty Dispatched", "Gap Qty", "Quantity"]);
+    items.forEach((it, i) => aoa.push([i + 1, it.code, it.desc, it.mrp ? num(it.mrp) : "", casesLabel(it.cases), it.ordered || "", it.dispatched || "", (it.ordered - it.dispatched) || "", it.qty]));
     const totOrdered = items.reduce((a, it) => a + it.ordered, 0);
     const totDispatched = items.reduce((a, it) => a + it.dispatched, 0);
-    aoa.push(["", "", "", "", "TOTAL", totOrdered || "", totDispatched || "", grandQty]);
+    aoa.push(["", "", "", "", "TOTAL", totOrdered || "", totDispatched || "", (totOrdered - totDispatched) || "", grandQty]);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 46 }, { wch: 9 }, { wch: 11 }, { wch: 11 }, { wch: 13 }, { wch: 9 }];
-    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 7 } }];
+    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 46 }, { wch: 9 }, { wch: 11 }, { wch: 11 }, { wch: 13 }, { wch: 9 }, { wch: 9 }];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 8 } }];
 
     // ---- Sheet 2: "Case Detail" — every attribute, broken out per case ----
     const det: (string | number)[][] = [];
@@ -317,7 +326,7 @@ export default function PackingSlip() {
                 <Scanner onDetect={handleScan} continuous />
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => { setActiveRows((r) => [...r, blankRow(activeCaseNo)]); touch(); }} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ Manual row</button>
-                  <button onClick={autoPending} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]" title="Pending = Ordered − Dispatched">Auto pending</button>
+                  <button onClick={autoPending} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]" title="Gap = Ordered − Dispatched (auto-fills as you type; click to recalc all rows)">Recalc gap</button>
                 </div>
               </div>
               <div className="min-w-0">
@@ -391,8 +400,8 @@ export default function PackingSlip() {
               </div>
             </div>
             <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
-              <table className="rtable" style={{ minWidth: "900px" }}>
-                <thead><tr><th>Sr No</th><th>Item Code</th><th>Item Description</th><th className="!text-right">L.MRP</th><th className="!text-center">Case No</th><th className="!text-right">Qty Ordered</th><th className="!text-right">Qty Dispatched</th><th className="!text-right">Quantity</th></tr></thead>
+              <table className="rtable" style={{ minWidth: "1000px" }}>
+                <thead><tr><th>Sr No</th><th>Item Code</th><th>Item Description</th><th className="!text-right">L.MRP</th><th className="!text-center">Case No</th><th className="!text-right">Qty Ordered</th><th className="!text-right">Qty Dispatched</th><th className="!text-right">Gap Qty</th><th className="!text-right">Quantity</th></tr></thead>
                 <tbody>
                   {slipItems.map((it, i) => (
                     <tr key={it.code}>
@@ -403,6 +412,7 @@ export default function PackingSlip() {
                       <td className="text-center tabular-nums">{casesLabel(it.cases)}</td>
                       <td className="text-right tabular-nums">{it.ordered || "—"}</td>
                       <td className="text-right tabular-nums">{it.dispatched || "—"}</td>
+                      <td className="text-right tabular-nums">{(it.ordered - it.dispatched) || "—"}</td>
                       <td className="text-right tabular-nums">{it.qty}</td>
                     </tr>
                   ))}
@@ -410,13 +420,14 @@ export default function PackingSlip() {
                     <td colSpan={5} className="!text-right">TOTAL</td>
                     <td className="text-right tabular-nums">{slipOrdered || "—"}</td>
                     <td className="text-right tabular-nums">{slipDispatched || "—"}</td>
+                    <td className="text-right tabular-nums">{(slipOrdered - slipDispatched) || "—"}</td>
                     <td className="text-right tabular-nums">{slipQty}</td>
                   </tr>
                 </tbody>
               </table>
             </div>
             <p className="mt-2 text-xs text-[var(--muted)]">
-              One line per item, quantity summed across all cases. “Case No” lists the exact cases an item is packed in — e.g. “6-8” means case 6 and case 8 (not 7). Qty Ordered / Qty Dispatched are the order figures for each item. The Excel file adds a second <b>Case Detail</b> sheet with every attribute broken out per case.
+              One line per item, quantity summed across all cases. “Case No” lists the exact cases an item is packed in — e.g. “6-8” means case 6 and case 8 (not 7). <b>Gap Qty auto-calculates as Qty Ordered − Qty Dispatched.</b> The Excel file adds a second <b>Case Detail</b> sheet with every attribute broken out per case.
             </p>
           </div>
         </section>
