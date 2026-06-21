@@ -203,6 +203,17 @@ body {
   .print-area, .print-area * { visibility: visible !important; }
   .print-area { position: absolute; inset: 0; margin: 0; padding: 0; }
   .no-print { display: none !important; }
+  /* inline editable cells should print as plain values, no input chrome */
+  .inv-doc input {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    -webkit-appearance: none;
+    appearance: none;
+    color: #000 !important;
+  }
+  .inv-doc input::-webkit-outer-spin-button,
+  .inv-doc input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   @page { margin: 8mm; }
 }
 

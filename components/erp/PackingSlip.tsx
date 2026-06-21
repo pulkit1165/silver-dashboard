@@ -3,21 +3,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as XLSX from "xlsx";
 import Scanner from "./Scanner";
-
-type Row = {
-  id: string;
-  itemCode: string; itemDesc: string; unit: string;
-  mPack: string; mMrp: string; mrp: string; slipType: string;
-  csNo: string; pcs: string; quantity: string;
-  qtyOrdered: string; qtyDispatched: string; pendingQty: string;
-};
-type Case = { caseNo: number; rows: Row[] };
-type Header = {
-  slipNo: string; billNo: string; salesOrderNo: string; partyName: string; date: string;
-  trType: string; trSno: string; remarks: string;
-};
-type SlipDoc = { hdr: Header; activeCaseNo: number | null; activeRows: Row[]; completed: Case[] };
-type SlipMeta = { id: number; slip_no: string; party: string | null; updated_by: string | null; updated_at: string };
+import {
+  type Row, type Case, type Header, type SlipDoc, type SlipMeta,
+  num, fmtDate, buildSlipItems, casesLabel,
+} from "@/lib/erp/packing-slip-format";
 
 const COLS: { key: keyof Row; label: string; w: string }[] = [
   { key: "itemCode", label: "Item Code", w: "110px" },
@@ -40,48 +29,7 @@ const blankRow = (csNo: number | null): Row => ({
   id: uid(), itemCode: "", itemDesc: "", unit: "", mPack: "", mMrp: "", mrp: "", slipType: "",
   csNo: csNo ? String(csNo) : "", pcs: "", quantity: "", qtyOrdered: "", qtyDispatched: "", pendingQty: "",
 });
-const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : 0; };
 const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", partyName: "", date: new Date().toISOString().slice(0, 10), trType: "PS26", trSno: "", remarks: "" });
-
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-// "2026-06-10" -> "10-Jun-26" to match the printed slip.
-const fmtDate = (iso: string) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ""); return m ? `${m[3]}-${MONTHS[+m[2] - 1]}-${m[1].slice(2)}` : (iso || ""); };
-
-// The finished slip is item-wise (not case-wise): one line per item, quantity summed
-// across every case, and the set of cases it lives in shown in the "Case No" column.
-type SlipItem = { code: string; desc: string; mrp: string; cases: number[]; qty: number; ordered: number; dispatched: number };
-function buildSlipItems(cases: Case[]): SlipItem[] {
-  const map = new Map<string, SlipItem>();
-  for (const c of cases) for (const r of c.rows) {
-    const code = r.itemCode.trim() || "(blank)";
-    const qty = num(r.quantity) || num(r.pcs);
-    const ordered = num(r.qtyOrdered);
-    const dispatched = num(r.qtyDispatched);
-    const ex = map.get(code);
-    if (ex) {
-      ex.qty += qty;
-      // Ordered/Dispatched are order-line figures (same on every case row) — keep the value, don't double-count.
-      ex.ordered = Math.max(ex.ordered, ordered);
-      ex.dispatched = Math.max(ex.dispatched, dispatched);
-      if (!ex.cases.includes(c.caseNo)) ex.cases.push(c.caseNo);
-      if (!ex.desc && r.itemDesc) ex.desc = r.itemDesc;
-      if (!ex.mrp && (r.mrp || r.mMrp)) ex.mrp = r.mrp || r.mMrp;
-    } else {
-      map.set(code, { code, desc: r.itemDesc, mrp: r.mrp || r.mMrp, cases: [c.caseNo], qty, ordered, dispatched });
-    }
-  }
-  const items = [...map.values()];
-  items.forEach((it) => it.cases.sort((a, b) => a - b));
-  // Group like the legacy slip: by the 2-digit part-category embedded in the code, then by code.
-  const cat = (code: string) => { const m = /^[A-Za-z]{2}(\d{2})/.exec(code); return m ? +m[1] : 999; };
-  items.sort((a, b) => cat(a.code) - cat(b.code) || a.code.localeCompare(b.code));
-  return items;
-}
-// Lists the exact cases an item is packed in, joined with "-".
-// e.g. cases 6 and 8 -> "6-8" (means case 6 AND case 8, not 7); a single case -> "9".
-function casesLabel(cases: number[]): string {
-  return cases.join("-");
-}
 
 export default function PackingSlip() {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
@@ -153,8 +101,11 @@ export default function PackingSlip() {
   useEffect(() => {
     const saver = setInterval(() => {
       if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; doSave(); }
-    }, 1200);
+    }, 800);
+    let tick = 0;
     const poller = setInterval(async () => {
+      // keep the "Open slip" dropdown fresh so slips created on another device show up
+      if (tick++ % 3 === 0) refreshList();
       const id = slipIdRef.current;
       if (!id) return;
       try {
@@ -170,7 +121,7 @@ export default function PackingSlip() {
           }
         }
       } catch { /* ignore */ }
-    }, 2500);
+    }, 1500);
     return () => { clearInterval(saver); clearInterval(poller); };
   }, []);
 
@@ -305,6 +256,7 @@ export default function PackingSlip() {
           {slips.map((s) => <option key={s.id} value={s.id}>{s.slip_no} · {s.party || "—"} · {s.updated_by || ""}</option>)}
         </select>
         <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
+        <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
         <span className="ml-auto flex items-center gap-3 text-xs">
           {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
           <span className="font-semibold text-[var(--muted)]">

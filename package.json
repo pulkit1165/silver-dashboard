@@ -10,7 +10,8 @@
     "db:seed": "node scripts/db-seed.mjs",
     "db:setup": "drizzle-kit push && node scripts/db-seed.mjs",
     "db:setpw": "node scripts/db-setpw.mjs",
-    "db:qrcodes": "node scripts/db-qrcodes.mjs"
+    "db:qrcodes": "node scripts/db-qrcodes.mjs",
+    "db:invoicing": "node scripts/db-invoicing.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
