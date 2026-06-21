@@ -1,0 +1,56 @@
+name: Neon daily backup
+
+# Independent, off-site backup of the production Neon database.
+# Runs pg_dump nightly, encrypts the dump (AES-256), and stores it as a
+# downloadable GitHub artifact — a second copy outside Neon for disaster recovery.
+#
+# Required repository secrets (Settings → Secrets and variables → Actions):
+#   DATABASE_URL       the Neon connection string (pooled is fine — we strip "-pooler")
+#   BACKUP_PASSPHRASE  a strong passphrase used to encrypt/decrypt the dump (KEEP IT SAFE)
+
+on:
+  schedule:
+    - cron: "30 19 * * *"   # 19:30 UTC = 01:00 IST, daily
+  workflow_dispatch: {}      # also run on demand from the Actions tab
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL 17 client
+        run: |
+          set -euo pipefail
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/pgdg.gpg
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17 gnupg
+
+      - name: Dump and encrypt
+        id: dump
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DATABASE_URL:-}" ] || [ -z "${BACKUP_PASSPHRASE:-}" ]; then
+            echo "::error::DATABASE_URL and BACKUP_PASSPHRASE secrets must be set."
+            exit 1
+          fi
+          # pg_dump needs the DIRECT (non-pooled) endpoint, so drop "-pooler" if present.
+          DB_DIRECT="${DATABASE_URL/-pooler/}"
+          STAMP="$(date -u +'%Y-%m-%d_%H%M')"
+          FILE="neon-backup-${STAMP}.sql.gz"
+          pg_dump "$DB_DIRECT" --no-owner --no-privileges | gzip -9 > "$FILE"
+          gpg --batch --yes --symmetric --cipher-algo AES256 \
+              --passphrase "$BACKUP_PASSPHRASE" -o "${FILE}.gpg" "$FILE"
+          rm -f "$FILE"
+          echo "size=$(du -h "${FILE}.gpg" | cut -f1)" >> "$GITHUB_OUTPUT"
+          echo "Backup created: ${FILE}.gpg"
+
+      - name: Upload encrypted backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: neon-backup-${{ github.run_number }}
+          path: "*.sql.gz.gpg"
+          retention-days: 90
+          if-no-files-found: error
