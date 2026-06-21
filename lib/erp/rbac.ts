@@ -7,8 +7,12 @@ export const ROLES: Role[] = [
   "admin", "sales", "purchase", "inventory", "warehouse", "dispatch", "accounts", "vendor", "viewer",
 ];
 
+// A leaf is a single page (a link). A folder is a module that opens a flyout
+// submenu listing its pages/"reports" (e.g. Packing → Slip / Saved / Live).
 export type NavItem = { href: string; label: string; icon: string; roles: Role[] | "all" };
-export type NavGroup = { group: string; items: NavItem[] };
+export type NavFolder = { label: string; icon: string; children: NavItem[] };
+export type NavEntry = NavItem | NavFolder;
+export type NavGroup = { group: string; items: NavEntry[] };
 
 const ALL: "all" = "all";
 
@@ -22,59 +26,83 @@ export const NAV: NavGroup[] = [
     ],
   },
   {
-    group: "Scanning",
+    group: "Workspaces",
     items: [
-      { href: "/erp/scan", label: "QR Scanner", icon: "▣", roles: ["admin", "warehouse", "dispatch", "inventory"] },
-      { href: "/erp/scan/dispatch", label: "Pack & Dispatch", icon: "⇪", roles: ["admin", "warehouse", "dispatch"] },
-      { href: "/erp/packing-slip", label: "Packing Slip", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
-      { href: "/erp/packing-slip/saved", label: "Saved Slips", icon: "🗂", roles: ["admin", "warehouse", "dispatch", "accounts", "sales"] },
-      { href: "/erp/packing-slip/live", label: "Packing Slip (Live)", icon: "📺", roles: ["admin", "warehouse", "dispatch"] },
-      { href: "/erp/qr", label: "QR Codes", icon: "❒", roles: ["admin", "warehouse", "inventory"] },
-      { href: "/erp/scan/history", label: "Scan History", icon: "≣", roles: ["admin", "warehouse", "dispatch", "inventory", "accounts"] },
-    ],
-  },
-  {
-    group: "Inventory",
-    items: [
-      { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
-      { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
-      { href: "/erp/inventory", label: "Stock", icon: "≡", roles: ["admin", "inventory", "warehouse", "sales"] },
-      { href: "/erp/warehouses", label: "Warehouses", icon: "⊞", roles: ["admin", "inventory", "warehouse"] },
-    ],
-  },
-  {
-    group: "Sales",
-    items: [
-      { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
-      { href: "/erp/invoices", label: "Invoices", icon: "🧾", roles: ["admin", "sales", "accounts", "dispatch"] },
-      { href: "/erp/customers", label: "Customers", icon: "☻", roles: ["admin", "sales", "accounts"] },
-    ],
-  },
-  {
-    group: "Purchase",
-    items: [
-      { href: "/erp/purchase", label: "Purchase Orders", icon: "↙", roles: ["admin", "purchase", "accounts"] },
-      { href: "/erp/vendors", label: "Vendors", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
-    ],
-  },
-  {
-    group: "Finance & Reports",
-    items: [
-      { href: "/erp/finance", label: "Finance", icon: "₹", roles: ["admin", "accounts"] },
-      { href: "/erp/reports", label: "Reports", icon: "▤", roles: ["admin", "sales", "purchase", "accounts", "inventory"] },
-    ],
-  },
-  {
-    group: "Administration",
-    items: [
-      { href: "/erp/users", label: "Users & Roles", icon: "⚿", roles: ["admin"] },
-      { href: "/connection", label: "Oracle Link", icon: "⚙", roles: ["admin", "accounts"] },
+      {
+        label: "Scanning", icon: "▣",
+        children: [
+          { href: "/erp/scan", label: "QR Scanner", icon: "▣", roles: ["admin", "warehouse", "dispatch", "inventory"] },
+          { href: "/erp/scan/dispatch", label: "Pack & Dispatch", icon: "⇪", roles: ["admin", "warehouse", "dispatch"] },
+          { href: "/erp/qr", label: "QR Codes", icon: "❒", roles: ["admin", "warehouse", "inventory"] },
+          { href: "/erp/scan/history", label: "Scan History", icon: "≣", roles: ["admin", "warehouse", "dispatch", "inventory", "accounts"] },
+        ],
+      },
+      {
+        label: "Packing", icon: "▤",
+        children: [
+          { href: "/erp/packing-slip", label: "Packing Slip", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
+          { href: "/erp/packing-slip/saved", label: "Saved Slips", icon: "🗂", roles: ["admin", "warehouse", "dispatch", "accounts", "sales"] },
+          { href: "/erp/packing-slip/live", label: "Live View", icon: "📺", roles: ["admin", "warehouse", "dispatch"] },
+        ],
+      },
+      {
+        label: "Inventory", icon: "▦",
+        children: [
+          { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
+          { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
+          { href: "/erp/inventory", label: "Stock", icon: "≡", roles: ["admin", "inventory", "warehouse", "sales"] },
+          { href: "/erp/warehouses", label: "Warehouses", icon: "⊞", roles: ["admin", "inventory", "warehouse"] },
+        ],
+      },
+      {
+        label: "Sales", icon: "↗",
+        children: [
+          { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
+          { href: "/erp/invoices", label: "Invoices", icon: "🧾", roles: ["admin", "sales", "accounts", "dispatch"] },
+          { href: "/erp/customers", label: "Customers", icon: "☻", roles: ["admin", "sales", "accounts"] },
+        ],
+      },
+      {
+        label: "Purchase", icon: "↙",
+        children: [
+          { href: "/erp/purchase", label: "Purchase Orders", icon: "↙", roles: ["admin", "purchase", "accounts"] },
+          { href: "/erp/vendors", label: "Vendors", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
+        ],
+      },
+      {
+        label: "Finance & Reports", icon: "₹",
+        children: [
+          { href: "/erp/finance", label: "Finance", icon: "₹", roles: ["admin", "accounts"] },
+          { href: "/erp/reports", label: "Reports", icon: "▤", roles: ["admin", "sales", "purchase", "accounts", "inventory"] },
+        ],
+      },
+      {
+        label: "Administration", icon: "⚿",
+        children: [
+          { href: "/erp/users", label: "Users & Roles", icon: "⚿", roles: ["admin"] },
+          { href: "/connection", label: "Oracle Link", icon: "⚙", roles: ["admin", "accounts"] },
+        ],
+      },
     ],
   },
 ];
 
+export function isFolder(e: NavEntry): e is NavFolder {
+  return (e as NavFolder).children !== undefined;
+}
+
 export function canSee(role: Role, item: NavItem): boolean {
   return item.roles === "all" || item.roles.includes(role);
+}
+
+// Children of a folder this role may see (empty → hide the whole folder).
+export function visibleChildren(role: Role, folder: NavFolder): NavItem[] {
+  return folder.children.filter((c) => canSee(role, c));
+}
+
+// Every leaf page in the nav, folders flattened out — used by the access matrix.
+export function leafNavItems(): NavItem[] {
+  return NAV.flatMap((g) => g.items.flatMap((e) => (isFolder(e) ? e.children : [e])));
 }
 
 // Write/approve capability per role (used to gate mutating actions).
