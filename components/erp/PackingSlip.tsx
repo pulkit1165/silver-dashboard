@@ -13,7 +13,7 @@ type Row = {
 };
 type Case = { caseNo: number; rows: Row[] };
 type Header = {
-  slipNo: string; salesOrderNo: string; partyName: string; date: string;
+  slipNo: string; billNo: string; salesOrderNo: string; partyName: string; date: string;
   trType: string; trSno: string; remarks: string;
 };
 type SlipDoc = { hdr: Header; activeCaseNo: number | null; activeRows: Row[]; completed: Case[] };
@@ -41,7 +41,48 @@ const blankRow = (csNo: number | null): Row => ({
   csNo: csNo ? String(csNo) : "", pcs: "", quantity: "", qtyOrdered: "", qtyDispatched: "", pendingQty: "",
 });
 const num = (s: string) => { const n = parseFloat(s); return Number.isFinite(n) ? n : 0; };
-const emptyHeader = (): Header => ({ slipNo: "", salesOrderNo: "", partyName: "", date: new Date().toISOString().slice(0, 10), trType: "PS26", trSno: "", remarks: "" });
+const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", partyName: "", date: new Date().toISOString().slice(0, 10), trType: "PS26", trSno: "", remarks: "" });
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+// "2026-06-10" -> "10-Jun-26" to match the printed slip.
+const fmtDate = (iso: string) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || ""); return m ? `${m[3]}-${MONTHS[+m[2] - 1]}-${m[1].slice(2)}` : (iso || ""); };
+
+// The finished slip is item-wise (not case-wise): one line per item, quantity summed
+// across every case, and the set of cases it lives in shown in the "Case No" column.
+type SlipItem = { code: string; desc: string; mrp: string; cases: number[]; qty: number };
+function buildSlipItems(cases: Case[]): SlipItem[] {
+  const map = new Map<string, SlipItem>();
+  for (const c of cases) for (const r of c.rows) {
+    const code = r.itemCode.trim() || "(blank)";
+    const qty = num(r.quantity) || num(r.pcs);
+    const ex = map.get(code);
+    if (ex) {
+      ex.qty += qty;
+      if (!ex.cases.includes(c.caseNo)) ex.cases.push(c.caseNo);
+      if (!ex.desc && r.itemDesc) ex.desc = r.itemDesc;
+      if (!ex.mrp && (r.mrp || r.mMrp)) ex.mrp = r.mrp || r.mMrp;
+    } else {
+      map.set(code, { code, desc: r.itemDesc, mrp: r.mrp || r.mMrp, cases: [c.caseNo], qty });
+    }
+  }
+  const items = [...map.values()];
+  items.forEach((it) => it.cases.sort((a, b) => a - b));
+  // Group like the legacy slip: by the 2-digit part-category embedded in the code, then by code.
+  const cat = (code: string) => { const m = /^[A-Za-z]{2}(\d{2})/.exec(code); return m ? +m[1] : 999; };
+  items.sort((a, b) => cat(a.code) - cat(b.code) || a.code.localeCompare(b.code));
+  return items;
+}
+// Compress sorted case numbers into slip style: [6,7,8] -> "6-8", [1,6] -> "1, 6", [2,3] -> "2-3".
+function casesLabel(cases: number[]): string {
+  const out: string[] = [];
+  for (let i = 0; i < cases.length; ) {
+    let j = i;
+    while (j + 1 < cases.length && cases[j + 1] === cases[j] + 1) j++;
+    out.push(i === j ? String(cases[i]) : `${cases[i]}-${cases[j]}`);
+    i = j + 1;
+  }
+  return out.join(", ");
+}
 
 export default function PackingSlip() {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
@@ -72,7 +113,7 @@ export default function PackingSlip() {
     try { const r = await fetch("/api/erp/packing-slips", { cache: "no-store" }); const d = await r.json(); setSlips(d.slips || []); } catch { /* ignore */ }
   };
   function applyDoc(doc: SlipDoc) {
-    setHdr(doc.hdr || emptyHeader());
+    setHdr({ ...emptyHeader(), ...(doc.hdr || {}) });
     setActiveCaseNo(doc.activeCaseNo ?? null);
     setActiveRows(doc.activeRows || []);
     setCompleted(doc.completed || []);
@@ -142,6 +183,8 @@ export default function PackingSlip() {
     const all = [...completed.flatMap((c) => c.rows), ...activeRows];
     return { box: completed.length + (activeCaseNo && activeRows.length ? 1 : 0), qty: all.reduce((a, r) => a + num(r.quantity), 0) };
   }, [completed, activeRows, activeCaseNo]);
+  const slipItems = useMemo(() => buildSlipItems(completed), [completed]);
+  const slipQty = useMemo(() => slipItems.reduce((a, it) => a + it.qty, 0), [slipItems]);
 
   const setHeader = (field: keyof Header, value: string) => { setHdr((h) => ({ ...h, [field]: value })); touch(); };
 
@@ -202,19 +245,41 @@ export default function PackingSlip() {
   function exportExcel() {
     const e = validate(); setErrors(e);
     if (e.length) { flash(false, "Fix the highlighted issues before exporting."); return; }
+    const items = buildSlipItems(completed);
+    const grandQty = items.reduce((a, it) => a + it.qty, 0);
+
+    // ---- Sheet 1: "Packing Slip" — the printed, item-wise slip ----
     const aoa: (string | number)[][] = [];
-    aoa.push(["SILVER INDUSTRIES — PACKING SLIP"], [], ["Packing Slip No.", hdr.slipNo, "", "Date", hdr.date],
-      ["Sales Order No.", hdr.salesOrderNo, "", "Tr Type", hdr.trType], ["Party Name", hdr.partyName, "", "Tr Sno", hdr.trSno],
-      ["Remarks", hdr.remarks, "", "Total Box", totals.box], ["", "", "", "Total Qty", totals.qty], [], EXPORT_HEADERS);
-    for (const c of completed) {
-      aoa.push([`CASE ${c.caseNo}`]);
-      c.rows.forEach((r, i) => aoa.push([i + 1, r.itemCode, r.itemDesc, r.unit, r.mPack, r.mMrp, r.mrp, r.slipType, r.csNo, r.pcs, r.quantity, r.qtyOrdered, r.qtyDispatched, r.pendingQty]));
-      aoa.push([]);
-    }
+    aoa.push(["Packing Slip"]);
+    aoa.push(["Bill No", hdr.billNo || hdr.slipNo, "", "Bill Date", fmtDate(hdr.date)]);
+    aoa.push(["Party", hdr.partyName, "", "Sales Order", hdr.salesOrderNo]);
+    aoa.push([]);
+    aoa.push(["Sr No", "Item Code", "Item Description", "L.MRP", "Case No", "Quantity"]);
+    items.forEach((it, i) => aoa.push([i + 1, it.code, it.desc, it.mrp ? num(it.mrp) : "", casesLabel(it.cases), it.qty]));
+    aoa.push(["", "", "", "", "TOTAL", grandQty]);
     const ws = XLSX.utils.aoa_to_sheet(aoa);
-    ws["!cols"] = [{ wch: 12 }, { wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 7 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 11 }];
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Packing Slip");
-    XLSX.writeFile(wb, `PackingSlip_${hdr.slipNo || "draft"}.xlsx`);
+    ws["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 46 }, { wch: 9 }, { wch: 11 }, { wch: 9 }];
+    ws["!merges"] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } }];
+
+    // ---- Sheet 2: "Case Detail" — every attribute, broken out per case ----
+    const det: (string | number)[][] = [];
+    det.push(["Packing Slip — Case Detail"], [],
+      ["Bill No", hdr.billNo || hdr.slipNo, "", "Bill Date", fmtDate(hdr.date)],
+      ["Slip No", hdr.slipNo, "", "Sales Order", hdr.salesOrderNo],
+      ["Party", hdr.partyName, "", "Remarks", hdr.remarks],
+      ["Total Box", totals.box, "", "Total Qty", grandQty], [], EXPORT_HEADERS);
+    for (const c of completed) {
+      det.push([`CASE ${c.caseNo}`]);
+      c.rows.forEach((r, i) => det.push([i + 1, r.itemCode, r.itemDesc, r.unit, r.mPack, r.mMrp, r.mrp, r.slipType, r.csNo, r.pcs, r.quantity, r.qtyOrdered, r.qtyDispatched, r.pendingQty]));
+      det.push([]);
+    }
+    const wsd = XLSX.utils.aoa_to_sheet(det);
+    wsd["!cols"] = [{ wch: 6 }, { wch: 12 }, { wch: 30 }, { wch: 8 }, { wch: 8 }, { wch: 9 }, { wch: 9 }, { wch: 10 }, { wch: 8 }, { wch: 7 }, { wch: 9 }, { wch: 11 }, { wch: 13 }, { wch: 11 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Packing Slip");
+    XLSX.utils.book_append_sheet(wb, wsd, "Case Detail");
+    XLSX.writeFile(wb, `PackingSlip_${(hdr.billNo || hdr.slipNo || "draft").replace(/[^\w-]+/g, "-")}.xlsx`);
     flash(true, "Exported to Excel");
   }
 
@@ -253,6 +318,7 @@ export default function PackingSlip() {
         </div>
         <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
           <Field label="Packing Slip No." req><input className="ctl" value={hdr.slipNo} onChange={(e) => setHeader("slipNo", e.target.value)} placeholder="PS26/0001" /></Field>
+          <Field label="Bill No."><input className="ctl" value={hdr.billNo} onChange={(e) => setHeader("billNo", e.target.value)} placeholder="GC26/000227" /></Field>
           <Field label="Sales Order No." req><input className="ctl" value={hdr.salesOrderNo} onChange={(e) => setHeader("salesOrderNo", e.target.value)} placeholder="SO26/000283" /></Field>
           <Field label="Customer / Party Name" req><input className="ctl" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="SAMY AUTO PARTS" /></Field>
           <Field label="Packing Slip Date" req><input type="date" className="ctl" value={hdr.date} onChange={(e) => setHeader("date", e.target.value)} /></Field>
@@ -353,6 +419,49 @@ export default function PackingSlip() {
           ))}
         </div>
       </section>
+
+      {/* FINAL PACKING SLIP — item-wise, matches the printed slip */}
+      {slipItems.length > 0 && (
+        <section className="panel">
+          <div className="panel-hd justify-between">
+            <span>Final Packing Slip — preview</span>
+            <button onClick={exportExcel} className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold normal-case tracking-normal text-white hover:bg-[var(--accent-strong)]">⤓ Export to Excel</button>
+          </div>
+          <div className="p-4">
+            <div className="mb-3 text-center">
+              <div className="text-lg font-extrabold">Packing Slip</div>
+              <div className="text-xs text-[var(--muted)]">
+                Bill No <b>{hdr.billNo || hdr.slipNo || "—"}</b> · Bill Date <b>{fmtDate(hdr.date) || "—"}</b>
+                {hdr.partyName ? <> · {hdr.partyName}</> : null}
+              </div>
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+              <table className="rtable" style={{ minWidth: "720px" }}>
+                <thead><tr><th>Sr No</th><th>Item Code</th><th>Item Description</th><th className="!text-right">L.MRP</th><th className="!text-center">Case No</th><th className="!text-right">Quantity</th></tr></thead>
+                <tbody>
+                  {slipItems.map((it, i) => (
+                    <tr key={it.code}>
+                      <td className="text-[var(--muted)]">{i + 1}</td>
+                      <td className="font-semibold">{it.code}</td>
+                      <td>{it.desc || "—"}</td>
+                      <td className="text-right tabular-nums">{it.mrp ? num(it.mrp).toFixed(2) : "—"}</td>
+                      <td className="text-center tabular-nums">{casesLabel(it.cases)}</td>
+                      <td className="text-right tabular-nums">{it.qty}</td>
+                    </tr>
+                  ))}
+                  <tr className="font-extrabold">
+                    <td colSpan={5} className="!text-right">TOTAL</td>
+                    <td className="text-right tabular-nums">{slipQty}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-[var(--muted)]">
+              One line per item, quantity summed across all cases. A case range like “6-8” means the item is split across cases 6, 7 and 8. The Excel file adds a second <b>Case Detail</b> sheet with every attribute (unit, pcs, ordered/dispatched/pending) broken out per case.
+            </p>
+          </div>
+        </section>
+      )}
     </div>
   );
 }
