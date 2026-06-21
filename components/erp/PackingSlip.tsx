@@ -24,6 +24,19 @@ const COLS: { key: keyof Row; label: string; w: string }[] = [
   { key: "pendingQty", label: "Gap Qty", w: "90px" },
 ];
 const EXPORT_HEADERS = ["Sr.No", ...COLS.map((c) => c.label)];
+// Attributes that appear on the printed packing slip — compulsory for every scanned row
+// (Case No is the case you start; Sr No is automatic).
+const REQUIRED_ROW_FIELDS: (keyof Row)[] = ["itemCode", "itemDesc", "mrp", "quantity"];
+function rowMissingFields(r: Row): string[] {
+  const miss: string[] = [];
+  if (!r.itemCode.trim()) miss.push("Item Code");
+  if (!r.itemDesc.trim()) miss.push("Item Description");
+  if (!String(r.mrp).trim()) miss.push("L.MRP");
+  if (!(num(r.quantity) > 0)) miss.push("Quantity");
+  return miss;
+}
+const cellMissing = (r: Row, key: keyof Row) =>
+  REQUIRED_ROW_FIELDS.includes(key) && (key === "quantity" ? !(num(r.quantity) > 0) : !String(r[key]).trim());
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
 const blankRow = (csNo: number | null): Row => ({
   id: uid(), itemCode: "", itemDesc: "", unit: "", mPack: "", mMrp: "", mrp: "", slipType: "",
@@ -173,6 +186,8 @@ export default function PackingSlip() {
   function doneCase() {
     if (!activeCaseNo) return;
     if (activeRows.length === 0) { flash(false, "Add at least one item before closing the case."); return; }
+    const incomplete = activeRows.filter((r) => rowMissingFields(r).length > 0);
+    if (incomplete.length) { flash(false, `${incomplete.length} item(s) missing required fields (Item Code, Description, L.MRP, Quantity) — fill the highlighted cells.`); return; }
     if (completed.some((c) => c.caseNo === activeCaseNo)) { flash(false, `Case ${activeCaseNo} already exists — can't duplicate. Use Edit instead.`); return; }
     setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
     setActiveCaseNo(null); setActiveRows([]); touch();
@@ -199,7 +214,13 @@ export default function PackingSlip() {
     if (!hdr.partyName.trim()) e.push("Customer / Party Name is required.");
     if (!hdr.date.trim()) e.push("Date is required.");
     if (completed.length === 0) e.push("Add at least one completed case.");
-    completed.forEach((c) => { if (c.rows.length === 0) e.push(`Case ${c.caseNo} has no items.`); });
+    completed.forEach((c) => {
+      if (c.rows.length === 0) { e.push(`Case ${c.caseNo} has no items.`); return; }
+      c.rows.forEach((r, i) => {
+        const miss = rowMissingFields(r);
+        if (miss.length) e.push(`Case ${c.caseNo}, item ${i + 1} (${r.itemCode || "?"}): missing ${miss.join(", ")}.`);
+      });
+    });
     if (activeCaseNo) e.push(`Case ${activeCaseNo} is still open — click "Done Case" first.`);
     return e;
   }
@@ -332,7 +353,7 @@ export default function PackingSlip() {
               <div className="min-w-0">
                 <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
                   <table className="rtable" style={{ minWidth: "1100px" }}>
-                    <thead><tr><th>#</th>{COLS.map((c) => <th key={c.key}>{c.label}</th>)}<th></th></tr></thead>
+                    <thead><tr><th>#</th>{COLS.map((c) => <th key={c.key}>{c.label}{REQUIRED_ROW_FIELDS.includes(c.key) && <span className="text-[var(--accent)]"> *</span>}</th>)}<th></th></tr></thead>
                     <tbody>
                       {activeRows.length === 0 && <tr><td colSpan={COLS.length + 2} className="!py-6 text-center text-[var(--muted)]">Scan an item or add a manual row.</td></tr>}
                       {activeRows.map((r, i) => (
@@ -340,7 +361,7 @@ export default function PackingSlip() {
                           <td className="text-[var(--muted)]">{i + 1}</td>
                           {COLS.map((c) => (
                             <td key={c.key} style={{ minWidth: c.w }}>
-                              <input className={cellCls} style={{ minWidth: c.w }} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
+                              <input className={`${cellCls} ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : ""}`} style={{ minWidth: c.w }} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
                             </td>
                           ))}
                           <td><button onClick={() => deleteRow(r.id)} className="rounded px-2 py-1 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger-bg)]">✕</button></td>
@@ -349,9 +370,10 @@ export default function PackingSlip() {
                     </tbody>
                   </table>
                 </div>
+                <p className="mt-1 text-xs text-[var(--muted)]">Required for every item (from the packing slip): <b>Item Code, Item Description, L.MRP, Quantity</b>. Highlighted cells must be filled before the case can be closed.</p>
                 <div className="mt-3 flex items-center gap-2">
                   <button onClick={doneCase} className="rounded-lg bg-[var(--accent-2)] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90">✓ Done Case {activeCaseNo}</button>
-                  <span className="text-xs text-[var(--muted)]">{activeRows.length} item(s) in this case</span>
+                  <span className="text-xs text-[var(--muted)]">{activeRows.length} item(s) in this case · {activeRows.filter((r) => rowMissingFields(r).length === 0).length} ready</span>
                 </div>
               </div>
             </div>
