@@ -1,33 +1,40 @@
 import PageHeader from "@/components/PageHeader";
-import { getPurchaseOrders } from "@/lib/erp/queries";
+import PoGenerator from "@/components/erp/PoGenerator";
+import { getPurchaseOrders, getVendors } from "@/lib/erp/queries";
+import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
+import { aiAvailable } from "@/lib/erp/ai";
 
 export const dynamic = "force-dynamic";
-const TAG: Record<string, string> = {
-  draft: "n", approved: "n", sent: "n", "partially received": "r", completed: "g", cancelled: "r",
-};
 
 export default async function PurchasePage() {
-  const rows = await getPurchaseOrders();
+  const [user, orders, vendors] = await Promise.all([
+    getCurrentUser(),
+    getPurchaseOrders(),
+    getVendors(),
+  ]);
+
+  const pos = orders.map((p) => ({
+    id: p.id,
+    po_no: p.po_no,
+    vendor_name: (p as { vendor_name?: string }).vendor_name ?? null,
+    order_date: p.order_date,
+    status: p.status,
+  }));
+  const vendorList = vendors.map((v) => ({ id: v.id, code: v.code, name: v.name, status: v.status }));
+
   return (
     <>
-      <PageHeader title="Purchase Orders" subtitle="PO lifecycle: draft → approved → sent → received → completed." />
-      <section className="panel">
-        <div className="overflow-x-auto">
-          <table className="rtable">
-            <thead><tr><th>PO</th><th>Vendor</th><th>Date</th><th>Status</th></tr></thead>
-            <tbody>
-              {rows.map((p) => (
-                <tr key={p.id}>
-                  <td className="font-semibold">{p.po_no}</td>
-                  <td>{p.vendor_name}</td>
-                  <td className="text-[var(--muted)]">{p.order_date}</td>
-                  <td><span className={`tag ${TAG[p.status] ?? "n"}`}>{p.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <PageHeader
+        title="Purchase Orders"
+        subtitle="Generate POs · Track vendors · Monitor stock health"
+      />
+      <PoGenerator
+        pos={pos}
+        vendors={vendorList}
+        canWrite={canWrite(user.role, "purchase")}
+        aiEnabled={aiAvailable()}
+      />
     </>
   );
 }
