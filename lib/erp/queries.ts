@@ -249,21 +249,30 @@ export async function skuMovement(limit = 50) {
 
 export async function erpStats() {
   const sql = getSql();
-  const c = async (q: ReturnType<typeof sql>) => ((await q) as unknown as Array<{ c: number }>)[0].c;
-  const levels = await stockLevels();
+  // Run every count concurrently (was ~11 serial round-trips to the DB).
+  const c = (q: ReturnType<typeof sql>) =>
+    (q as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c);
+  const [
+    levels, skus, warehouses, openSales, openPurchases,
+    vendors, customers, scansToday, scansTotal, pendingDispatch,
+  ] = await Promise.all([
+    stockLevels(),
+    c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),
+    c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed','draft')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM purchase_orders WHERE status IN ('draft','approved','sent','partially received')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM vendors`),
+    c(sql`SELECT COUNT(*)::int AS c FROM customers`),
+    c(sql`SELECT COUNT(*)::int AS c FROM scan_events WHERE created_at >= to_char(current_date,'YYYY-MM-DD')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM scan_events`),
+    c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
+  ]);
   const lowStockItems = levels.filter((s) => s.status === "low" || s.status === "out");
   return {
-    skus: await c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    skus,
     stockUnits: levels.reduce((a, s) => a + s.qty, 0),
     lowStock: lowStockItems.length,
-    warehouses: await c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),
-    openSales: await c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed','draft')`),
-    openPurchases: await c(sql`SELECT COUNT(*)::int AS c FROM purchase_orders WHERE status IN ('draft','approved','sent','partially received')`),
-    vendors: await c(sql`SELECT COUNT(*)::int AS c FROM vendors`),
-    customers: await c(sql`SELECT COUNT(*)::int AS c FROM customers`),
-    scansToday: await c(sql`SELECT COUNT(*)::int AS c FROM scan_events WHERE created_at >= to_char(current_date,'YYYY-MM-DD')`),
-    scansTotal: await c(sql`SELECT COUNT(*)::int AS c FROM scan_events`),
-    pendingDispatch: await c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
-    lowStockItems,
+    warehouses, openSales, openPurchases, vendors, customers,
+    scansToday, scansTotal, pendingDispatch, lowStockItems,
   };
 }
