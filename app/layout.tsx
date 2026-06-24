@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
+import LiveSync from "@/components/LiveSync";
 import { getSessionUser } from "@/lib/erp/session";
 
 const manrope = Manrope({
@@ -27,6 +28,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
             <main className="min-w-0 flex-1 px-4 pb-10 pt-20 sm:px-6 md:pt-7 lg:px-10">
               <div className="mx-auto w-full max-w-[1400px]">{children}</div>
             </main>
+            <LiveSync />
           </div>
         ) : (
           children

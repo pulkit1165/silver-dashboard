@@ -97,6 +97,20 @@ body {
   padding: 17px 18px;
   box-shadow: 0 1px 2px rgba(20, 20, 30, 0.04);
 }
+/* form control (select / date / text inputs) */
+.ctl {
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 9px 11px;
+  font-size: 14px;
+  color: var(--foreground);
+  outline: none;
+}
+.ctl:focus {
+  border-color: var(--accent);
+}
 .kpi .lab {
   font-size: 11px;
   color: var(--muted);
@@ -189,6 +203,17 @@ body {
   .print-area, .print-area * { visibility: visible !important; }
   .print-area { position: absolute; inset: 0; margin: 0; padding: 0; }
   .no-print { display: none !important; }
+  /* inline editable cells should print as plain values, no input chrome */
+  .inv-doc input {
+    border: none !important;
+    background: transparent !important;
+    padding: 0 !important;
+    -webkit-appearance: none;
+    appearance: none;
+    color: #000 !important;
+  }
+  .inv-doc input::-webkit-outer-spin-button,
+  .inv-doc input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   @page { margin: 8mm; }
 }
 

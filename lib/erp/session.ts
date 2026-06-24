@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSql } from "./db";
@@ -7,8 +8,12 @@ import type { Role } from "./rbac";
 
 export type CurrentUser = { id: number; name: string; role: Role; email: string };
 
-/** The authenticated user, or null. (Use in layout/APIs that handle null themselves.) */
-export async function getSessionUser(): Promise<CurrentUser | null> {
+/**
+ * The authenticated user, or null. (Use in layout/APIs that handle null themselves.)
+ * Wrapped in React `cache()` so the layout + page (+ any other caller) within a
+ * single request share ONE users lookup instead of each hitting the DB.
+ */
+export const getSessionUser = cache(async (): Promise<CurrentUser | null> => {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
@@ -16,7 +21,7 @@ export async function getSessionUser(): Promise<CurrentUser | null> {
   if (!payload) return null;
   const [u] = await getSql()`SELECT id,name,role,email FROM users WHERE id=${payload.uid} AND active=true`;
   return (u as CurrentUser) ?? null;
-}
+});
 
 /** Require auth in a page/server component — redirects to /login if not signed in. */
 export async function getCurrentUser(): Promise<CurrentUser> {

@@ -1,13 +1,13 @@
 import PageHeader from "@/components/PageHeader";
 import { listUsers, getCurrentUser } from "@/lib/erp/session";
-import { NAV, canSee, roleLabel, ROLES } from "@/lib/erp/rbac";
+import { leafNavItems, canSee, roleLabel, ROLES } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 
 export default async function UsersPage() {
   const me = await getCurrentUser();
   const users = await listUsers();
-  const modules = NAV.flatMap((g) => g.items);
+  const modules = leafNavItems();
 
   return (
     <>

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, doublePrecision, boolean, uniqueIndex, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, doublePrecision, boolean, jsonb, uniqueIndex, index } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 // text timestamp keeps display/format identical to the prototype and makes
@@ -43,6 +43,7 @@ export const skus = pgTable("skus", {
   purchasePrice: doublePrecision("purchase_price").default(0),
   sellingPrice: doublePrecision("selling_price").default(0),
   hsn: text("hsn").default(""),
+  gstRate: doublePrecision("gst_rate").default(18), // % GST for this HSN (parts = 18)
   vendorId: integer("vendor_id"),
   minStock: doublePrecision("min_stock").default(0),
   reorderLevel: doublePrecision("reorder_level").default(0),
@@ -122,9 +123,66 @@ export const customers = pgTable("customers", {
   phone: text("phone"),
   billing: text("billing"),
   shipping: text("shipping"),
+  // GST invoice fields. stateCode = buyer's GST state (2-digit, e.g. "03").
+  // posStateCode = default Place of Supply (often the ship-to state) — this is
+  // what decides IGST vs CGST/SGST against the seller's state.
+  stateCode: text("state_code").default(""),
+  pincode: text("pincode").default(""),
+  posStateCode: text("pos_state_code").default(""),
+  // Pricing scheme: a customer belongs to a discount class; discountPct is an
+  // optional whole-order override (takes precedence over the class default).
+  discountClassId: integer("discount_class_id"),
+  discountPct: doublePrecision("discount_pct"),
   creditLimit: doublePrecision("credit_limit").default(0),
   paymentTerms: text("payment_terms"),
   createdAt: createdAt(),
+});
+
+// A reusable pricing scheme shared by many customers. wholeOrderPct is the
+// default % off MRP applied to every billed line; per-SKU exceptions live in
+// discount_class_skus.
+export const discountClasses = pgTable("discount_classes", {
+  id: serial("id").primaryKey(),
+  code: text("code").unique(),
+  name: text("name").notNull(),
+  wholeOrderPct: doublePrecision("whole_order_pct").default(0),
+  active: boolean("active").default(true),
+  createdAt: createdAt(),
+});
+
+// Per-SKU discount override inside a class ("sometimes only for some skus").
+export const discountClassSkus = pgTable(
+  "discount_class_skus",
+  {
+    id: serial("id").primaryKey(),
+    classId: integer("class_id").notNull(),
+    skuId: integer("sku_id").notNull(),
+    pct: doublePrecision("pct").default(0),
+  },
+  (t) => ({ uniq: uniqueIndex("dcsku_uniq").on(t.classId, t.skuId) }),
+);
+
+// Seller / company master used in the printed tax invoice header. Single row
+// (id=1) acts as the active company; kept as a table so it's editable in-app.
+export const companySettings = pgTable("company_settings", {
+  id: serial("id").primaryKey(),
+  legalName: text("legal_name").default("SILVER INDUSTRIES"),
+  tradeName: text("trade_name").default(""),
+  gstin: text("gstin").default(""),
+  stateCode: text("state_code").default(""),
+  address: text("address").default(""),
+  city: text("city").default(""),
+  pincode: text("pincode").default(""),
+  phone: text("phone").default(""),
+  email: text("email").default(""),
+  msmeNo: text("msme_no").default(""),
+  bankName: text("bank_name").default(""),
+  bankAccount: text("bank_account").default(""),
+  bankIfsc: text("bank_ifsc").default(""),
+  bankBranch: text("bank_branch").default(""),
+  invoicePrefix: text("invoice_prefix").default("GC26/"),
+  invoiceNextNo: integer("invoice_next_no").default(1),
+  terms: text("terms").default(""),
 });
 
 export const purchaseOrders = pgTable("purchase_orders", {
@@ -165,16 +223,43 @@ export const soLines = pgTable("so_lines", {
   pickedQty: doublePrecision("picked_qty").default(0),
   packedQty: doublePrecision("packed_qty").default(0),
   dispatchedQty: doublePrecision("dispatched_qty").default(0),
+  // How much of the dispatched qty has already been pulled onto an invoice.
+  // Billable now = dispatchedQty - invoicedQty; pending to dispatch = qty -
+  // dispatchedQty (stays as a pending SO line in the booking menu).
+  invoicedQty: doublePrecision("invoiced_qty").default(0),
   price: doublePrecision("price"),
 });
 
-export const packages = pgTable("packages", {
-  id: serial("id").primaryKey(),
-  soId: integer("so_id"),
-  packageNo: text("package_no"),
-  status: text("status").default("open"),
-  createdAt: createdAt(),
-});
+// A "case" (carton/box) that items get packed into for dispatch. package_no holds
+// the human case number entered on the packing screen (unique per sales order).
+export const packages = pgTable(
+  "packages",
+  {
+    id: serial("id").primaryKey(),
+    soId: integer("so_id"),
+    packageNo: text("package_no"),
+    status: text("status").default("open"),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ bySo: index("pkg_so_idx").on(t.soId), uniqCase: uniqueIndex("pkg_so_case_uniq").on(t.soId, t.packageNo) }),
+);
+
+// One row per (case, item, qty) — what physically went into a case during packing.
+export const packageLines = pgTable(
+  "package_lines",
+  {
+    id: serial("id").primaryKey(),
+    packageId: integer("package_id").notNull(),
+    soId: integer("so_id").notNull(),
+    soLineId: integer("so_line_id").notNull(),
+    skuId: integer("sku_id").notNull(),
+    qty: doublePrecision("qty").default(0),
+    packedBy: text("packed_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byPkg: index("pkgline_pkg_idx").on(t.packageId), bySo: index("pkgline_so_idx").on(t.soId) }),
+);
 
 export const scanEvents = pgTable(
   "scan_events",
@@ -205,3 +290,106 @@ export const notifications = pgTable("notifications", {
   read: boolean("read").default(false),
   createdAt: createdAt(),
 });
+
+// Shared packing slips (live across devices). The whole working doc — header +
+// open case + completed cases — is stored as JSON; updatedAt drives live sync.
+export const packingSlips = pgTable("packing_slips", {
+  id: serial("id").primaryKey(),
+  slipNo: text("slip_no").unique().notNull(),
+  soNo: text("so_no"),
+  party: text("party"),
+  data: jsonb("data").notNull(),
+  updatedBy: text("updated_by"),
+  updatedAt: text("updated_at").notNull(),
+  createdAt: createdAt(),
+});
+
+// GST tax invoice. Created as a draft from dispatched-but-uninvoiced qty, then
+// finalized (assigns invoiceNo + advances so_lines.invoiced_qty). IRN/QR/EWB
+// columns are reserved for the later e-invoice / e-way-bill integration.
+export const invoices = pgTable("invoices", {
+  id: serial("id").primaryKey(),
+  invoiceNo: text("invoice_no").unique(),
+  status: text("status").default("draft"), // draft | final | cancelled
+  soId: integer("so_id"),
+  packingSlipId: integer("packing_slip_id"),
+  customerId: integer("customer_id"),
+  // Snapshot of parties at invoice time (so later master edits don't rewrite history).
+  sellerStateCode: text("seller_state_code").default(""),
+  buyerName: text("buyer_name").default(""),
+  buyerGstin: text("buyer_gstin").default(""),
+  buyerStateCode: text("buyer_state_code").default(""),
+  posStateCode: text("pos_state_code").default(""),
+  taxType: text("tax_type").default("IGST"), // IGST | CGST_SGST
+  invoiceDate: text("invoice_date"),
+  discountClassId: integer("discount_class_id"),
+  // Money totals (all in ₹).
+  mrpTotal: doublePrecision("mrp_total").default(0),
+  discountTotal: doublePrecision("discount_total").default(0),
+  taxableTotal: doublePrecision("taxable_total").default(0),
+  igst: doublePrecision("igst").default(0),
+  cgst: doublePrecision("cgst").default(0),
+  sgst: doublePrecision("sgst").default(0),
+  roundOff: doublePrecision("round_off").default(0),
+  grandTotal: doublePrecision("grand_total").default(0),
+  // Transport (captured now, used by e-way bill later).
+  transporter: text("transporter").default(""),
+  transporterId: text("transporter_id").default(""),
+  vehicleNo: text("vehicle_no").default(""),
+  lrNo: text("lr_no").default(""),
+  lrDate: text("lr_date").default(""),
+  distanceKm: integer("distance_km"),
+  notes: text("notes").default(""),
+  // e-invoice / e-way bill (filled later by the IRP/GSP integration).
+  irn: text("irn").default(""),
+  ackNo: text("ack_no").default(""),
+  ackDate: text("ack_date").default(""),
+  qrPayload: text("qr_payload").default(""),
+  ewbNo: text("ewb_no").default(""),
+  createdBy: text("created_by"),
+  createdAt: createdAt(),
+});
+
+export const invoiceLines = pgTable(
+  "invoice_lines",
+  {
+    id: serial("id").primaryKey(),
+    invoiceId: integer("invoice_id").notNull(),
+    soLineId: integer("so_line_id"),
+    skuId: integer("sku_id"),
+    skuCode: text("sku_code"),
+    description: text("description"),
+    hsn: text("hsn").default(""),
+    unit: text("unit").default("PCS"),
+    caseNo: text("case_no").default(""),
+    qty: doublePrecision("qty").default(0),
+    mrp: doublePrecision("mrp").default(0),
+    discountPct: doublePrecision("discount_pct").default(0),
+    taxableValue: doublePrecision("taxable_value").default(0),
+    gstRate: doublePrecision("gst_rate").default(18),
+    igst: doublePrecision("igst").default(0),
+    cgst: doublePrecision("cgst").default(0),
+    sgst: doublePrecision("sgst").default(0),
+    lineTotal: doublePrecision("line_total").default(0),
+  },
+  (t) => ({ byInvoice: index("invline_inv_idx").on(t.invoiceId) }),
+);
+
+// Org-wide activity / audit feed. Every meaningful write appends one row, and the
+// live-sync fingerprint watches MAX(id) here so any action — by anyone, in any
+// module — pushes to every signed-in device. Also serves as a who-did-what audit.
+export const activityLog = pgTable(
+  "activity_log",
+  {
+    id: serial("id").primaryKey(),
+    actor: text("actor"),
+    actorRole: text("actor_role"),
+    action: text("action").notNull(),
+    entity: text("entity"),
+    entityId: text("entity_id"),
+    summary: text("summary"),
+    meta: jsonb("meta"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byId: index("activity_id_idx").on(t.id) }),
+);

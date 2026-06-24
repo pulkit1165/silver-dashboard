@@ -3,6 +3,7 @@ import { getSql } from "./db";
 import type {
   Sku, Warehouse, Bin, InventoryRow, StockStatus, ScanEvent,
   SalesOrder, SoLine, Vendor, Customer, PurchaseOrder,
+  OrderPacking, PackingLine, PackingCase,
 } from "./types";
 
 export function stockStatus(sku: { min_stock: number; reorder_level: number }, qty: number): StockStatus {
@@ -119,6 +120,74 @@ export async function createSalesOrder(input: {
   return (await getSalesOrder(so.id as number))!;
 }
 
+// Orders that can still be packed/dispatched (drives the packing-screen dropdown).
+const PACKABLE = ["confirmed", "picked", "packed", "partially dispatched"];
+export async function getPackableOrders(): Promise<SalesOrder[]> {
+  const sql = getSql();
+  return (await sql`
+    SELECT so.*, c.name AS customer_name FROM sales_orders so
+    JOIN customers c ON c.id=so.customer_id
+    WHERE so.status IN ${sql(PACKABLE)} ORDER BY so.id DESC`) as unknown as SalesOrder[];
+}
+
+// Full packing view for one order: per-line ordered/packed/remaining/on-hand + the cases.
+export async function getOrderPacking(id: number): Promise<OrderPacking | undefined> {
+  const sql = getSql();
+  const [so] = (await sql`
+    SELECT so.id, so.so_no, so.status, c.name AS customer_name FROM sales_orders so
+    JOIN customers c ON c.id=so.customer_id WHERE so.id=${id}`) as unknown as
+    Array<{ id: number; so_no: string; status: string; customer_name: string }>;
+  if (!so) return undefined;
+
+  const lines = (await sql`
+    SELECT l.id AS so_line_id, l.sku_id, s.sku_code, s.name AS sku_name, s.qr_token,
+           l.qty AS ordered, l.packed_qty AS packed,
+           COALESCE((SELECT SUM(qty) FROM inventory WHERE sku_id=l.sku_id),0)::float8 AS on_hand
+    FROM so_lines l JOIN skus s ON s.id=l.sku_id WHERE l.so_id=${id} ORDER BY l.id`) as unknown as
+    Array<Omit<PackingLine, "remaining"> & { ordered: number; packed: number }>;
+  const packingLines: PackingLine[] = lines.map((l) => ({ ...l, remaining: l.ordered - l.packed }));
+
+  const caseRows = (await sql`
+    SELECT p.id AS package_id, p.package_no AS case_no, p.status,
+           s.sku_code, s.name AS sku_name, pl.qty
+    FROM packages p
+    JOIN package_lines pl ON pl.package_id=p.id
+    JOIN skus s ON s.id=pl.sku_id
+    WHERE p.so_id=${id} ORDER BY p.id, pl.id`) as unknown as
+    Array<{ package_id: number; case_no: string; status: string; sku_code: string; sku_name: string; qty: number }>;
+  const byCase = new Map<number, PackingCase & { _items: Map<string, { sku_code: string; sku_name: string; qty: number }> }>();
+  for (const r of caseRows) {
+    let c = byCase.get(r.package_id);
+    if (!c) { c = { package_id: r.package_id, case_no: r.case_no, status: r.status, items: [], total_qty: 0, _items: new Map() }; byCase.set(r.package_id, c); }
+    // merge repeat scans of the same item in one case into a single line
+    const it = c._items.get(r.sku_code);
+    if (it) it.qty += r.qty;
+    else c._items.set(r.sku_code, { sku_code: r.sku_code, sku_name: r.sku_name, qty: r.qty });
+    c.total_qty += r.qty;
+  }
+  const cases: PackingCase[] = [...byCase.values()].map((c) => ({
+    package_id: c.package_id, case_no: c.case_no, status: c.status, total_qty: c.total_qty, items: [...c._items.values()],
+  }));
+
+  return { id: so.id, so_no: so.so_no, customer_name: so.customer_name, status: so.status, lines: packingLines, cases };
+}
+
+// Flat rows for the Google-Sheet CSV mirror (one row per item packed into a case).
+export async function getPackingExportRows() {
+  return (await getSql()`
+    SELECT pl.created_at, so.so_no, c.name AS customer, p.package_no AS case_no,
+           s.sku_code, s.name AS item_name, pl.qty AS qty_packed, pl.packed_by, so.status AS order_status
+    FROM package_lines pl
+    JOIN packages p ON p.id=pl.package_id
+    JOIN sales_orders so ON so.id=pl.so_id
+    JOIN customers c ON c.id=so.customer_id
+    JOIN skus s ON s.id=pl.sku_id
+    ORDER BY pl.id DESC`) as unknown as Array<{
+      created_at: string; so_no: string; customer: string; case_no: string;
+      sku_code: string; item_name: string; qty_packed: number; packed_by: string; order_status: string;
+    }>;
+}
+
 export async function getVendors(): Promise<Vendor[]> {
   return (await getSql()`SELECT * FROM vendors ORDER BY code`) as unknown as Vendor[];
 }
@@ -201,21 +270,30 @@ export async function skuMovement(limit = 50) {
 
 export async function erpStats() {
   const sql = getSql();
-  const c = async (q: ReturnType<typeof sql>) => ((await q) as unknown as Array<{ c: number }>)[0].c;
-  const levels = await stockLevels();
+  // Run every count concurrently (was ~11 serial round-trips to the DB).
+  const c = (q: ReturnType<typeof sql>) =>
+    (q as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c);
+  const [
+    levels, skus, warehouses, openSales, openPurchases,
+    vendors, customers, scansToday, scansTotal, pendingDispatch,
+  ] = await Promise.all([
+    stockLevels(),
+    c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),
+    c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed','draft')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM purchase_orders WHERE status IN ('draft','approved','sent','partially received')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM vendors`),
+    c(sql`SELECT COUNT(*)::int AS c FROM customers`),
+    c(sql`SELECT COUNT(*)::int AS c FROM scan_events WHERE created_at >= to_char(current_date,'YYYY-MM-DD')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM scan_events`),
+    c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
+  ]);
   const lowStockItems = levels.filter((s) => s.status === "low" || s.status === "out");
   return {
-    skus: await c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    skus,
     stockUnits: levels.reduce((a, s) => a + s.qty, 0),
     lowStock: lowStockItems.length,
-    warehouses: await c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),
-    openSales: await c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed','draft')`),
-    openPurchases: await c(sql`SELECT COUNT(*)::int AS c FROM purchase_orders WHERE status IN ('draft','approved','sent','partially received')`),
-    vendors: await c(sql`SELECT COUNT(*)::int AS c FROM vendors`),
-    customers: await c(sql`SELECT COUNT(*)::int AS c FROM customers`),
-    scansToday: await c(sql`SELECT COUNT(*)::int AS c FROM scan_events WHERE created_at >= to_char(current_date,'YYYY-MM-DD')`),
-    scansTotal: await c(sql`SELECT COUNT(*)::int AS c FROM scan_events`),
-    pendingDispatch: await c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
-    lowStockItems,
+    warehouses, openSales, openPurchases, vendors, customers,
+    scansToday, scansTotal, pendingDispatch, lowStockItems,
   };
 }

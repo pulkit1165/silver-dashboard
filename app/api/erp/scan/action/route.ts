@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { performScan } from "@/lib/erp/scan";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 import { SCAN_ACTIONS, type ScanAction } from "@/lib/erp/types";
 
 export const dynamic = "force-dynamic";
@@ -39,5 +40,13 @@ export async function POST(req: Request) {
     device: body.device ? String(body.device) : "web",
     batch: body.batch ? String(body.batch) : undefined,
   });
+  if (result.ok && action !== "lookup" && action !== "verify") {
+    await logActivity({
+      actor: user.name, actorRole: user.role,
+      action: `scan.${action}`, entity: "scan",
+      summary: `${action.charAt(0).toUpperCase() + action.slice(1)} scan (${code})`,
+      meta: { qty: body.qty ?? null, packageNo: body.packageNo ?? null, refDoc: body.refDoc ?? null },
+    });
+  }
   return NextResponse.json(result, { status: result.ok ? 200 : 422 });
 }

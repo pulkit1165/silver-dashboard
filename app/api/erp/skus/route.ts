@@ -3,6 +3,7 @@ import { getSql, genToken } from "@/lib/erp/db";
 import { getSkus } from "@/lib/erp/queries";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -31,5 +32,10 @@ export async function POST(req: Request) {
             ${Number(b.price) || 0},${Number(b.min_stock) || 0},${Number(b.reorder_level) || 0},
             ${!!b.batch_tracked},${!!b.serial_tracked},${genToken()})
     RETURNING *`;
+  await logActivity({
+    actor: user.name, actorRole: user.role,
+    action: "sku.create", entity: "sku", entityId: (sku as { id: number }).id,
+    summary: `Added SKU ${(sku as { sku_code: string }).sku_code} — ${(sku as { name: string }).name}`,
+  });
   return NextResponse.json({ ok: true, sku }, { status: 201 });
 }
