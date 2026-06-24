@@ -98,6 +98,27 @@ export async function getSalesOrderByNo(soNo: string) {
   return r ? getSalesOrder((r as { id: number }).id) : undefined;
 }
 
+export async function createSalesOrder(input: {
+  customerId: number;
+  orderDate: string;
+  lines: Array<{ skuId: number; qty: number; price: number }>;
+}): Promise<SalesOrder & { lines: SoLine[] }> {
+  const sql = getSql();
+  const [{ next }] = await sql`
+    SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 4) AS INT)), 1000) + 1 AS next
+      FROM sales_orders WHERE so_no LIKE 'SO-%'`;
+  const soNo = `SO-${next}`;
+  const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
+  const [so] = await sql`
+    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total)
+    VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total})
+    RETURNING id`;
+  for (const l of input.lines) {
+    await sql`INSERT INTO so_lines (so_id, sku_id, qty, price) VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price})`;
+  }
+  return (await getSalesOrder(so.id as number))!;
+}
+
 export async function getVendors(): Promise<Vendor[]> {
   return (await getSql()`SELECT * FROM vendors ORDER BY code`) as unknown as Vendor[];
 }

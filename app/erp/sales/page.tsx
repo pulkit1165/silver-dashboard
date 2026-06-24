@@ -1,6 +1,8 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import { getSalesOrders } from "@/lib/erp/queries";
+import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = {
@@ -9,10 +11,24 @@ const TAG: Record<string, string> = {
 };
 
 export default async function SalesOrdersPage() {
+  const user = await getCurrentUser();
   const orders = await getSalesOrders();
   return (
     <>
-      <PageHeader title="Sales Orders" subtitle="Order lifecycle: draft → confirmed → picked → packed → dispatched." />
+      <PageHeader
+        title="Sales Orders"
+        subtitle="Order lifecycle: draft → confirmed → picked → packed → dispatched."
+        right={
+          canWrite(user.role, "sales") ? (
+            <Link
+              href="/erp/sales/new"
+              className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]"
+            >
+              + New Sales Order
+            </Link>
+          ) : undefined
+        }
+      />
       <section className="panel">
         <div className="overflow-x-auto">
           <table className="rtable">
