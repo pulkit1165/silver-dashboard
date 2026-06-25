@@ -67,3 +67,30 @@ export async function lookupPartyItemRates(
   const res = await runQuery(sql);
   return toRows(res.rows);
 }
+
+export interface PartyDiscount {
+  discountPct: number;
+  asOfDate: string;
+}
+
+// The legacy app's discount lives on each Sales Order header, split by GST
+// slab (DISCPERCENT / DISCPERCENT18 / DISCPERCENT28) rather than on the
+// account master — it's effectively a carried-forward standing rate per
+// customer. We take the customer's most recent order with any non-zero
+// discount as the current standing discount.
+export async function lookupPartyDiscount(partyQuery: string): Promise<PartyDiscount | null> {
+  const qp = esc(partyQuery.trim().toUpperCase());
+  if (!qp) return null;
+  const sql = `select * from (
+    select a.trdate,
+           greatest(nvl(a.discpercent,0), nvl(a.discpercent18,0), nvl(a.discpercent28,0)) as disc_pct
+      from DTC102 a
+      join SILVER_MASTER.DTA02 p on p.acntid = a.partyid
+     where upper(p.acntdesc) like '%${qp}%'
+     order by a.trdate desc
+  ) where rownum <= 5`;
+  const res = await runQuery(sql);
+  const hit = res.rows.find((r) => Number(r.DISC_PCT) > 0);
+  if (!hit) return null;
+  return { discountPct: Number(hit.DISC_PCT), asOfDate: String(hit.TRDATE ?? "") };
+}

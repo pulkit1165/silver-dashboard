@@ -1,11 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface SkuOption { id: number; sku_code: string; name: string; price: number; unit: string }
 interface CustomerOption { id: number; code: string; name: string }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
+interface PartyDiscount { discountPct: number; asOfDate: string }
 
 interface Line {
   skuId: number | null;
@@ -25,9 +26,28 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const [partyDiscount, setPartyDiscount] = useState<PartyDiscount | null>(null);
+  const [loadingDiscount, setLoadingDiscount] = useState(false);
 
   const customer = customers.find((c) => c.id === customerId);
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
+
+  // The legacy app's actual pricing logic: each customer carries a standing
+  // discount % (stored on their most recent order header, by GST slab) that
+  // gets applied to every item's MRP. Pull it the moment a customer is
+  // picked, so new lines can default to the same net rate automatically.
+  useEffect(() => {
+    setPartyDiscount(null);
+    if (!customer) return;
+    let cancelled = false;
+    setLoadingDiscount(true);
+    fetch(`/api/erp/party-discount?party=${encodeURIComponent(customer.name)}`)
+      .then((r) => r.json())
+      .then((d) => { if (!cancelled) setPartyDiscount(d.ok ? d.discount ?? null : null); })
+      .catch(() => { if (!cancelled) setPartyDiscount(null); })
+      .finally(() => { if (!cancelled) setLoadingDiscount(false); });
+    return () => { cancelled = true; };
+  }, [customer]);
 
   function updateLine(idx: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -35,7 +55,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   async function onSkuChange(idx: number, skuId: number) {
     const sku = skuById.get(skuId);
-    updateLine(idx, { skuId, price: sku?.price ?? 0, loadingRates: !!sku, itemRates: [], partyRates: [] });
+    const mrp = sku?.price ?? 0;
+    const defaultPrice = sku && partyDiscount ? round2(mrp * (1 - partyDiscount.discountPct / 100)) : mrp;
+    updateLine(idx, { skuId, price: defaultPrice, loadingRates: !!sku, itemRates: [], partyRates: [] });
     if (!sku) return;
     try {
       const params = new URLSearchParams({ item: sku.name });
@@ -90,6 +112,21 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         </F>
       </div>
 
+      {customer && (
+        <div className="text-sm">
+          {loadingDiscount ? (
+            <span className="text-[var(--muted)]">Checking {customer.name}&rsquo;s standing discount in Oracle…</span>
+          ) : partyDiscount ? (
+            <span className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 font-semibold text-[var(--accent)]">
+              Standing discount: {partyDiscount.discountPct.toFixed(2)}% off MRP
+              <span className="font-normal text-[var(--muted)]"> (from order on {partyDiscount.asOfDate.slice(0, 10)}) — auto-applied to new lines below</span>
+            </span>
+          ) : (
+            <span className="text-[var(--muted)]">No standing discount found for {customer.name} in Oracle — new lines default to full MRP.</span>
+          )}
+        </div>
+      )}
+
       <div className="space-y-3">
         {lines.map((line, idx) => {
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
@@ -139,10 +176,18 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <div className="mt-2 text-xs text-[var(--muted)]">
                   {line.loadingRates ? (
                     "Checking Oracle history for past rates…"
-                  ) : line.itemRates.length === 0 && line.partyRates.length === 0 ? (
+                  ) : !partyDiscount && line.itemRates.length === 0 && line.partyRates.length === 0 ? (
                     <span>No Oracle sales history found for this item.</span>
                   ) : (
                     <div className="flex flex-wrap gap-2">
+                      {partyDiscount && (
+                        <Suggestion
+                          label={`Standing discount (${partyDiscount.discountPct.toFixed(2)}% off MRP)`}
+                          rate={round2(sku.price * (1 - partyDiscount.discountPct / 100))}
+                          date={partyDiscount.asOfDate.slice(0, 10)}
+                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - partyDiscount.discountPct / 100)) })}
+                        />
+                      )}
                       {line.partyRates.length > 0 && (
                         <Suggestion
                           label={`${customer?.name ?? "This party"} last paid`}
@@ -204,6 +249,10 @@ function Suggestion({ label, rate, date, onUse }: { label: string; rate: number;
       <span className="text-[var(--muted-2)]">({date})</span>
     </button>
   );
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 const inp =
