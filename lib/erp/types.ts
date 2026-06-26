@@ -34,10 +34,12 @@ export interface ScanEvent {
 export interface SalesOrder {
   id: number; so_no: string; customer_id: number; status: string; order_date: string;
   invoice_no: string | null; total: number; customer_name?: string;
+  bill_type: string; disc_pct_18: number; disc_pct_28: number; remarks: string;
 }
 export interface SoLine {
   id: number; so_id: number; sku_id: number; qty: number;
   picked_qty: number; packed_qty: number; dispatched_qty: number; price: number;
+  mrp: number; discount_pct: number; rate_type: string; foc_qty: number;
   sku_code?: string; sku_name?: string; qr_token?: string;
 }
 

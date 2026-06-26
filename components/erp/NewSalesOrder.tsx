@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import SearchSelect from "./SearchSelect";
 
 interface SkuOption { id: number; sku_code: string; name: string; price: number; unit: string }
 interface CustomerOption { id: number; code: string; name: string }
@@ -12,17 +13,26 @@ interface Line {
   skuId: number | null;
   qty: number;
   price: number;
+  rateType: string;
+  focQty: number;
   itemRates: RateRow[];
   partyRates: RateRow[];
   loadingRates: boolean;
 }
 
-const emptyLine = (): Line => ({ skuId: null, qty: 1, price: 0, itemRates: [], partyRates: [], loadingRates: false });
+const emptyLine = (): Line => ({
+  skuId: null, qty: 1, price: 0, rateType: "MRP", focQty: 0,
+  itemRates: [], partyRates: [], loadingRates: false,
+});
 
 export default function NewSalesOrder({ customers, skus }: { customers: CustomerOption[]; skus: SkuOption[] }) {
   const router = useRouter();
-  const [customerId, setCustomerId] = useState<number | "">("");
+  const [customerId, setCustomerId] = useState<number | null>(null);
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [billType, setBillType] = useState("MRP");
+  const [discPct18, setDiscPct18] = useState(0);
+  const [discPct28, setDiscPct28] = useState(0);
+  const [remarks, setRemarks] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -31,6 +41,14 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   const customer = customers.find((c) => c.id === customerId);
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: c.code })),
+    [customers],
+  );
+  const skuOptions = useMemo(
+    () => skus.map((s) => ({ value: s.id, label: s.name, sublabel: s.sku_code })),
+    [skus],
+  );
 
   // The legacy app's actual pricing logic: each customer carries a standing
   // discount % (stored on their most recent order header, by GST slab) that
@@ -43,7 +61,12 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     setLoadingDiscount(true);
     fetch(`/api/erp/party-discount?party=${encodeURIComponent(customer.name)}`)
       .then((r) => r.json())
-      .then((d) => { if (!cancelled) setPartyDiscount(d.ok ? d.discount ?? null : null); })
+      .then((d) => {
+        if (cancelled) return;
+        const disc = d.ok ? (d.discount as PartyDiscount | null) : null;
+        setPartyDiscount(disc);
+        if (disc) setDiscPct18((prev) => (prev === 0 ? round2(disc.discountPct) : prev));
+      })
       .catch(() => { if (!cancelled) setPartyDiscount(null); })
       .finally(() => { if (!cancelled) setLoadingDiscount(false); });
     return () => { cancelled = true; };
@@ -85,7 +108,19 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         body: JSON.stringify({
           customer_id: customerId,
           order_date: orderDate,
-          lines: validLines.map((l) => ({ sku_id: l.skuId, qty: l.qty, price: l.price })),
+          bill_type: billType,
+          disc_pct_18: discPct18,
+          disc_pct_28: discPct28,
+          remarks,
+          lines: validLines.map((l) => {
+            const sku = skuById.get(l.skuId as number);
+            const mrp = sku?.price ?? l.price;
+            const discountPct = mrp > 0 ? round2((1 - l.price / mrp) * 100) : 0;
+            return {
+              sku_id: l.skuId, qty: l.qty, price: l.price,
+              mrp, discount_pct: discountPct, rate_type: l.rateType, foc_qty: l.focQty,
+            };
+          }),
         }),
       });
       const d = await r.json();
@@ -98,17 +133,42 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   return (
     <div className="panel space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <F label="Customer *">
-          <select value={customerId} onChange={(e) => setCustomerId(Number(e.target.value) || "")} className={inp}>
-            <option value="">Select customer…</option>
-            {customers.map((c) => (
-              <option key={c.id} value={c.id}>{c.name} ({c.code})</option>
-            ))}
-          </select>
+          <SearchSelect
+            options={customerOptions}
+            value={customerId}
+            onChange={setCustomerId}
+            placeholder="Search customer…"
+            className={inp}
+          />
         </F>
         <F label="Order date">
           <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className={inp} />
+        </F>
+        <F label="Bill Type">
+          <select value={billType} onChange={(e) => setBillType(e.target.value)} className={inp}>
+            <option value="MRP">MRP</option>
+            <option value="K">K</option>
+            <option value="NET">NET</option>
+          </select>
+        </F>
+        <F label="Remarks">
+          <input value={remarks} onChange={(e) => setRemarks(e.target.value)} className={inp} placeholder="Optional" />
+        </F>
+        <F label="Disc 18 (%)">
+          <input
+            type="number" step="0.01" value={discPct18}
+            onChange={(e) => setDiscPct18(Number(e.target.value) || 0)}
+            className={inp}
+          />
+        </F>
+        <F label="Disc 28 (%)">
+          <input
+            type="number" step="0.01" value={discPct28}
+            onChange={(e) => setDiscPct28(Number(e.target.value) || 0)}
+            className={inp}
+          />
         </F>
       </div>
 
@@ -132,15 +192,18 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
           return (
             <div key={idx} className="rounded-xl border border-[var(--border)] p-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-5 sm:items-end">
-                <F label="Item">
-                  <select value={line.skuId ?? ""} onChange={(e) => onSkuChange(idx, Number(e.target.value))} className={inp}>
-                    <option value="">Select item…</option>
-                    {skus.map((s) => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.sku_code})</option>
-                    ))}
-                  </select>
-                </F>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-7 sm:items-end">
+                <div className="sm:col-span-2">
+                  <F label="Item">
+                    <SearchSelect
+                      options={skuOptions}
+                      value={line.skuId}
+                      onChange={(id) => onSkuChange(idx, id)}
+                      placeholder="Search item…"
+                      className={inp}
+                    />
+                  </F>
+                </div>
                 <F label="MRP">
                   <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? sku.price.toFixed(2) : "—"}</div>
                 </F>
@@ -156,6 +219,20 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     type="number" step="0.01" value={line.price}
                     onChange={(e) => updateLine(idx, { price: Number(e.target.value) || 0 })}
                     className={inp}
+                  />
+                </F>
+                <F label="Rate Type">
+                  <select value={line.rateType} onChange={(e) => updateLine(idx, { rateType: e.target.value })} className={inp}>
+                    <option value="MRP">MRP</option>
+                    <option value="NET">NET</option>
+                  </select>
+                </F>
+                <F label="FOC Qty">
+                  <input
+                    type="number" min={0} value={line.focQty}
+                    onChange={(e) => updateLine(idx, { focQty: Number(e.target.value) || 0 })}
+                    className={inp}
+                    title="Free of cost / promotional quantity"
                   />
                 </F>
                 <div className="flex items-end justify-between gap-2">

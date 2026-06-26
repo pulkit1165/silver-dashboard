@@ -212,6 +212,13 @@ export const salesOrders = pgTable("sales_orders", {
   orderDate: text("order_date"),
   invoiceNo: text("invoice_no"),
   total: doublePrecision("total").default(0),
+  // Header-level fields matching the legacy Delivery Order / Sale Bill
+  // screens — Bill Type, the two GST-slab discount percentages (Disc 18 /
+  // Disc 28), and free-text remarks.
+  billType: text("bill_type").default(""),
+  discPct18: doublePrecision("disc_pct_18").default(0),
+  discPct28: doublePrecision("disc_pct_28").default(0),
+  remarks: text("remarks").default(""),
   createdAt: createdAt(),
 });
 
@@ -228,6 +235,14 @@ export const soLines = pgTable("so_lines", {
   // dispatchedQty (stays as a pending SO line in the booking menu).
   invoicedQty: doublePrecision("invoiced_qty").default(0),
   price: doublePrecision("price"),
+  // MRP at the time of ordering (kept separate from price/net rate so later
+  // master-price changes don't rewrite history), the rate type the line was
+  // priced under (e.g. "MRP"), and free-of-cost / promotional qty — all
+  // visible on the legacy Delivery Order line grid.
+  mrp: doublePrecision("mrp").default(0),
+  discountPct: doublePrecision("discount_pct").default(0),
+  rateType: text("rate_type").default("MRP"),
+  focQty: doublePrecision("foc_qty").default(0),
 });
 
 // A "case" (carton/box) that items get packed into for dispatch. package_no holds

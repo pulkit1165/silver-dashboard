@@ -13,6 +13,10 @@ interface LineInput {
   sku_id: unknown;
   qty: unknown;
   price: unknown;
+  mrp?: unknown;
+  discount_pct?: unknown;
+  rate_type?: unknown;
+  foc_qty?: unknown;
 }
 
 export async function POST(req: Request) {
@@ -42,7 +46,19 @@ export async function POST(req: Request) {
   const order = await createSalesOrder({
     customerId,
     orderDate: typeof b.order_date === "string" && b.order_date ? b.order_date : new Date().toISOString().slice(0, 10),
-    lines: lines.map((l) => ({ skuId: Number(l.sku_id), qty: Number(l.qty), price: Number(l.price) || 0 })),
+    billType: typeof b.bill_type === "string" ? b.bill_type : undefined,
+    discPct18: b.disc_pct_18 != null ? Number(b.disc_pct_18) : undefined,
+    discPct28: b.disc_pct_28 != null ? Number(b.disc_pct_28) : undefined,
+    remarks: typeof b.remarks === "string" ? b.remarks : undefined,
+    lines: lines.map((l) => ({
+      skuId: Number(l.sku_id),
+      qty: Number(l.qty),
+      price: Number(l.price) || 0,
+      mrp: l.mrp != null ? Number(l.mrp) : undefined,
+      discountPct: l.discount_pct != null ? Number(l.discount_pct) : undefined,
+      rateType: typeof l.rate_type === "string" ? l.rate_type : undefined,
+      focQty: l.foc_qty != null ? Number(l.foc_qty) : undefined,
+    })),
   });
   return NextResponse.json({ ok: true, order }, { status: 201 });
 }

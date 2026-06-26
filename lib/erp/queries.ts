@@ -102,7 +102,14 @@ export async function getSalesOrderByNo(soNo: string) {
 export async function createSalesOrder(input: {
   customerId: number;
   orderDate: string;
-  lines: Array<{ skuId: number; qty: number; price: number }>;
+  billType?: string;
+  discPct18?: number;
+  discPct28?: number;
+  remarks?: string;
+  lines: Array<{
+    skuId: number; qty: number; price: number;
+    mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
+  }>;
 }): Promise<SalesOrder & { lines: SoLine[] }> {
   const sql = getSql();
   const [{ next }] = await sql`
@@ -111,11 +118,14 @@ export async function createSalesOrder(input: {
   const soNo = `SO-${next}`;
   const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
   const [so] = await sql`
-    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total)
-    VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total})
+    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct_18, disc_pct_28, remarks)
+    VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total},
+      ${input.billType ?? ""}, ${input.discPct18 ?? 0}, ${input.discPct28 ?? 0}, ${input.remarks ?? ""})
     RETURNING id`;
   for (const l of input.lines) {
-    await sql`INSERT INTO so_lines (so_id, sku_id, qty, price) VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price})`;
+    await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
+      VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price}, ${l.mrp ?? l.price}, ${l.discountPct ?? 0},
+        ${l.rateType ?? "MRP"}, ${l.focQty ?? 0})`;
   }
   return (await getSalesOrder(so.id as number))!;
 }
