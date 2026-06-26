@@ -1,5 +1,6 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
+import ListFilters from "@/components/erp/ListFilters";
 import { getSalesOrders } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -10,9 +11,14 @@ const TAG: Record<string, string> = {
   "partially dispatched": "r", dispatched: "g", delivered: "g", cancelled: "r",
 };
 
-export default async function SalesOrdersPage() {
+export default async function SalesOrdersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
   const user = await getCurrentUser();
-  const orders = await getSalesOrders();
+  const orders = await getSalesOrders({ party: sp.party, from: sp.from, to: sp.to, status: sp.status });
   return (
     <>
       <PageHeader
@@ -28,6 +34,14 @@ export default async function SalesOrdersPage() {
             </Link>
           ) : undefined
         }
+      />
+      <ListFilters
+        fields={[
+          { key: "party", label: "Customer", placeholder: "Search customer…" },
+          { key: "status", label: "Status", placeholder: "e.g. draft, confirmed" },
+          { key: "from", label: "From date", type: "date" },
+          { key: "to", label: "To date", type: "date" },
+        ]}
       />
       <section className="panel">
         <div className="overflow-x-auto">

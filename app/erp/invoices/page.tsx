@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
+import ListFilters from "@/components/erp/ListFilters";
 import { listInvoices } from "@/lib/erp/invoices";
 import { getPendingToBill } from "@/lib/erp/queries";
 
@@ -9,8 +10,16 @@ export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = { draft: "n", final: "g", cancelled: "r" };
 const money = (n: number) => (n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-export default async function InvoicesPage() {
-  const [invoices, pending] = await Promise.all([listInvoices(), getPendingToBill()]);
+export default async function InvoicesPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
+  const [invoices, pending] = await Promise.all([
+    listInvoices({ party: sp.party, from: sp.from, to: sp.to, status: sp.status }),
+    getPendingToBill(),
+  ]);
   return (
     <>
       <PageHeader title="Invoices" subtitle="GST tax invoices generated from dispatched sales orders." />
@@ -18,6 +27,15 @@ export default async function InvoicesPage() {
         <Link href="/erp/sales" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">↗ Sales Orders</Link>
         <Link href="/erp/packing-slip" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">▤ Packing Slips</Link>
       </div>
+
+      <ListFilters
+        fields={[
+          { key: "party", label: "Buyer", placeholder: "Search buyer…" },
+          { key: "status", label: "Status", placeholder: "draft / final / cancelled" },
+          { key: "from", label: "From date", type: "date" },
+          { key: "to", label: "To date", type: "date" },
+        ]}
+      />
 
       <section className="panel mb-5">
         <div className="panel-hd">Pending to bill ({pending.length})</div>

@@ -122,12 +122,19 @@ export async function saveCompanySettings(patch: Partial<CompanySettings>): Prom
 }
 
 // ── List / read ──────────────────────────────────────────────────────────────
-export async function listInvoices() {
-  return (await getSql()`
+export interface InvoiceFilter { party?: string; from?: string; to?: string; status?: string }
+export async function listInvoices(f: InvoiceFilter = {}) {
+  const sql = getSql();
+  const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
+  return (await sql`
     SELECT i.id, i.invoice_no, i.status, i.invoice_date, i.buyer_name, i.tax_type,
            i.grand_total, i.so_id, so.so_no, i.created_at
     FROM invoices i
     LEFT JOIN sales_orders so ON so.id = i.so_id
+    WHERE (${party}::text IS NULL OR i.buyer_name ILIKE ${party})
+      AND (${f.from ?? null}::text IS NULL OR i.invoice_date >= ${f.from ?? null})
+      AND (${f.to ?? null}::text IS NULL OR i.invoice_date <= ${f.to ?? null})
+      AND (${f.status ?? null}::text IS NULL OR i.status = ${f.status ?? null})
     ORDER BY i.id DESC LIMIT 200`) as unknown as Array<
     Pick<InvoiceRow, "id" | "invoice_no" | "status" | "invoice_date" | "buyer_name" | "tax_type" | "grand_total" | "so_id" | "created_at"> & { so_no: string | null }
   >;

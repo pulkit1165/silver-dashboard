@@ -1,14 +1,21 @@
 import PageHeader from "@/components/PageHeader";
+import ListFilters from "@/components/erp/ListFilters";
 import { getVendors } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = { approved: "g", pending: "n", rejected: "r", blocked: "r" };
 
-export default async function VendorsPage() {
-  const rows = await getVendors();
+export default async function VendorsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
+  const rows = await getVendors(sp.q);
   return (
     <>
       <PageHeader title="Vendors" subtitle="Vendor master, approval status, terms and performance rating." />
+      <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">
         <div className="overflow-x-auto">
           <table className="rtable">

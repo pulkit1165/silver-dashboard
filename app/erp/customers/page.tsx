@@ -1,13 +1,20 @@
 import PageHeader from "@/components/PageHeader";
+import ListFilters from "@/components/erp/ListFilters";
 import { getCustomers } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
 
-export default async function CustomersPage() {
-  const rows = await getCustomers();
+export default async function CustomersPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
+  const rows = await getCustomers(sp.q);
   return (
     <>
       <PageHeader title="Customers" subtitle="Customer master with GST, credit limit and payment terms." />
+      <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">
         <div className="overflow-x-auto">
           <table className="rtable">

@@ -60,10 +60,13 @@ export async function inventoryForSku(skuId: number): Promise<InventoryRow[]> {
 }
 
 export type SkuLevel = Sku & { qty: number; status: StockStatus };
-export async function stockLevels(): Promise<SkuLevel[]> {
-  const rows = (await getSql()`
+export async function stockLevels(search?: string): Promise<SkuLevel[]> {
+  const sql = getSql();
+  const q = search?.trim() ? `%${search.trim()}%` : null;
+  const rows = (await sql`
     SELECT s.*, COALESCE(SUM(i.qty),0)::float8 AS qty
     FROM skus s LEFT JOIN inventory i ON i.sku_id=s.id
+    WHERE (${q}::text IS NULL OR s.sku_code ILIKE ${q} OR s.name ILIKE ${q} OR s.category ILIKE ${q})
     GROUP BY s.id ORDER BY s.sku_code`) as unknown as Array<Sku & { qty: number }>;
   return rows.map((s) => ({ ...s, status: stockStatus(s, s.qty) }));
 }
@@ -78,10 +81,18 @@ export async function getBins(warehouseId?: number): Promise<Bin[]> {
     : await sql`SELECT * FROM bins ORDER BY warehouse_id, code`) as unknown as Bin[];
 }
 
-export async function getSalesOrders(): Promise<SalesOrder[]> {
-  return (await getSql()`
+export interface SoFilter { party?: string; from?: string; to?: string; status?: string }
+export async function getSalesOrders(f: SoFilter = {}): Promise<SalesOrder[]> {
+  const sql = getSql();
+  const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
+  return (await sql`
     SELECT so.*, c.name AS customer_name FROM sales_orders so
-    JOIN customers c ON c.id=so.customer_id ORDER BY so.id DESC`) as unknown as SalesOrder[];
+    JOIN customers c ON c.id=so.customer_id
+    WHERE (${party}::text IS NULL OR c.name ILIKE ${party})
+      AND (${f.from ?? null}::text IS NULL OR so.order_date >= ${f.from ?? null})
+      AND (${f.to ?? null}::text IS NULL OR so.order_date <= ${f.to ?? null})
+      AND (${f.status ?? null}::text IS NULL OR so.status = ${f.status ?? null})
+    ORDER BY so.id DESC`) as unknown as SalesOrder[];
 }
 export async function getSalesOrder(id: number): Promise<(SalesOrder & { lines: SoLine[] }) | undefined> {
   const sql = getSql();
@@ -255,11 +266,21 @@ export async function getPackingExportRows() {
     }>;
 }
 
-export async function getVendors(): Promise<Vendor[]> {
-  return (await getSql()`SELECT * FROM vendors ORDER BY code`) as unknown as Vendor[];
+export async function getVendors(search?: string): Promise<Vendor[]> {
+  const sql = getSql();
+  if (search?.trim()) {
+    const q = `%${search.trim()}%`;
+    return (await sql`SELECT * FROM vendors WHERE name ILIKE ${q} OR code ILIKE ${q} OR gst ILIKE ${q} ORDER BY code`) as unknown as Vendor[];
+  }
+  return (await sql`SELECT * FROM vendors ORDER BY code`) as unknown as Vendor[];
 }
-export async function getCustomers(): Promise<Customer[]> {
-  return (await getSql()`SELECT * FROM customers ORDER BY code`) as unknown as Customer[];
+export async function getCustomers(search?: string): Promise<Customer[]> {
+  const sql = getSql();
+  if (search?.trim()) {
+    const q = `%${search.trim()}%`;
+    return (await sql`SELECT * FROM customers WHERE name ILIKE ${q} OR code ILIKE ${q} OR gst ILIKE ${q} ORDER BY code`) as unknown as Customer[];
+  }
+  return (await sql`SELECT * FROM customers ORDER BY code`) as unknown as Customer[];
 }
 export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   return (await getSql()`

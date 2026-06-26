@@ -1,6 +1,7 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import AddSku from "@/components/erp/AddSku";
+import ListFilters from "@/components/erp/ListFilters";
 import { stockLevels } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -8,14 +9,27 @@ import { canWrite } from "@/lib/erp/rbac";
 export const dynamic = "force-dynamic";
 
 const TAG: Record<string, string> = { out: "r", low: "r", reorder: "n", ok: "g" };
+const PAGE_CAP = 300;
 
-export default async function SkuMasterPage() {
+export default async function SkuMasterPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | undefined>>;
+}) {
+  const sp = await searchParams;
   const user = await getCurrentUser();
-  const rows = await stockLevels();
+  const all = await stockLevels(sp.q);
+  const rows = all.slice(0, PAGE_CAP);
   return (
     <>
       <PageHeader title="SKU Master" subtitle="Item master — every SKU has a unique QR token for scanning and labels." />
       <AddSku canCreate={canWrite(user.role, "skus")} />
+      <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
+      {!sp.q && all.length > PAGE_CAP && (
+        <p className="mb-3 text-xs font-semibold text-[var(--muted)]">
+          Showing first {PAGE_CAP} of {all.length} items — use Search to narrow down.
+        </p>
+      )}
       <section className="panel">
         <div className="overflow-x-auto">
           <table className="rtable">
