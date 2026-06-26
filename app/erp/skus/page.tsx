@@ -23,6 +23,9 @@ export default async function SkuMasterPage({
   return (
     <>
       <PageHeader title="SKU Master" subtitle="Item master — every SKU has a unique QR token for scanning and labels." />
+      <div className="mb-3">
+        <Link href="/erp/labels" className="text-sm font-semibold text-[var(--accent)]">Print barcode labels →</Link>
+      </div>
       <AddSku canCreate={canWrite(user.role, "skus")} />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
       {!sp.q && all.length > PAGE_CAP && (

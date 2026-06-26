@@ -47,6 +47,8 @@ export const skus = pgTable("skus", {
   vendorId: integer("vendor_id"),
   minStock: doublePrecision("min_stock").default(0),
   reorderLevel: doublePrecision("reorder_level").default(0),
+  masterQty: doublePrecision("master_qty").default(0), // 0 = no master carton pack defined for this SKU
+  barcodeCode: text("barcode_code").default(""), // legacy/own item code to encode as a barcode; falls back to sku_code
   batchTracked: boolean("batch_tracked").default(false),
   serialTracked: boolean("serial_tracked").default(false),
   status: text("status").default("active"),

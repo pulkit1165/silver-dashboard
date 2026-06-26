@@ -51,8 +51,19 @@ export const NAV: NavGroup[] = [
         children: [
           { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
           { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
+          { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/inventory", label: "Stock", icon: "≡", roles: ["admin", "inventory", "warehouse", "sales"] },
           { href: "/erp/warehouses", label: "Warehouses", icon: "⊞", roles: ["admin", "inventory", "warehouse"] },
+        ],
+      },
+      {
+        label: "Master Files", icon: "🗎",
+        children: [
+          { href: "/erp/customers", label: "Customer Master", icon: "☻", roles: ["admin", "sales", "accounts"] },
+          { href: "/erp/vendors", label: "Vendor Master", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
+          { href: "/erp/skus", label: "Item (SKU) Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
+          { href: "/erp/masters/party-rates", label: "Party-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts"] },
+          { href: "/erp/masters/item-rates", label: "Item-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts", "inventory"] },
         ],
       },
       {
@@ -118,6 +129,8 @@ const WRITERS: Record<string, Role[]> = {
   customers: ["admin", "sales"],
   invoices: ["admin", "accounts", "sales"],
   users: ["admin"],
+  labels: ["admin", "inventory", "warehouse"],
+  rates: ["admin", "sales", "accounts"],
 };
 
 export function canWrite(role: Role, module: keyof typeof WRITERS): boolean {

@@ -34,3 +34,9 @@ export function shortMonth(period: string): string {
   const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   return names[Number(m) - 1] ?? period;
 }
+
+// "22-Jun-2026" — the PKD (packed date) format on printed labels.
+export function pkd(date = new Date()): string {
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${String(date.getDate()).padStart(2, "0")}-${names[date.getMonth()]}-${date.getFullYear()}`;
+}

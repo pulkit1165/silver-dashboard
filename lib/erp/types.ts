@@ -6,8 +6,13 @@ export interface Sku {
   brand: string;
   unit: string;
   price: number;
+  purchase_price: number;
+  selling_price: number;
+  hsn: string;
   min_stock: number;
   reorder_level: number;
+  master_qty: number;
+  barcode_code: string;
   batch_tracked: boolean;
   serial_tracked: boolean;
   status: string;
@@ -50,6 +55,7 @@ export interface Vendor {
 export interface Customer {
   id: number; code: string; name: string; gst: string; email: string; phone: string;
   billing: string; shipping: string; credit_limit: number; payment_terms: string;
+  discount_pct: number | null; discount_class_id: number | null;
 }
 export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;

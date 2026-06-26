@@ -2,8 +2,11 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import PrintButton from "@/components/erp/PrintButton";
+import EditLabelInfo from "@/components/erp/EditLabelInfo";
 import { getSku, totalQty, inventoryForSku, stockStatus, getScans } from "@/lib/erp/queries";
 import { qrSvg } from "@/lib/erp/qr";
+import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 
@@ -13,11 +16,12 @@ export default async function SkuDetail({ params }: { params: Promise<{ id: stri
   const { id } = await params;
   const sku = await getSku(Number(id));
   if (!sku) notFound();
-  const [qty, locations, svg, scans] = await Promise.all([
+  const [qty, locations, svg, scans, user] = await Promise.all([
     totalQty(sku.id),
     inventoryForSku(sku.id),
     qrSvg(sku.qr_token, 200),
     getScans({ skuId: sku.id, limit: 12 }),
+    getCurrentUser(),
   ]);
   const status = stockStatus(sku, qty);
 
@@ -47,7 +51,8 @@ export default async function SkuDetail({ params }: { params: Promise<{ id: stri
             </div>
             <div className="mt-3 flex gap-2">
               <PrintButton />
-              <Link href="/erp/qr" className="no-print rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">Bulk labels</Link>
+              <Link href="/erp/qr" className="no-print rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">Bulk QR labels</Link>
+              <Link href="/erp/labels" className="no-print rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">Barcode labels</Link>
             </div>
           </div>
         </section>
@@ -62,6 +67,10 @@ export default async function SkuDetail({ params }: { params: Promise<{ id: stri
             <Info label="Reorder level">{sku.reorder_level}</Info>
             <Info label="Batch tracked">{sku.batch_tracked ? "Yes" : "No"}</Info>
             <Info label="Serial tracked">{sku.serial_tracked ? "Yes" : "No"}</Info>
+          </div>
+          <div className="border-t border-[var(--border)] p-4">
+            <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Barcode label info</div>
+            <EditLabelInfo skuId={sku.id} masterQty={sku.master_qty} barcodeCode={sku.barcode_code} canEdit={canWrite(user.role, "skus")} />
           </div>
           <div className="border-t border-[var(--border)] p-4">
             <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Stock by location</div>

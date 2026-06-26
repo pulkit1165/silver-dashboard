@@ -27,9 +27,10 @@ export async function POST(req: Request) {
   if (exists) return NextResponse.json({ ok: false, error: "SKU code already exists." }, { status: 409 });
 
   const [sku] = await sql`
-    INSERT INTO skus (sku_code,name,category,brand,unit,price,min_stock,reorder_level,batch_tracked,serial_tracked,qr_token)
+    INSERT INTO skus (sku_code,name,category,brand,unit,price,min_stock,reorder_level,master_qty,barcode_code,batch_tracked,serial_tracked,qr_token)
     VALUES (${String(b.sku_code)},${String(b.name)},${b.category ?? ""},${b.brand ?? ""},${b.unit ?? "PCS"},
             ${Number(b.price) || 0},${Number(b.min_stock) || 0},${Number(b.reorder_level) || 0},
+            ${Number(b.master_qty) || 0},${b.barcode_code ? String(b.barcode_code) : ""},
             ${!!b.batch_tracked},${!!b.serial_tracked},${genToken()})
     RETURNING *`;
   await logActivity({
