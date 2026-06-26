@@ -51,6 +51,7 @@ export const NAV: NavGroup[] = [
         children: [
           { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
           { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
+          { href: "/erp/skus/import-labels", label: "Backfill Barcode Info", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/inventory", label: "Stock", icon: "≡", roles: ["admin", "inventory", "warehouse", "sales"] },
           { href: "/erp/warehouses", label: "Warehouses", icon: "⊞", roles: ["admin", "inventory", "warehouse"] },

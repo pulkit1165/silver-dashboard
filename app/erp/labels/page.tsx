@@ -1,3 +1,4 @@
+import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import BarcodeLabels from "@/components/erp/BarcodeLabels";
 import ListFilters from "@/components/erp/ListFilters";
@@ -21,6 +22,9 @@ export default async function BarcodeLabelsPage({
   return (
     <>
       <PageHeader title="Print Barcode Labels" subtitle="Search for SKUs, choose Single or Master, and print — A4 sheet or thermal roll." />
+      <div className="mb-3">
+        <Link href="/erp/skus/import-labels" className="text-sm font-semibold text-[var(--accent)]">Bulk backfill barcode codes / master qty →</Link>
+      </div>
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
       {!sp.q && all.length > PAGE_CAP && (
         <p className="mb-3 text-xs font-semibold text-[var(--muted)]">
