@@ -6,7 +6,7 @@ import type { OrderPacking, PackingLine } from "@/lib/erp/types";
 
 type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
 type LogEntry = { ts: string; ok: boolean; text: string };
-type Pending = { code: string; line: PackingLine; qty: number };
+type Pending = { code: string; line: PackingLine; qty: number; needsOverpackConfirm?: boolean; overpackMsg?: string };
 
 export default function CasePacking({
   orders,
@@ -48,11 +48,13 @@ export default function CasePacking({
     if (!caseNo.trim()) return pushLog(false, "Enter a case number first.");
     const line = packing.lines.find((l) => l.qr_token === code || code.includes(l.qr_token));
     if (!line) return pushLog(false, "Scanned item is not on this order.");
-    if (line.remaining <= 0) return pushLog(false, `${line.sku_code} is already fully packed.`);
-    setPending({ code, line, qty: line.remaining });
+    // Default suggestion is what's left on the order, but the qty field is
+    // editable up or down — e.g. a sealed master-pack of 12 against 10
+    // remaining ships as 12, billed for the full 12.
+    setPending({ code, line, qty: line.remaining > 0 ? line.remaining : 1 });
   }
 
-  async function packPending() {
+  async function packPending(confirmOverpack = false) {
     if (!pending || !packing || !caseNo.trim()) return;
     const qty = Number(pending.qty);
     if (!Number.isFinite(qty) || qty <= 0) return pushLog(false, "Enter a valid quantity.");
@@ -68,6 +70,7 @@ export default function CasePacking({
           packageNo: caseNo.trim(),
           qty,
           device: "packing",
+          allowOverpack: confirmOverpack,
         }),
       });
       const d = await r.json();
@@ -75,6 +78,8 @@ export default function CasePacking({
         pushLog(true, d.message ?? `Packed ${qty} ${pending.line.sku_code} into Case ${caseNo.trim()}`);
         setPending(null);
         await loadPacking(packing.id);
+      } else if (String(d.error ?? "").startsWith("OVERPACK_CONFIRM")) {
+        setPending({ ...pending, needsOverpackConfirm: true, overpackMsg: d.error });
       } else {
         pushLog(false, d.error ?? "Rejected");
       }
@@ -140,20 +145,21 @@ export default function CasePacking({
                   <input
                     type="number"
                     min={1}
-                    max={pending.line.remaining}
                     value={pending.qty}
-                    onChange={(e) => setPending({ ...pending, qty: Number(e.target.value) })}
+                    onChange={(e) => setPending({ ...pending, qty: Number(e.target.value), needsOverpackConfirm: false })}
                     autoFocus
                     className="w-28 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-bold outline-none focus:border-[var(--accent)]"
                   />
                 </label>
-                <button
-                  onClick={packPending}
-                  disabled={busy}
-                  className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-60"
-                >
-                  {busy ? "Packing…" : `Pack into Case ${caseNo.trim()}`}
-                </button>
+                {!pending.needsOverpackConfirm && (
+                  <button
+                    onClick={() => packPending(false)}
+                    disabled={busy}
+                    className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-60"
+                  >
+                    {busy ? "Packing…" : `Pack into Case ${caseNo.trim()}`}
+                  </button>
+                )}
                 <button
                   onClick={() => setPending(null)}
                   className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)]"
@@ -161,6 +167,33 @@ export default function CasePacking({
                   Cancel
                 </button>
               </div>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                You can pack more than what&rsquo;s remaining (e.g. a sealed pack of 12 against 10 left) — the
+                customer is billed for the full quantity actually packed, just like the legacy app.
+              </p>
+              {pending.needsOverpackConfirm && (
+                <div className="mt-3 rounded-lg border border-[var(--accent)] bg-[var(--surface-2)] p-3">
+                  <p className="text-xs font-semibold text-[var(--accent-strong)]">
+                    This packs {pending.qty - pending.line.remaining} more than what&rsquo;s left on the order
+                    ({pending.line.remaining} remaining). The full {pending.qty} will be billed.
+                  </p>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => packPending(true)}
+                      disabled={busy}
+                      className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-60"
+                    >
+                      {busy ? "Packing…" : `Confirm — pack ${pending.qty} anyway`}
+                    </button>
+                    <button
+                      onClick={() => setPending({ ...pending, needsOverpackConfirm: false })}
+                      className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)]"
+                    >
+                      Change quantity
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

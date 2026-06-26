@@ -23,6 +23,11 @@ export interface ScanInput {
   packageNo?: string;
   device?: string;
   batch?: string;
+  // Items often come in a fixed master-pack size that doesn't divide evenly
+  // into what was ordered (ordered 10, pack of 12 → ship 12). pack_case
+  // blocks packing past the remaining ordered qty by default; this opts in
+  // to shipping the extra deliberately, after the operator confirms.
+  allowOverpack?: boolean;
 }
 
 export interface ScanResult {
@@ -263,8 +268,17 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
           if (!line) throw new Error(`${sku.sku_code} is not on order ${ref}`);
           const l = line as { id: number; qty: number; packed_qty: number; dispatched_qty: number };
           const remaining = l.qty - l.packed_qty;
-          if (remaining <= 0) throw new Error(`${sku.sku_code} already fully packed (${l.qty})`);
-          if (qty > remaining) throw new Error(`Only ${remaining} left to pack for ${sku.sku_code}`);
+          // Master-pack items may need to ship more than what's left on the
+          // order (e.g. ordered 10, pack of 12 → ship 12) — the customer
+          // gets billed for the full packed qty via dispatched_qty, same as
+          // the legacy app's Bal FG behaviour. Requires explicit
+          // confirmation so it's never silent.
+          if (qty > remaining && !input.allowOverpack) {
+            throw new Error(
+              `OVERPACK_CONFIRM: ${sku.sku_code} has only ${remaining} remaining on this order, ` +
+                `but ${qty} were scanned/entered. Confirm to pack and bill the full ${qty} anyway (e.g. fixed pack size).`,
+            );
+          }
 
           const loc = await resolveLoc(tx, sku.id, input.warehouseId, input.binId);
           const have = await qtyAt(tx, sku.id, loc.warehouseId, loc.binId, batch);
@@ -291,8 +305,11 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
           const anyDisp = lines.some((x) => x.dispatched_qty > 0);
           const status = allDisp ? "dispatched" : anyDisp ? "partially dispatched" : soRow.status;
           await tx`UPDATE sales_orders SET status=${status} WHERE id=${soRow.id}`;
-          message = `Packed ${qty} ${sku.sku_code} into Case ${caseNo}`;
-          data = { caseNo, packed: qty, remaining: remaining - qty, orderStatus: status, ordered: l.qty };
+          const overpacked = qty > remaining;
+          message = overpacked
+            ? `Packed ${qty} ${sku.sku_code} into Case ${caseNo} (${qty - remaining} more than ordered — will bill the full ${qty})`
+            : `Packed ${qty} ${sku.sku_code} into Case ${caseNo}`;
+          data = { caseNo, packed: qty, remaining: Math.max(remaining - qty, 0), overpacked, orderStatus: status, ordered: l.qty };
           break;
         }
 

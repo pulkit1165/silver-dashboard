@@ -39,6 +39,7 @@ export async function POST(req: Request) {
     packageNo: body.packageNo ? String(body.packageNo) : undefined,
     device: body.device ? String(body.device) : "web",
     batch: body.batch ? String(body.batch) : undefined,
+    allowOverpack: body.allowOverpack === true,
   });
   if (result.ok && action !== "lookup" && action !== "verify") {
     await logActivity({
