@@ -3,7 +3,7 @@ import { getSql } from "./db";
 import type {
   Sku, Warehouse, Bin, InventoryRow, StockStatus, ScanEvent,
   SalesOrder, SoLine, Vendor, Customer, PurchaseOrder,
-  OrderPacking, PackingLine, PackingCase,
+  OrderPacking, PackingLine, PackingCase, DeliveryOrderDoc, DeliveryOrderLine,
 } from "./types";
 
 export function stockStatus(sku: { min_stock: number; reorder_level: number }, qty: number): StockStatus {
@@ -248,6 +248,70 @@ export async function getOrderPacking(id: number): Promise<OrderPacking | undefi
   }));
 
   return { id: so.id, so_no: so.so_no, customer_name: so.customer_name, status: so.status, lines: packingLines, cases };
+}
+
+// The full legacy-style Delivery Order document for one case/package — every
+// field from the client's printed DO slip in one place. so_lines is the
+// source of truth for MRP/net rate/rate type/discount%/FOC qty (set once at
+// order time); net_wt/pack_wt/bal_rm live on package_lines (measured at
+// packing time, nothing else has them).
+export async function getDeliveryOrder(packageId: number): Promise<DeliveryOrderDoc | undefined> {
+  const sql = getSql();
+  const [pkg] = (await sql`
+    SELECT p.id AS package_id, p.package_no, p.status, p.created_at, p.tr_type, p.do_type, p.slip_no,
+           p.so_id, so.so_no, c.name AS customer_name
+    FROM packages p
+    JOIN sales_orders so ON so.id = p.so_id
+    JOIN customers c ON c.id = so.customer_id
+    WHERE p.id = ${packageId}`) as unknown as Array<
+    Omit<DeliveryOrderDoc, "lines">
+  >;
+  if (!pkg) return undefined;
+
+  const lines = (await sql`
+    SELECT pl.id AS package_line_id, s.sku_code, s.name AS sku_name,
+           l.qty AS order_qty, pl.qty AS do_qty,
+           l.mrp, l.price AS net_rate, l.rate_type, l.discount_pct, l.foc_qty,
+           pl.net_wt, pl.pack_wt, pl.bal_rm
+    FROM package_lines pl
+    JOIN so_lines l ON l.id = pl.so_line_id
+    JOIN skus s ON s.id = pl.sku_id
+    WHERE pl.package_id = ${packageId}
+    ORDER BY pl.id`) as unknown as DeliveryOrderLine[];
+
+  return { ...pkg, lines };
+}
+
+export async function updateDeliveryOrderHeader(
+  packageId: number,
+  patch: { trType?: string; doType?: string; slipNo?: string },
+): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  const [pkg] = (await sql`SELECT id FROM packages WHERE id=${packageId}`) as unknown as Array<{ id: number }>;
+  if (!pkg) return { error: "Delivery order not found." };
+  await sql`
+    UPDATE packages SET
+      tr_type = COALESCE(${patch.trType ?? null}, tr_type),
+      do_type = COALESCE(${patch.doType ?? null}, do_type),
+      slip_no = COALESCE(${patch.slipNo ?? null}, slip_no)
+    WHERE id = ${packageId}`;
+  return { ok: true };
+}
+
+export async function updateDeliveryOrderLine(
+  packageLineId: number,
+  patch: { netWt?: number; packWt?: number; balRm?: number },
+): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  const [line] = (await sql`SELECT id FROM package_lines WHERE id=${packageLineId}`) as unknown as Array<{ id: number }>;
+  if (!line) return { error: "Delivery order line not found." };
+  await sql`
+    UPDATE package_lines SET
+      net_wt = COALESCE(${patch.netWt ?? null}, net_wt),
+      pack_wt = COALESCE(${patch.packWt ?? null}, pack_wt),
+      bal_rm = COALESCE(${patch.balRm ?? null}, bal_rm)
+    WHERE id = ${packageLineId}`;
+  return { ok: true };
 }
 
 // Flat rows for the Google-Sheet CSV mirror (one row per item packed into a case).

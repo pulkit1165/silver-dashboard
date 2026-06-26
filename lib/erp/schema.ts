@@ -249,6 +249,8 @@ export const soLines = pgTable("so_lines", {
 
 // A "case" (carton/box) that items get packed into for dispatch. package_no holds
 // the human case number entered on the packing screen (unique per sales order).
+// tr_type/do_type/slip_no match the legacy Delivery Order header (TR Type,
+// DO Type, PSlip No) — defaulted automatically, editable on the DO detail page.
 export const packages = pgTable(
   "packages",
   {
@@ -256,6 +258,9 @@ export const packages = pgTable(
     soId: integer("so_id"),
     packageNo: text("package_no"),
     status: text("status").default("open"),
+    trType: text("tr_type").default(""),
+    doType: text("do_type").default("PS"),
+    slipNo: text("slip_no").default(""),
     createdBy: text("created_by"),
     createdAt: createdAt(),
   },
@@ -263,6 +268,8 @@ export const packages = pgTable(
 );
 
 // One row per (case, item, qty) — what physically went into a case during packing.
+// net_wt/pack_wt/bal_rm are the physical attributes from the legacy Delivery
+// Order line grid — measured at packing time, not derivable from anything else.
 export const packageLines = pgTable(
   "package_lines",
   {
@@ -272,6 +279,9 @@ export const packageLines = pgTable(
     soLineId: integer("so_line_id").notNull(),
     skuId: integer("sku_id").notNull(),
     qty: doublePrecision("qty").default(0),
+    netWt: doublePrecision("net_wt").default(0),
+    packWt: doublePrecision("pack_wt").default(0),
+    balRm: doublePrecision("bal_rm").default(0),
     packedBy: text("packed_by"),
     createdAt: createdAt(),
   },

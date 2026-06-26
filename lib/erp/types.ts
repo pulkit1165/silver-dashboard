@@ -80,3 +80,20 @@ export interface OrderPacking {
   id: number; so_no: string; customer_name: string; status: string;
   lines: PackingLine[]; cases: PackingCase[];
 }
+
+// The full legacy-style Delivery Order document for one case/package —
+// every field visible on the client's printed DO slip.
+export interface DeliveryOrderLine {
+  package_line_id: number;
+  sku_code: string; sku_name: string;
+  order_qty: number; // originally ordered (so_lines.qty)
+  do_qty: number; // actually packed/shipped into this case (package_lines.qty — "Bal FG")
+  mrp: number; net_rate: number; rate_type: string; discount_pct: number; foc_qty: number;
+  net_wt: number; pack_wt: number; bal_rm: number;
+}
+export interface DeliveryOrderDoc {
+  package_id: number; package_no: string; status: string; created_at: string;
+  tr_type: string; do_type: string; slip_no: string;
+  so_id: number; so_no: string; customer_name: string;
+  lines: DeliveryOrderLine[];
+}

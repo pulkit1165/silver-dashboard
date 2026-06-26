@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import Scanner from "./Scanner";
 import type { OrderPacking, PackingLine } from "@/lib/erp/types";
 
@@ -257,7 +258,12 @@ export default function CasePacking({
               <div key={c.package_id} className="rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
                 <div className="mb-2 flex items-center justify-between">
                   <span className="text-sm font-extrabold">Case {c.case_no}</span>
-                  <span className="text-xs font-semibold text-[var(--muted)]">{c.total_qty} pcs · {c.items.length} item(s)</span>
+                  <span className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">
+                    {c.total_qty} pcs · {c.items.length} item(s)
+                    <Link href={`/erp/packages/${c.package_id}`} className="rounded border border-[var(--border)] bg-[var(--surface)] px-2 py-1 font-bold text-[var(--accent)] hover:bg-[var(--accent-bg)]">
+                      📄 Delivery Order
+                    </Link>
+                  </span>
                 </div>
                 <div className="flex flex-col gap-1">
                   {c.items.map((it, i) => (
