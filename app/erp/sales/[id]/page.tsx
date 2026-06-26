@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import PrintButton from "@/components/erp/PrintButton";
 import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
+import ConfirmOrderButton from "@/components/erp/ConfirmOrderButton";
 import { getSalesOrder } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +25,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
       <div className="mb-4 flex items-center gap-3">
         <Link href="/erp/sales" className="text-sm font-semibold text-[var(--accent)]">← Sales Orders</Link>
         <Link href="/erp/scan/dispatch" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">🚚 Dispatch scan</Link>
+        {so.status === "draft" && <ConfirmOrderButton soId={so.id} />}
         {billable > 0
           ? <GenerateInvoiceButton soId={so.id} />
           : <span className="text-xs font-semibold text-[var(--muted)]">Nothing to invoice yet — dispatch items first.</span>}

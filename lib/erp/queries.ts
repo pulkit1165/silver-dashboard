@@ -130,6 +130,17 @@ export async function createSalesOrder(input: {
   return (await getSalesOrder(so.id as number))!;
 }
 
+// Hands a draft order to the warehouse — only after this does it show up in
+// the packing queue / dispatch screen.
+export async function confirmSalesOrder(id: number): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  const [so] = (await sql`SELECT status FROM sales_orders WHERE id=${id}`) as unknown as Array<{ status: string }>;
+  if (!so) return { error: "Sales order not found." };
+  if (so.status !== "draft") return { error: `Order is already ${so.status} — nothing to confirm.` };
+  await sql`UPDATE sales_orders SET status='confirmed' WHERE id=${id}`;
+  return { ok: true };
+}
+
 // Orders that can still be packed/dispatched (drives the packing-screen dropdown).
 const PACKABLE = ["confirmed", "picked", "packed", "partially dispatched"];
 export async function getPackableOrders(): Promise<SalesOrder[]> {
@@ -138,6 +149,52 @@ export async function getPackableOrders(): Promise<SalesOrder[]> {
     SELECT so.*, c.name AS customer_name FROM sales_orders so
     JOIN customers c ON c.id=so.customer_id
     WHERE so.status IN ${sql(PACKABLE)} ORDER BY so.id DESC`) as unknown as SalesOrder[];
+}
+
+export interface PendingPackRow {
+  id: number; so_no: string; customer_name: string; order_date: string; status: string;
+  lines: number; ordered_qty: number; packed_qty: number; pending_qty: number;
+}
+// Queue for the packing screen: confirmed orders that still have unpacked
+// qty, oldest first (so the warehouse works through the backlog in order).
+export async function getPendingToPack(): Promise<PendingPackRow[]> {
+  const sql = getSql();
+  return (await sql`
+    SELECT so.id, so.so_no, c.name AS customer_name, so.order_date, so.status,
+           COUNT(l.id)::int AS lines,
+           COALESCE(SUM(l.qty),0)::float8 AS ordered_qty,
+           COALESCE(SUM(l.packed_qty),0)::float8 AS packed_qty,
+           COALESCE(SUM(l.qty - l.packed_qty),0)::float8 AS pending_qty
+    FROM sales_orders so
+    JOIN customers c ON c.id = so.customer_id
+    JOIN so_lines l ON l.so_id = so.id
+    WHERE so.status IN ${sql(PACKABLE)}
+    GROUP BY so.id, c.name, so.order_date, so.status, so.so_no
+    HAVING COALESCE(SUM(l.qty - l.packed_qty),0) > 0
+    ORDER BY so.order_date, so.id`) as unknown as PendingPackRow[];
+}
+
+export interface PendingBillRow {
+  id: number; so_no: string; customer_name: string; order_date: string; status: string;
+  lines: number; dispatched_qty: number; invoiced_qty: number; billable_qty: number;
+}
+// Queue for the billing screen: orders with dispatched-but-uninvoiced qty —
+// the legacy app's "pending Delivery Orders to be billed."
+export async function getPendingToBill(): Promise<PendingBillRow[]> {
+  const sql = getSql();
+  return (await sql`
+    SELECT so.id, so.so_no, c.name AS customer_name, so.order_date, so.status,
+           COUNT(l.id)::int AS lines,
+           COALESCE(SUM(l.dispatched_qty),0)::float8 AS dispatched_qty,
+           COALESCE(SUM(l.invoiced_qty),0)::float8 AS invoiced_qty,
+           COALESCE(SUM(GREATEST(l.dispatched_qty - l.invoiced_qty,0)),0)::float8 AS billable_qty
+    FROM sales_orders so
+    JOIN customers c ON c.id = so.customer_id
+    JOIN so_lines l ON l.so_id = so.id
+    WHERE so.status IN ('partially dispatched','dispatched')
+    GROUP BY so.id, c.name, so.order_date, so.status, so.so_no
+    HAVING COALESCE(SUM(GREATEST(l.dispatched_qty - l.invoiced_qty,0)),0) > 0
+    ORDER BY so.order_date, so.id`) as unknown as PendingBillRow[];
 }
 
 // Full packing view for one order: per-line ordered/packed/remaining/on-hand + the cases.
