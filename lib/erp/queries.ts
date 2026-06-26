@@ -250,6 +250,33 @@ export async function getOrderPacking(id: number): Promise<OrderPacking | undefi
   return { id: so.id, so_no: so.so_no, customer_name: so.customer_name, status: so.status, lines: packingLines, cases };
 }
 
+export interface DeliveryOrderListRow {
+  package_id: number; package_no: string; status: string; created_at: string;
+  tr_type: string; do_type: string; slip_no: string;
+  so_id: number; so_no: string; customer_name: string; lines: number; total_qty: number;
+}
+export interface DoFilter { party?: string; from?: string; to?: string; status?: string }
+// Every Delivery Order (packed case) — the list/queue this module was
+// missing a dedicated entry point for.
+export async function getDeliveryOrders(f: DoFilter = {}): Promise<DeliveryOrderListRow[]> {
+  const sql = getSql();
+  const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
+  return (await sql`
+    SELECT p.id AS package_id, p.package_no, p.status, p.created_at, p.tr_type, p.do_type, p.slip_no,
+           so.id AS so_id, so.so_no, c.name AS customer_name,
+           COUNT(pl.id)::int AS lines, COALESCE(SUM(pl.qty),0)::float8 AS total_qty
+    FROM packages p
+    JOIN sales_orders so ON so.id = p.so_id
+    JOIN customers c ON c.id = so.customer_id
+    LEFT JOIN package_lines pl ON pl.package_id = p.id
+    WHERE (${party}::text IS NULL OR c.name ILIKE ${party})
+      AND (${f.from ?? null}::text IS NULL OR p.created_at >= ${f.from ?? null})
+      AND (${f.to ?? null}::text IS NULL OR p.created_at <= ${f.to ?? null})
+      AND (${f.status ?? null}::text IS NULL OR p.status = ${f.status ?? null})
+    GROUP BY p.id, p.package_no, p.status, p.created_at, p.tr_type, p.do_type, p.slip_no, so.id, so.so_no, c.name
+    ORDER BY p.id DESC`) as unknown as DeliveryOrderListRow[];
+}
+
 // The full legacy-style Delivery Order document for one case/package — every
 // field from the client's printed DO slip in one place. so_lines is the
 // source of truth for MRP/net rate/rate type/discount%/FOC qty (set once at
