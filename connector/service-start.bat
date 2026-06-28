@@ -6,4 +6,4 @@ set ORACLE_USER=SILVER_2026
 set ORACLE_PASSWORD=SILVER_2026
 set ORACLE_CONNECT_STRING=DISH
 set CONNECTOR_PORT=8151
-node serve.mjs
+"C:\Program Files\nodejs\node.exe" serve.mjs
