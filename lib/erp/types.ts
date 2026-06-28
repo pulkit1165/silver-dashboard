@@ -13,6 +13,7 @@ export interface Sku {
   min_stock: number;
   reorder_level: number;
   master_qty: number;
+  single_qty: number;
   barcode_code: string;
   batch_tracked: boolean;
   serial_tracked: boolean;
@@ -40,7 +41,7 @@ export interface ScanEvent {
 export interface SalesOrder {
   id: number; so_no: string; customer_id: number; status: string; order_date: string;
   invoice_no: string | null; total: number; customer_name?: string;
-  bill_type: string; disc_pct: number; disc_pct_18?: number; disc_pct_28?: number; remarks: string;
+  bill_type: string; disc_pct: number; remarks: string;
 }
 export interface SoLine {
   id: number; so_id: number; sku_id: number; qty: number;
@@ -60,8 +61,6 @@ export interface Customer {
   id: number; code: string; name: string; gst: string; email: string; phone: string;
   billing: string; shipping: string; credit_limit: number; payment_terms: string;
   discount_pct: number | null; discount_class_id: number | null;
-  // GST-slab-specific standing discount % off MRP (legacy "Disc 18"/"Disc 28").
-  discount_pct_18: number | null; discount_pct_28: number | null;
 }
 export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;

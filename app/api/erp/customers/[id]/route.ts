@@ -16,19 +16,16 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   }
   const { id } = await params;
   const b = await req.json().catch(() => ({}));
-  const FIELDS = ["discount_pct", "discount_pct_18", "discount_pct_28"] as const;
-  const field = FIELDS.find((f) => b[f] != null);
-  if (!field || !Number.isFinite(Number(b[field])) || Number(b[field]) < 0) {
-    return NextResponse.json({ ok: false, error: "A non-negative discount_pct, discount_pct_18, or discount_pct_28 is required." }, { status: 400 });
+  if (b.discount_pct == null || !Number.isFinite(Number(b.discount_pct)) || Number(b.discount_pct) < 0) {
+    return NextResponse.json({ ok: false, error: "A non-negative discount_pct is required." }, { status: 400 });
   }
-  const value = Number(b[field]);
   const sql = getSql();
-  const [customer] = await sql`UPDATE customers SET ${sql({ [field]: value })} WHERE id=${Number(id)} RETURNING id, code, name, discount_pct, discount_pct_18, discount_pct_28`;
+  const [customer] = await sql`UPDATE customers SET discount_pct=${Number(b.discount_pct)} WHERE id=${Number(id)} RETURNING id, code, name, discount_pct`;
   if (!customer) return NextResponse.json({ ok: false, error: "Customer not found." }, { status: 404 });
   await logActivity({
     actor: user.name, actorRole: user.role,
     action: "customer.rate", entity: "customer", entityId: (customer as { id: number }).id,
-    summary: `Set ${field.replace(/_/g, " ")} for ${(customer as { name: string }).name} to ${value}%`,
+    summary: `Set standing discount for ${(customer as { name: string }).name} to ${(customer as { discount_pct: number }).discount_pct}%`,
   });
   return NextResponse.json({ ok: true, customer });
 }

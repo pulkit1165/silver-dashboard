@@ -44,6 +44,7 @@ export default function AddSku({ canCreate }: { canCreate: boolean }) {
           <F label="Min stock"><input name="min_stock" type="number" className={inp} /></F>
           <F label="Reorder level"><input name="reorder_level" type="number" className={inp} /></F>
           <F label="Barcode code"><input name="barcode_code" className={inp} placeholder="defaults to SKU code" /></F>
+          <F label="Single (unit) qty"><input name="single_qty" type="number" defaultValue={1} className={inp} placeholder="1" /></F>
           <F label="Master carton qty"><input name="master_qty" type="number" className={inp} placeholder="e.g. 10" /></F>
           <div className="flex items-end gap-4 text-sm">
             <label className="flex items-center gap-1.5"><input type="checkbox" name="batch_tracked" /> Batch</label>

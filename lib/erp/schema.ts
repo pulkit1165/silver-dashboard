@@ -48,6 +48,7 @@ export const skus = pgTable("skus", {
   minStock: doublePrecision("min_stock").default(0),
   reorderLevel: doublePrecision("reorder_level").default(0),
   masterQty: doublePrecision("master_qty").default(0), // 0 = no master carton pack defined for this SKU
+  singleQty: doublePrecision("single_qty").default(1), // smallest sellable/labelable unit — not always 1 (Oracle STDPACK2)
   barcodeCode: text("barcode_code").default(""), // legacy/own item code to encode as a barcode; falls back to sku_code
   batchTracked: boolean("batch_tracked").default(false),
   serialTracked: boolean("serial_tracked").default(false),
@@ -132,14 +133,10 @@ export const customers = pgTable("customers", {
   pincode: text("pincode").default(""),
   posStateCode: text("pos_state_code").default(""),
   // Pricing scheme: a customer belongs to a discount class; discountPct is an
-  // optional whole-order override (takes precedence over the class default).
+  // optional whole-order override (takes precedence over the class default),
+  // and is also this party's standing discount % off MRP for Sales Orders.
   discountClassId: integer("discount_class_id"),
   discountPct: doublePrecision("discount_pct"),
-  // GST-slab-specific standing discount %, matching the legacy Sale Order
-  // header's "Disc 18" / "Disc 28" fields — which one applies to a line is
-  // decided by that item's own GST rate (skus.gst_rate).
-  discountPct18: doublePrecision("discount_pct_18").default(0),
-  discountPct28: doublePrecision("discount_pct_28").default(0),
   creditLimit: doublePrecision("credit_limit").default(0),
   paymentTerms: text("payment_terms"),
   createdAt: createdAt(),
@@ -220,14 +217,11 @@ export const salesOrders = pgTable("sales_orders", {
   invoiceNo: text("invoice_no"),
   total: doublePrecision("total").default(0),
   // Header-level fields matching the legacy Sale Order screen. billType is
-  // K | O | O/K. discPct18/28 are the party's locked GST-slab discounts (off
-  // MRP), auto-fetched from customers.discount_pct_18/28 — each line uses
-  // whichever one matches its own item's GST rate. discPct is kept as a
-  // single blended fallback for items at neither slab.
+  // K | O | O/K. discPct is the party's locked standing discount % off MRP,
+  // auto-fetched from customers.discount_pct — applied to every line
+  // regardless of GST slab (this business doesn't discount by slab).
   billType: text("bill_type").default(""),
   discPct: doublePrecision("disc_pct").default(0),
-  discPct18: doublePrecision("disc_pct_18").default(0),
-  discPct28: doublePrecision("disc_pct_28").default(0),
   remarks: text("remarks").default(""),
   createdAt: createdAt(),
 });

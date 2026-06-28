@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function EditLabelInfo({
-  skuId, masterQty, barcodeCode, canEdit,
-}: { skuId: number; masterQty: number; barcodeCode: string; canEdit: boolean }) {
+  skuId, masterQty, singleQty, barcodeCode, canEdit,
+}: { skuId: number; masterQty: number; singleQty: number; barcodeCode: string; canEdit: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -29,7 +29,11 @@ export default function EditLabelInfo({
   if (!open) {
     return (
       <div className="flex items-center gap-2 text-sm">
-        <span>Barcode: <span className="font-mono">{barcodeCode || "(uses SKU code)"}</span> · Master qty: <b>{masterQty || "—"}</b></span>
+        <span>
+          Barcode: <span className="font-mono">{barcodeCode || "(uses SKU code)"}</span>
+          {" · "}Single qty: <b>{singleQty || 1}</b>
+          {" · "}Master qty: <b>{masterQty || "—"}</b>
+        </span>
         {canEdit && (
           <button onClick={() => setOpen(true)} className="text-xs font-semibold text-[var(--accent)] hover:underline">Edit</button>
         )}
@@ -43,6 +47,11 @@ export default function EditLabelInfo({
         Barcode code
         <input name="barcode_code" defaultValue={barcodeCode} placeholder="defaults to SKU code"
           className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm outline-none focus:border-[var(--accent)]" />
+      </label>
+      <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+        Single (unit) qty
+        <input name="single_qty" type="number" defaultValue={singleQty || 1} placeholder="1"
+          className="w-24 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm outline-none focus:border-[var(--accent)]" />
       </label>
       <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
         Master carton qty

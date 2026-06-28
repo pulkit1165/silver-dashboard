@@ -54,6 +54,7 @@ export async function POST(req: Request) {
       opening_stock: String(num(pick(rn, "opening_stock"))),
       reorder_level: String(num(pick(rn, "reorder_level"))),
       master_qty: String(num(pick(rn, "master_qty"))),
+      single_qty: String(num(pick(rn, "single_qty")) || 1),
       barcode_code: pick(rn, "barcode_code"),
     });
   });
@@ -69,8 +70,8 @@ export async function POST(req: Request) {
       const token = genToken();
       const sell = num(v.selling_price);
       const [sku] = await sql`
-        INSERT INTO skus (sku_code,name,category,brand,unit,price,purchase_price,selling_price,hsn,reorder_level,master_qty,barcode_code,qr_token)
-        VALUES (${v.sku_code},${v.name},${v.category},${v.brand},${v.unit},${sell},${num(v.purchase_price)},${sell},${v.hsn},${num(v.reorder_level)},${num(v.master_qty)},${v.barcode_code},${token})
+        INSERT INTO skus (sku_code,name,category,brand,unit,price,purchase_price,selling_price,hsn,reorder_level,master_qty,single_qty,barcode_code,qr_token)
+        VALUES (${v.sku_code},${v.name},${v.category},${v.brand},${v.unit},${sell},${num(v.purchase_price)},${sell},${v.hsn},${num(v.reorder_level)},${num(v.master_qty)},${num(v.single_qty) || 1},${v.barcode_code},${token})
         RETURNING id`;
       const skuId = (sku as { id: number }).id;
       await sql`INSERT INTO qr_codes (sku_id,sku_code,token,status,created_by) VALUES (${skuId},${v.sku_code},${token},'active',${user.name})`;

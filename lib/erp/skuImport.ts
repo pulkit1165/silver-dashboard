@@ -16,7 +16,8 @@ export const FIELD_ALIASES: Record<string, string[]> = {
   selling_price: ["mrp", "sellingprice", "price", "sp", "rate", "sellprice"],
   opening_stock: ["openingstock", "opening", "stock", "qty", "quantity", "openingqty"],
   reorder_level: ["reorderlevel", "reorder", "minstock", "minimum"],
-  master_qty: ["masterqty", "masterpacksize", "packsize", "cartonqty", "masterpack"],
+  master_qty: ["masterqty", "masterpacksize", "packsize", "cartonqty", "masterpack", "stdpack"],
+  single_qty: ["singleqty", "innerpack", "unitpack", "piecesperunit", "stdpack2"],
   barcode_code: ["barcode", "barcodecode", "owncode", "itemcodelegacy"],
 };
 

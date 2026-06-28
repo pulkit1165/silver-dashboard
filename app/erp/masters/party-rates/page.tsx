@@ -20,18 +20,18 @@ export default async function PartyRateMasterPage({
     <>
       <PageHeader
         title="Party-wise Net Rate"
-        subtitle="Each customer's standing discount % off MRP, by GST slab — applied automatically when a Sales Order is created (an item's own GST rate picks Disc 18 vs Disc 28)."
+        subtitle="Each customer's standing discount % off MRP — applied automatically when a Sales Order is created, unless an item has its own fixed net rate."
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">
         <div className="overflow-x-auto">
           <table className="rtable">
             <thead>
-              <tr><th>Code</th><th>Customer</th><th>GST</th><th className="!text-right">Credit limit</th><th className="!text-right">Disc 18%</th><th className="!text-right">Disc 28%</th></tr>
+              <tr><th>Code</th><th>Customer</th><th>GST</th><th className="!text-right">Credit limit</th><th className="!text-right">Standing discount</th></tr>
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={6} className="!py-6 text-center text-[var(--muted)]">No customers found.</td></tr>
+                <tr><td colSpan={5} className="!py-6 text-center text-[var(--muted)]">No customers found.</td></tr>
               )}
               {rows.map((c) => (
                 <tr key={c.id}>
@@ -42,25 +42,13 @@ export default async function PartyRateMasterPage({
                   <td className="num-cell">
                     {editable ? (
                       <EditableRate
-                        value={c.discount_pct_18 ?? 0}
+                        value={c.discount_pct ?? 0}
                         endpoint={`/api/erp/customers/${c.id}`}
-                        field="discount_pct_18"
+                        field="discount_pct"
                         suffix="%"
                       />
                     ) : (
-                      <span className="font-semibold">{(c.discount_pct_18 ?? 0).toFixed(2)}%</span>
-                    )}
-                  </td>
-                  <td className="num-cell">
-                    {editable ? (
-                      <EditableRate
-                        value={c.discount_pct_28 ?? 0}
-                        endpoint={`/api/erp/customers/${c.id}`}
-                        field="discount_pct_28"
-                        suffix="%"
-                      />
-                    ) : (
-                      <span className="font-semibold">{(c.discount_pct_28 ?? 0).toFixed(2)}%</span>
+                      <span className="font-semibold">{(c.discount_pct ?? 0).toFixed(2)}%</span>
                     )}
                   </td>
                 </tr>

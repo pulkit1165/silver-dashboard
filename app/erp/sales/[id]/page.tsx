@@ -37,8 +37,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
         <div className="panel-hd">Order details</div>
         <div className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-4">
           <Detail label="Bill Type" value={so.bill_type || "—"} />
-          <Detail label="Disc 18%" value={so.disc_pct_18 ? `${so.disc_pct_18.toFixed(2)}%` : "—"} />
-          <Detail label="Disc 28%" value={so.disc_pct_28 ? `${so.disc_pct_28.toFixed(2)}%` : "—"} />
+          <Detail label="Discount (%)" value={so.disc_pct ? `${so.disc_pct.toFixed(2)}%` : "—"} />
           <Detail label="Remarks" value={so.remarks || "—"} />
         </div>
       </section>

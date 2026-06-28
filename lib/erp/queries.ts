@@ -123,17 +123,12 @@ async function ensureSalesOrderCols() {
     await sql.unsafe(`ALTER TABLE sales_orders
       ADD COLUMN IF NOT EXISTS bill_type text DEFAULT '',
       ADD COLUMN IF NOT EXISTS disc_pct double precision DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS disc_pct_18 double precision DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS disc_pct_28 double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS remarks text DEFAULT ''`);
     await sql.unsafe(`ALTER TABLE so_lines
       ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS rate_type text DEFAULT 'MRP',
       ADD COLUMN IF NOT EXISTS foc_qty double precision DEFAULT 0`);
-    await sql.unsafe(`ALTER TABLE customers
-      ADD COLUMN IF NOT EXISTS discount_pct_18 double precision DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS discount_pct_28 double precision DEFAULT 0`);
     soColsEnsured = true;
   } catch { /* columns may already exist (drizzle push) — ignore */ }
 }
@@ -142,9 +137,7 @@ export async function createSalesOrder(input: {
   customerId: number;
   orderDate: string;
   billType?: string;
-  discPct?: number; // blended fallback discount % (items at neither GST slab)
-  discPct18?: number; // party's locked discount % for 18%-GST items
-  discPct28?: number; // party's locked discount % for 28%-GST items
+  discPct?: number; // party's locked discount % (from the party-rate master)
   remarks?: string;
   lines: Array<{
     skuId: number; qty: number; price: number;
@@ -159,9 +152,9 @@ export async function createSalesOrder(input: {
   const soNo = `SO-${next}`;
   const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
   const [so] = await sql`
-    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, disc_pct_18, disc_pct_28, remarks)
+    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, remarks)
     VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total},
-      ${input.billType ?? ""}, ${input.discPct ?? 0}, ${input.discPct18 ?? 0}, ${input.discPct28 ?? 0}, ${input.remarks ?? ""})
+      ${input.billType ?? ""}, ${input.discPct ?? 0}, ${input.remarks ?? ""})
     RETURNING id`;
   for (const l of input.lines) {
     await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)

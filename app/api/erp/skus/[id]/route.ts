@@ -18,7 +18,8 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   const b = await req.json().catch(() => ({}));
   const sql = getSql();
   const [sku] = await sql`
-    UPDATE skus SET master_qty=${Number(b.master_qty) || 0}, barcode_code=${b.barcode_code ? String(b.barcode_code) : ""}
+    UPDATE skus SET master_qty=${Number(b.master_qty) || 0}, single_qty=${Number(b.single_qty) || 1},
+      barcode_code=${b.barcode_code ? String(b.barcode_code) : ""}
     WHERE id=${Number(id)} RETURNING *`;
   if (!sku) return NextResponse.json({ ok: false, error: "SKU not found." }, { status: 404 });
   await logActivity({

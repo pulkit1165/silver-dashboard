@@ -6,9 +6,9 @@ import SearchSelect from "./SearchSelect";
 
 interface SkuOption {
   id: number; sku_code: string; name: string; price: number; unit: string;
-  gst_rate: number; master_qty: number; bal_qty: number;
+  gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number;
 }
-interface CustomerOption { id: number; code: string; name: string; discount_pct_18: number; discount_pct_28: number }
+interface CustomerOption { id: number; code: string; name: string; discount_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
 
 interface Line {
@@ -38,17 +38,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const [err, setErr] = useState("");
 
   const customer = customers.find((c) => c.id === customerId);
-  // The party's locked discount %, per GST slab, from the Party-rate master
-  // (customers.discount_pct_18/28) — mirrors the legacy Sale Order header's
-  // "Disc 18" / "Disc 28" fields.
-  const discPct18 = customer?.discount_pct_18 ?? 0;
-  const discPct28 = customer?.discount_pct_28 ?? 0;
+  // The party's locked discount %, from the Party-rate master (customers.discount_pct).
+  const discPct = customer?.discount_pct ?? 0;
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
-  // Which of the party's two locked discounts applies to a given item,
-  // decided by that item's own GST rate.
-  function discPctFor(sku: SkuOption): number {
-    return sku.gst_rate >= 28 ? discPct28 : discPct18;
-  }
   const customerOptions = useMemo(
     () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: c.code })),
     [customers],
@@ -76,11 +68,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   // When the party changes, re-price every existing line for that party: for
   // each item, the Rate Type (NET/MRP) and net rate are auto-fetched from the
-  // party-wise net-rate file (NET if the party has a rate for it, else MRP at
-  // the locked discount for that item's own GST slab).
+  // party-wise net-rate file (NET if the party has a rate for it, else MRP).
   useEffect(() => {
     if (!customer) return;
     const party = customer.name;
+    const d = customer.discount_pct ?? 0;
     let cancelled = false;
     const snapshot = linesRef.current;
     setLines((ls) => ls.map((l) => {
@@ -93,7 +85,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
       if (!sku) return;
       loadRates(sku.name, party).then(({ partyRates, itemRates }) => {
         if (cancelled) return;
-        updateLine(idx, { ...deriveRate(sku.price, partyRates, discPctFor(sku)), partyRates, itemRates, loadingRates: false });
+        updateLine(idx, { ...deriveRate(sku, partyRates, d), partyRates, itemRates, loadingRates: false });
       });
     });
     return () => { cancelled = true; };
@@ -107,10 +99,10 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   async function onSkuChange(idx: number, skuId: number) {
     const sku = skuById.get(skuId);
     if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", loadingRates: false, itemRates: [], partyRates: [] }); return; }
-    // optimistic MRP default while we fetch the party-wise rate for this item
-    updateLine(idx, { skuId, ...deriveRate(sku.price, [], discPctFor(sku)), loadingRates: true, itemRates: [], partyRates: [] });
+    // optimistic default while we fetch the party-wise rate for this item
+    updateLine(idx, { skuId, ...deriveRate(sku, [], discPct), loadingRates: true, itemRates: [], partyRates: [] });
     const { partyRates, itemRates } = await loadRates(sku.name, customer?.name ?? null);
-    updateLine(idx, { ...deriveRate(sku.price, partyRates, discPctFor(sku)), partyRates, itemRates, loadingRates: false });
+    updateLine(idx, { ...deriveRate(sku, partyRates, discPct), partyRates, itemRates, loadingRates: false });
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
@@ -129,8 +121,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           customer_id: customerId,
           order_date: orderDate,
           bill_type: billType,
-          disc_pct_18: discPct18,
-          disc_pct_28: discPct28,
+          disc_pct: discPct,
           remarks,
           lines: validLines.map((l) => {
             const sku = skuById.get(l.skuId as number);
@@ -153,7 +144,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   return (
     <div className="panel space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <F label="Customer *">
           <SearchSelect
             options={customerOptions}
@@ -173,15 +164,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
             <option value="O/K">O/K</option>
           </select>
         </F>
-        <F label="Disc 18% (locked)">
-          <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`} title="Set per party in Master Files → Party-wise Net Rate. Applies to 18%-GST items.">
-            <span className="font-bold">{discPct18.toFixed(2)}%</span>
-            <span className="text-[10px] font-semibold uppercase text-[var(--muted-2)]">🔒 auto</span>
-          </div>
-        </F>
-        <F label="Disc 28% (locked)">
-          <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`} title="Set per party in Master Files → Party-wise Net Rate. Applies to 28%-GST items.">
-            <span className="font-bold">{discPct28.toFixed(2)}%</span>
+        <F label="Discount % (locked · from Party master)">
+          <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`} title="Set per party in Master Files → Party-wise Net Rate">
+            <span className="font-bold">{discPct.toFixed(2)}%</span>
             <span className="text-[10px] font-semibold uppercase text-[var(--muted-2)]">🔒 auto</span>
           </div>
         </F>
@@ -192,9 +177,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
       {customer && (
         <div className="text-sm">
-          {discPct18 > 0 || discPct28 > 0 ? (
+          {discPct > 0 ? (
             <span className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 font-semibold text-[var(--accent)]">
-              {customer.name}: {discPct18.toFixed(2)}% off MRP on 18%-GST items, {discPct28.toFixed(2)}% on 28%-GST items — auto-applied per line.
+              {customer.name}: {discPct.toFixed(2)}% off MRP — auto-applied to every line (unless the item has its own fixed net rate).
               <span className="font-normal text-[var(--muted)]"> Change it in Master Files → Party-wise Net Rate.</span>
             </span>
           ) : (
@@ -206,7 +191,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
       <div className="space-y-3">
         {lines.map((line, idx) => {
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
-          const lineDiscPct = sku ? discPctFor(sku) : 0;
+          const hasItemNetRate = !!sku && sku.item_net_rate > 0 && sku.item_net_rate !== sku.price;
           return (
             <div key={idx} className="rounded-xl border border-[var(--border)] p-3">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-9 sm:items-end">
@@ -225,13 +210,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                   <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? sku.price.toFixed(2) : "—"}</div>
                 </F>
                 <F label="GST%">
-                  <div className={`${inp} bg-[var(--surface-2)]`} title="Decides whether Disc 18 or Disc 28 applies to this line">
-                    {sku ? `${sku.gst_rate}%` : "—"}
-                  </div>
+                  <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? `${sku.gst_rate}%` : "—"}</div>
                 </F>
                 <F label="Disc %">
-                  <div className={`${inp} bg-[var(--surface-2)]`} title="Party discount % for this item's GST slab (from the Party master)">
-                    {sku ? `${lineDiscPct.toFixed(2)}%` : "—"}
+                  <div className={`${inp} bg-[var(--surface-2)]`} title={hasItemNetRate ? "Not applied — this item has its own fixed net rate" : "Party discount % (from the Party master)"}>
+                    {hasItemNetRate ? "—" : (discPct ? `${discPct.toFixed(2)}%` : "—")}
                   </div>
                 </F>
                 <F label="Net rate">
@@ -251,7 +234,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <F label="Rate Type">
                   <div
                     className={`${inp} bg-[var(--surface-2)] font-bold ${line.rateType === "NET" ? "text-[var(--accent)]" : ""}`}
-                    title="Auto: NET if the party has a net rate for this item (party-wise net-rate file), else MRP"
+                    title="Auto: NET if the item/party has a net rate set, else MRP minus the party discount"
                   >
                     {line.loadingRates ? "…" : (line.rateType || "—")}
                   </div>
@@ -282,6 +265,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
                   <span title="Master pack size — orders are shipped in full packs">Std Pack: <span className="font-semibold text-[var(--foreground)]">{sku.master_qty || "—"}</span></span>
                   <span title="Current stock on hand">Bal Qty: <span className={`font-semibold ${sku.bal_qty < line.qty ? "text-[var(--danger)]" : "text-[var(--foreground)]"}`}>{sku.bal_qty.toLocaleString("en-IN")}</span></span>
+                  {hasItemNetRate && <span className="font-semibold text-[var(--accent)]" title="This item has a fixed net rate — party discount is skipped">Fixed item net rate applies</span>}
                 </div>
               )}
 
@@ -291,12 +275,20 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     "Checking Oracle history for past rates…"
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {lineDiscPct > 0 && (
+                      {hasItemNetRate && (
                         <Suggestion
-                          label={`MRP rate (${lineDiscPct.toFixed(2)}% off)`}
-                          rate={round2(sku.price * (1 - lineDiscPct / 100))}
+                          label="Item-wise net rate"
+                          rate={sku.item_net_rate}
+                          date="fixed"
+                          onUse={() => updateLine(idx, { price: sku.item_net_rate, rateType: "NET" })}
+                        />
+                      )}
+                      {!hasItemNetRate && discPct > 0 && (
+                        <Suggestion
+                          label={`MRP rate (${discPct.toFixed(2)}% off)`}
+                          rate={round2(sku.price * (1 - discPct / 100))}
                           date="MRP"
-                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - lineDiscPct / 100)), rateType: "MRP" })}
+                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" })}
                         />
                       )}
                       {line.partyRates.length > 0 && (
@@ -315,8 +307,8 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                           onUse={() => updateLine(idx, { price: line.itemRates[0].rate, rateType: "NET" })}
                         />
                       )}
-                      {lineDiscPct === 0 && line.partyRates.length === 0 && line.itemRates.length === 0 && (
-                        <span>No party discount set for this item&apos;s GST slab and no Oracle history for this item.</span>
+                      {!hasItemNetRate && discPct === 0 && line.partyRates.length === 0 && line.itemRates.length === 0 && (
+                        <span>No party discount set and no Oracle history for this item.</span>
                       )}
                     </div>
                   )}
@@ -369,12 +361,15 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Per item, decide Rate Type + net rate from the party-wise net-rate file:
-// if the party has a net rate for this item → NET (use it); otherwise → MRP
-// (MRP minus the party's locked discount %).
-function deriveRate(mrp: number, partyRates: RateRow[], discPct: number): { price: number; rateType: string } {
+// Decide Rate Type + net rate, in priority order:
+// 1. The item's own fixed net rate (item_net_rate), if set — party discount
+//    is NOT applied on top of it.
+// 2. This party's net-rate history for this item, if any.
+// 3. MRP minus the party's locked discount %.
+function deriveRate(sku: SkuOption, partyRates: RateRow[], discPct: number): { price: number; rateType: string } {
+  if (sku.item_net_rate > 0 && sku.item_net_rate !== sku.price) return { price: sku.item_net_rate, rateType: "NET" };
   if (partyRates.length > 0) return { price: round2(partyRates[0].rate), rateType: "NET" };
-  return { price: round2(mrp * (1 - discPct / 100)), rateType: "MRP" };
+  return { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" };
 }
 
 const inp =

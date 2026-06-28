@@ -48,8 +48,6 @@ export async function POST(req: Request) {
     orderDate: typeof b.order_date === "string" && b.order_date ? b.order_date : new Date().toISOString().slice(0, 10),
     billType: typeof b.bill_type === "string" ? b.bill_type : undefined,
     discPct: b.disc_pct != null ? Number(b.disc_pct) : undefined,
-    discPct18: b.disc_pct_18 != null ? Number(b.disc_pct_18) : undefined,
-    discPct28: b.disc_pct_28 != null ? Number(b.disc_pct_28) : undefined,
     remarks: typeof b.remarks === "string" ? b.remarks : undefined,
     lines: lines.map((l) => ({
       skuId: Number(l.sku_id),

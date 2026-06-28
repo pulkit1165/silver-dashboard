@@ -63,13 +63,14 @@ export default function ImportLabelInfo() {
             className="text-sm file:mr-3 file:rounded-lg file:border-0 file:bg-[var(--accent)] file:px-4 file:py-2 file:font-bold file:text-white" />
           <div className="text-xs text-[var(--muted)]">
             Updates SKUs that already exist — matched by sku_code (ITEM CODE). Rows with no matching SKU are
-            skipped. Include a barcode column and/or a master-qty column; a row only needs one of the two.
+            skipped. Include a barcode column, a master-qty column (e.g. Oracle STDPACK), and/or a single-qty
+            column (e.g. Oracle STDPACK2) — a row only needs one of the three.
           </div>
           <details className="text-sm">
             <summary className="cursor-pointer font-semibold text-[var(--accent)]">…or paste rows (CSV)</summary>
             <textarea
               onChange={(e) => onPaste(e.target.value)}
-              placeholder={"ITEM CODE,BARCODE,MASTER QTY\nSU00005,HH74007,10"}
+              placeholder={"ITEM CODE,BARCODE,MASTER QTY,SINGLE QTY\nHH74007,HH74007,10,1"}
               className="mt-2 h-32 w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] p-3 font-mono text-xs outline-none focus:border-[var(--accent)]"
             />
           </details>

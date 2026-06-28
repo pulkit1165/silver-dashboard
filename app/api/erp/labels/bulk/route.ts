@@ -31,7 +31,7 @@ export async function POST(req: Request) {
       const code = sku.barcode_code || sku.sku_code;
       return {
         skuId: sku.id, sku_code: sku.sku_code, code, name: sku.name,
-        unit: sku.unit, price: sku.price, masterQty: sku.master_qty,
+        unit: sku.unit, price: sku.price, masterQty: sku.master_qty, singleQty: sku.single_qty || 1,
         rack: loc?.bin_code ?? "", lot: loc?.batch ?? "", pkd: today,
         svg: barcodeSvg(code),
       };
