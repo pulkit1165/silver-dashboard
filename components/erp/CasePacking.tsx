@@ -47,12 +47,33 @@ export default function CasePacking({
     const code = raw.trim();
     if (!packing) return;
     if (!caseNo.trim()) return pushLog(false, "Enter a case number first.");
-    const line = packing.lines.find((l) => l.qr_token === code || code.includes(l.qr_token));
+
+    // Tier-suffixed barcodes (-S/-M) and the SKU's own Single/Master QR codes
+    // identify a SKU AND tell us exactly how many pieces that one scanned
+    // object is (single_qty / master_qty) — prefer that over guessing from
+    // what's left on the order. Only Master forces the qty (a sealed carton
+    // can't be partially opened); Single still defaults to "remaining" below.
+    const m = code.match(/^(.+)-(S|M)$/i);
+    let line = m
+      ? packing.lines.find((l) => {
+          const base = m[1].toUpperCase();
+          return l.sku_code === base || (l.barcode_code && l.barcode_code.toUpperCase() === base);
+        })
+      : undefined;
+    let tierQty = m && line ? (m[2].toUpperCase() === "M" ? line.master_qty : line.single_qty) : 0;
+
+    if (!line) {
+      line = packing.lines.find((l) => !!l.qr_token_master && (l.qr_token_master === code || code.includes(l.qr_token_master)));
+      if (line) tierQty = line.master_qty;
+    }
+    if (!line) line = packing.lines.find((l) => l.qr_token === code || code.includes(l.qr_token));
     if (!line) return pushLog(false, "Scanned item is not on this order.");
-    // Default suggestion is what's left on the order, but the qty field is
-    // editable up or down — e.g. a sealed master-pack of 12 against 10
-    // remaining ships as 12, billed for the full 12.
-    setPending({ code, line, qty: line.remaining > 0 ? line.remaining : 1 });
+
+    // Otherwise default suggestion is what's left on the order, but the qty
+    // field is editable up or down — e.g. a sealed master-pack of 12 against
+    // 10 remaining ships as 12, billed for the full 12.
+    const qty = tierQty > 0 ? tierQty : line.remaining > 0 ? line.remaining : 1;
+    setPending({ code, line, qty });
   }
 
   async function packPending(confirmOverpack = false) {

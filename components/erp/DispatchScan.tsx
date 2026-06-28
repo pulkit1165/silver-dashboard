@@ -37,7 +37,7 @@ export default function DispatchScan({ orders }: { orders: Order[] }) {
       const r = await fetch("/api/erp/scan/action", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ code, action: "dispatch", refDoc: order.so_no, qty: 1, device: "dispatch" }),
+        body: JSON.stringify({ code, action: "dispatch", refDoc: order.so_no, device: "dispatch" }),
       });
       const d = await r.json();
       const stamp = new Date().toLocaleTimeString();

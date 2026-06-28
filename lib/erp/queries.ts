@@ -1,5 +1,7 @@
 import "server-only";
 import { getSql } from "./db";
+import { genToken } from "./token";
+import { logActivity } from "./activity";
 import type {
   Sku, Warehouse, Bin, InventoryRow, StockStatus, ScanEvent,
   SalesOrder, SoLine, Vendor, Customer, PurchaseOrder,
@@ -28,20 +30,56 @@ export async function getSku(id: number): Promise<Sku | undefined> {
 }
 
 export type TokenState = "active" | "disabled" | "replaced" | "unknown";
+export type ScanTier = "single" | "master";
+
 /** Resolve a scanned token via qr_codes so disabled/replaced codes are rejected. */
-export async function resolveQrToken(token: string): Promise<{ state: TokenState; sku?: Sku }> {
+export async function resolveQrToken(token: string): Promise<{ state: TokenState; sku?: Sku; tier?: ScanTier }> {
   const sql = getSql();
   const [qr] = await sql`SELECT * FROM qr_codes WHERE token=${token}`;
   if (!qr) return { state: "unknown" };
-  const status = (qr as { status: string }).status;
-  if (status !== "active") return { state: status === "replaced" ? "replaced" : "disabled" };
-  const [sku] = await sql`SELECT * FROM skus WHERE id=${(qr as { sku_id: number }).sku_id}`;
-  return sku ? { state: "active", sku: sku as Sku } : { state: "unknown" };
+  const row = qr as { status: string; sku_id: number; tier: string | null };
+  if (row.status !== "active") return { state: row.status === "replaced" ? "replaced" : "disabled" };
+  const [sku] = await sql`SELECT * FROM skus WHERE id=${row.sku_id}`;
+  return sku ? { state: "active", sku: sku as Sku, tier: row.tier === "master" ? "master" : "single" } : { state: "unknown" };
 }
 
 export async function getSkuByToken(token: string): Promise<Sku | undefined> {
   const r = await resolveQrToken(token);
   return r.state === "active" ? r.sku : undefined;
+}
+
+/**
+ * The QR for a SKU's given pack tier — finds the existing active token for
+ * that tier, or mints + stores a new one the first time it's needed (e.g.
+ * the first time a Master label is printed for a SKU that only had a Single
+ * QR so far). No bulk backfill needed; every SKU already has a "single" row
+ * from creation/import, so this only ever needs to create the "master" one.
+ */
+export async function getOrCreateTierToken(skuId: number, skuCode: string, tier: ScanTier): Promise<string> {
+  const sql = getSql();
+  const [existing] = await sql`SELECT token FROM qr_codes WHERE sku_id=${skuId} AND tier=${tier} AND status='active' ORDER BY id DESC LIMIT 1`;
+  if (existing) return (existing as { token: string }).token;
+  const token = genToken();
+  await sql`INSERT INTO qr_codes (sku_id,sku_code,token,tier,status,created_by) VALUES (${skuId},${skuCode},${token},${tier},'active','label-print')`;
+  return token;
+}
+
+/**
+ * Resolve a scanned/typed code that may be a tier-suffixed barcode
+ * (`{SKU_CODE or barcode_code}-S` / `-M`, printed on the barcode labels) —
+ * falls back to the secure qr_token path unchanged for everything else, so
+ * existing QR scans are unaffected (and now also tier-aware, since every
+ * qr_codes row carries a tier).
+ */
+export async function resolveScanCode(raw: string): Promise<{ state: TokenState; sku?: Sku; tier?: ScanTier }> {
+  const m = raw.trim().match(/^(.+)-(S|M)$/i);
+  if (m) {
+    const base = m[1].toUpperCase();
+    const tier: ScanTier = m[2].toUpperCase() === "M" ? "master" : "single";
+    const [sku] = await getSql()`SELECT * FROM skus WHERE sku_code=${base} OR (barcode_code=${base} AND barcode_code <> '')`;
+    if (sku) return { state: "active", sku: sku as Sku, tier };
+  }
+  return resolveQrToken(raw.trim());
 }
 
 export async function totalQty(skuId: number): Promise<number> {
@@ -128,9 +166,29 @@ async function ensureSalesOrderCols() {
       ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS rate_type text DEFAULT 'MRP',
-      ADD COLUMN IF NOT EXISTS foc_qty double precision DEFAULT 0`);
+      ADD COLUMN IF NOT EXISTS foc_qty double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS cancelled_qty double precision DEFAULT 0`);
     soColsEnsured = true;
   } catch { /* columns may already exist (drizzle push) — ignore */ }
+}
+
+// Committed business for a customer — every non-draft, non-cancelled order's
+// total — used as the "already outstanding" side of the credit-limit check.
+// Not true accounts-receivable (we don't track payments yet), but the best
+// available signal: a draft is not yet committed, a cancelled order never was.
+export async function getCustomerOutstanding(customerId: number): Promise<number> {
+  const [{ total }] = await getSql()`
+    SELECT COALESCE(SUM(total),0)::float8 AS total FROM sales_orders
+    WHERE customer_id=${customerId} AND status NOT IN ('draft','cancelled')`;
+  return total as number;
+}
+
+export interface CreditLimitExceeded {
+  error: "CREDIT_LIMIT_EXCEEDED";
+  message: string;
+  creditLimit: number;
+  outstanding: number;
+  orderTotal: number;
 }
 
 export async function createSalesOrder(input: {
@@ -139,18 +197,35 @@ export async function createSalesOrder(input: {
   billType?: string;
   discPct?: number; // party's locked discount % (from the party-rate master)
   remarks?: string;
+  allowOverCreditLimit?: boolean; // explicit override after the warning is shown
   lines: Array<{
     skuId: number; qty: number; price: number;
     mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
   }>;
-}): Promise<SalesOrder & { lines: SoLine[] }> {
+}): Promise<(SalesOrder & { lines: SoLine[] }) | CreditLimitExceeded> {
   const sql = getSql();
   await ensureSalesOrderCols();
+  const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
+
+  const [customer] = (await sql`SELECT credit_limit, name FROM customers WHERE id=${input.customerId}`) as unknown as
+    Array<{ credit_limit: number | null; name: string }>;
+  const creditLimit = Number(customer?.credit_limit) || 0;
+  if (creditLimit > 0 && !input.allowOverCreditLimit) {
+    const outstanding = await getCustomerOutstanding(input.customerId);
+    if (outstanding + total > creditLimit) {
+      return {
+        error: "CREDIT_LIMIT_EXCEEDED",
+        message: `${customer.name}: outstanding ₹${outstanding.toFixed(2)} + this order ₹${total.toFixed(2)} ` +
+          `would exceed the ₹${creditLimit.toFixed(2)} credit limit.`,
+        creditLimit, outstanding, orderTotal: total,
+      };
+    }
+  }
+
   const [{ next }] = await sql`
     SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 4) AS INT)), 1000) + 1 AS next
       FROM sales_orders WHERE so_no LIKE 'SO-%'`;
   const soNo = `SO-${next}`;
-  const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
   const [so] = await sql`
     INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, remarks)
     VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total},
@@ -172,6 +247,39 @@ export async function confirmSalesOrder(id: number): Promise<{ ok: true } | { er
   if (!so) return { error: "Sales order not found." };
   if (so.status !== "draft") return { error: `Order is already ${so.status} — nothing to confirm.` };
   await sql`UPDATE sales_orders SET status='confirmed' WHERE id=${id}`;
+  return { ok: true };
+}
+
+// Formal write-off of a shortfall on one line — mirrors the legacy
+// Cancellation slip (DTC107): qty that will never be fulfilled, distinct
+// from qty that's just not packed yet. Removes it from the pending-to-pack
+// queue permanently rather than leaving it stuck as a phantom balance.
+export async function cancelSoLineQty(input: {
+  soLineId: number; qty: number; reason: string; cancelledBy: string;
+}): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  await ensureSalesOrderCols();
+  if (!(input.qty > 0)) return { error: "Cancel qty must be positive." };
+  if (!input.reason.trim()) return { error: "A reason is required." };
+
+  const [line] = (await sql`
+    SELECT l.id, l.qty, l.packed_qty, l.cancelled_qty, l.so_id, l.sku_id, so.so_no, s.sku_code
+    FROM so_lines l JOIN sales_orders so ON so.id=l.so_id JOIN skus s ON s.id=l.sku_id
+    WHERE l.id=${input.soLineId}`) as unknown as Array<{
+    id: number; qty: number; packed_qty: number; cancelled_qty: number; so_id: number; sku_id: number; so_no: string; sku_code: string;
+  }>;
+  if (!line) return { error: "Sales order line not found." };
+  const remaining = line.qty - line.packed_qty - line.cancelled_qty;
+  if (input.qty > remaining) {
+    return { error: `Only ${remaining} of ${line.sku_code} is still outstanding on ${line.so_no} — can't cancel ${input.qty}.` };
+  }
+
+  await sql`UPDATE so_lines SET cancelled_qty = cancelled_qty + ${input.qty} WHERE id=${input.soLineId}`;
+  await logActivity({
+    actor: input.cancelledBy, action: "so_line.cancel", entity: "sales_order", entityId: line.so_id,
+    summary: `Cancelled ${input.qty} x ${line.sku_code} on ${line.so_no} — ${input.reason}`,
+    meta: { soLineId: input.soLineId, qty: input.qty, reason: input.reason },
+  });
   return { ok: true };
 }
 
@@ -198,13 +306,13 @@ export async function getPendingToPack(): Promise<PendingPackRow[]> {
            COUNT(l.id)::int AS lines,
            COALESCE(SUM(l.qty),0)::float8 AS ordered_qty,
            COALESCE(SUM(l.packed_qty),0)::float8 AS packed_qty,
-           COALESCE(SUM(l.qty - l.packed_qty),0)::float8 AS pending_qty
+           COALESCE(SUM(l.qty - l.packed_qty - l.cancelled_qty),0)::float8 AS pending_qty
     FROM sales_orders so
     JOIN customers c ON c.id = so.customer_id
     JOIN so_lines l ON l.so_id = so.id
     WHERE so.status IN ${sql(PACKABLE)}
     GROUP BY so.id, c.name, so.order_date, so.status, so.so_no
-    HAVING COALESCE(SUM(l.qty - l.packed_qty),0) > 0
+    HAVING COALESCE(SUM(l.qty - l.packed_qty - l.cancelled_qty),0) > 0
     ORDER BY so.order_date, so.id`) as unknown as PendingPackRow[];
 }
 
@@ -242,11 +350,14 @@ export async function getOrderPacking(id: number): Promise<OrderPacking | undefi
 
   const lines = (await sql`
     SELECT l.id AS so_line_id, l.sku_id, s.sku_code, s.name AS sku_name, s.qr_token,
-           l.qty AS ordered, l.packed_qty AS packed,
+           s.master_qty, s.single_qty, s.barcode_code, qm.token AS qr_token_master,
+           l.qty AS ordered, l.packed_qty AS packed, l.cancelled_qty AS cancelled,
            COALESCE((SELECT SUM(qty) FROM inventory WHERE sku_id=l.sku_id),0)::float8 AS on_hand
-    FROM so_lines l JOIN skus s ON s.id=l.sku_id WHERE l.so_id=${id} ORDER BY l.id`) as unknown as
-    Array<Omit<PackingLine, "remaining"> & { ordered: number; packed: number }>;
-  const packingLines: PackingLine[] = lines.map((l) => ({ ...l, remaining: l.ordered - l.packed }));
+    FROM so_lines l JOIN skus s ON s.id=l.sku_id
+    LEFT JOIN qr_codes qm ON qm.sku_id=s.id AND qm.tier='master' AND qm.status='active'
+    WHERE l.so_id=${id} ORDER BY l.id`) as unknown as
+    Array<Omit<PackingLine, "remaining"> & { ordered: number; packed: number; cancelled: number }>;
+  const packingLines: PackingLine[] = lines.map((l) => ({ ...l, remaining: l.ordered - l.packed - l.cancelled }));
 
   const caseRows = (await sql`
     SELECT p.id AS package_id, p.package_no AS case_no, p.status,

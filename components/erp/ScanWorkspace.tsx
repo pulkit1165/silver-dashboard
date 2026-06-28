@@ -9,10 +9,11 @@ type Loc = { warehouse_code?: string; bin_code?: string; qty: number };
 type SkuView = {
   id: number; sku_code: string; name: string; category: string; brand: string; unit: string;
   qty: number; status: string; min_stock: number; reorder_level: number; qr_token: string;
+  master_qty: number; single_qty: number;
   locations?: Loc[];
 };
 type OpenOrder = { so_no: string; status: string; invoice_no: string | null; qty: number; dispatched_qty: number };
-type Validated = { token: string; sku: SkuView; openOrders: OpenOrder[] };
+type Validated = { token: string; sku: SkuView; openOrders: OpenOrder[]; tier?: "single" | "master" };
 
 type ActionDef = { key: string; label: string; icon: string; needs: ("qty" | "loc" | "dest" | "ref")[]; write: boolean };
 
@@ -62,7 +63,7 @@ export default function ScanWorkspace({
       });
       const data = await r.json();
       if (data.ok) {
-        setValidated({ token: data.token, sku: data.sku, openOrders: data.openOrders ?? [] });
+        setValidated({ token: data.token, sku: data.sku, openOrders: data.openOrders ?? [], tier: data.tier });
         if (data.openOrders?.[0]) setRefDoc(data.openOrders[0].so_no);
       } else {
         setValidated(null);
@@ -78,7 +79,10 @@ export default function ScanWorkspace({
   function pickAction(a: ActionDef) {
     setResult(null);
     setAction(a);
-    setQty(a.key === "count" ? validated?.sku.qty ?? 0 : 1);
+    if (a.key === "count") setQty(validated?.sku.qty ?? 0);
+    else if (validated?.tier === "master") setQty(validated.sku.master_qty || 1);
+    else if (validated?.tier === "single") setQty(validated.sku.single_qty || 1);
+    else setQty(1);
   }
 
   async function confirm() {
@@ -162,6 +166,11 @@ export default function ScanWorkspace({
                   <div>
                     <div className="text-base font-extrabold">{validated.sku.name}</div>
                     <div className="font-mono text-xs text-[var(--muted)]">{validated.sku.sku_code} · {validated.sku.category}</div>
+                    {validated.tier && (
+                      <div className="mt-1 text-xs font-bold text-[var(--accent)]">
+                        {validated.tier === "master" ? `MASTER pack scanned — ${validated.sku.master_qty} ${validated.sku.unit}` : `SINGLE scanned — ${validated.sku.single_qty} ${validated.sku.unit}`}
+                      </div>
+                    )}
                   </div>
                   <span className={`tag ${STATUS_TAG[validated.sku.status] ?? "n"}`}>{validated.sku.status}</span>
                 </div>

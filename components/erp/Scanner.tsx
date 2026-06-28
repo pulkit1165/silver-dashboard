@@ -13,17 +13,56 @@ type Props = {
 
 type CamState = "idle" | "starting" | "running" | "denied" | "error" | "unsupported";
 
+// Grayscale conversion for the ZXing 1D decoder — RGBLuminanceSource expects
+// one luminance byte per pixel, not raw RGBA, when given a Uint8ClampedArray.
+function toGrayscale(img: ImageData): Uint8ClampedArray {
+  const { data, width, height } = img;
+  const gray = new Uint8ClampedArray(width * height);
+  for (let i = 0, j = 0; j < gray.length; i += 4, j++) {
+    gray[j] = (data[i] * 299 + data[i + 1] * 587 + data[i + 2] * 114) / 1000;
+  }
+  return gray;
+}
+
 export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastHit = useRef<{ code: string; at: number }>({ code: "", at: 0 });
+  // Lazily loaded — keeps @zxing/library out of the initial bundle. Decodes
+  // Code128 (the barcode-label format); QR keeps going through jsQR above,
+  // which is faster for that format.
+  const decodeBarcodeRef = useRef<((img: ImageData) => string | null) | null>(null);
+  const frameCount = useRef(0);
 
   const [state, setState] = useState<CamState>("idle");
   const [errMsg, setErrMsg] = useState("");
   const [manual, setManual] = useState("");
   const [flash, setFlash] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    import("@zxing/library").then((Z) => {
+      if (cancelled) return;
+      const reader = new Z.MultiFormatReader();
+      const hints = new Map();
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.CODE_128]);
+      reader.setHints(hints);
+      decodeBarcodeRef.current = (img) => {
+        try {
+          const source = new Z.RGBLuminanceSource(toGrayscale(img), img.width, img.height);
+          const bitmap = new Z.BinaryBitmap(new Z.HybridBinarizer(source));
+          return reader.decodeWithState(bitmap).getText();
+        } catch {
+          return null;
+        }
+      };
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
@@ -48,14 +87,21 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
     const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
-    if (code && code.data) {
+    let detected = code?.data || null;
+    if (!detected && decodeBarcodeRef.current) {
+      // 1D decode is heavier than jsQR's QR finder-pattern search — sample
+      // every 3rd frame instead of every animation frame.
+      frameCount.current++;
+      if (frameCount.current % 3 === 0) detected = decodeBarcodeRef.current(img);
+    }
+    if (detected) {
       const now = Date.now();
-      const dup = code.data === lastHit.current.code && now - lastHit.current.at < cooldownMs;
+      const dup = detected === lastHit.current.code && now - lastHit.current.at < cooldownMs;
       if (!dup) {
-        lastHit.current = { code: code.data, at: now };
+        lastHit.current = { code: detected, at: now };
         setFlash(true);
         setTimeout(() => setFlash(false), 300);
-        onDetect(code.data);
+        onDetect(detected);
         if (!continuous) {
           stop();
           setState("idle");
@@ -175,7 +221,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         <input
           value={manual}
           onChange={(e) => setManual(e.target.value)}
-          placeholder="Or type / paste a QR token (e.g. SQR-…)"
+          placeholder="Or type / paste a code (QR SQR-… or barcode HH74007-S)"
           className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
         />
         <button className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2 text-sm font-bold hover:bg-[var(--surface-2)]">

@@ -49,7 +49,7 @@ export const skus = pgTable("skus", {
   reorderLevel: doublePrecision("reorder_level").default(0),
   masterQty: doublePrecision("master_qty").default(0), // 0 = no master carton pack defined for this SKU
   singleQty: doublePrecision("single_qty").default(1), // smallest sellable/labelable unit — not always 1 (Oracle STDPACK2)
-  barcodeCode: text("barcode_code").default(""), // legacy/own item code to encode as a barcode; falls back to sku_code
+  barcodeCode: text("barcode_code").default(""), // base code for printed/scanned barcodes (base + "-S"/"-M"); falls back to sku_code
   batchTracked: boolean("batch_tracked").default(false),
   serialTracked: boolean("serial_tracked").default(false),
   status: text("status").default("active"),
@@ -65,6 +65,7 @@ export const qrCodes = pgTable(
     skuId: integer("sku_id").notNull(),
     skuCode: text("sku_code"),
     token: text("token").unique().notNull(),
+    tier: text("tier").default("single"), // single | master — which pack size this QR identifies
     status: text("status").default("active"), // active | disabled | replaced
     printed: boolean("printed").default(false),
     createdBy: text("created_by"),
@@ -238,6 +239,10 @@ export const soLines = pgTable("so_lines", {
   // Billable now = dispatchedQty - invoicedQty; pending to dispatch = qty -
   // dispatchedQty (stays as a pending SO line in the booking menu).
   invoicedQty: doublePrecision("invoiced_qty").default(0),
+  // Qty formally written off as unfulfillable (legacy Cancellation slip,
+  // DTC107) — excluded from both "pending to pack" and the billable balance.
+  // Distinct from a full order cancellation: this is a per-line shortfall.
+  cancelledQty: doublePrecision("cancelled_qty").default(0),
   price: doublePrecision("price"),
   // MRP at the time of ordering (kept separate from price/net rate so later
   // master-price changes don't rewrite history), the rate type the line was

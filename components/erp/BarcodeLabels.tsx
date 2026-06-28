@@ -4,8 +4,9 @@ import { useEffect, useMemo, useState } from "react";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
-  skuId: number; sku_code: string; code: string; name: string; unit: string;
-  price: number; masterQty: number; singleQty: number; rack: string; lot: string; pkd: string; svg: string;
+  skuId: number; sku_code: string; name: string; unit: string;
+  price: number; masterQty: number; singleQty: number; rack: string; lot: string; pkd: string;
+  qrTokenSingle: string; qrTokenMaster: string; qrSvgSingle: string; qrSvgMaster: string;
 };
 type LabelType = "single" | "master";
 
@@ -57,8 +58,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const printable = chosen.flatMap((i) => {
     const l = labels[i.id];
     if (!l) return [];
-    const t = type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single";
-    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, type: t as LabelType, key: `${i.id}-${t}-${n}` }));
+    const t = (type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single") as LabelType;
+    const qrToken = t === "master" ? l.qrTokenMaster : l.qrTokenSingle;
+    const qrSvg = t === "master" ? l.qrSvgMaster : l.qrSvgSingle;
+    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
   });
 
   return (
@@ -78,7 +81,14 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         </label>
         <span className="text-sm text-[var(--muted)]">{chosen.length} selected</span>
         <button
-          onClick={() => window.print()}
+          onClick={() => {
+            const skuCodes = [...new Set(printable.map((l) => l.sku_code))];
+            fetch("/api/erp/labels/log-print", {
+              method: "POST", headers: { "content-type": "application/json" },
+              body: JSON.stringify({ skuCodes, labelCount: printable.length }),
+            }).catch(() => {});
+            window.print();
+          }}
           disabled={loading || printable.length === 0}
           className="ml-auto rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50"
         >
@@ -120,12 +130,13 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {/* printable sheet */}
       <div className="print-area">
         <div className={`grid gap-3 ${thermal ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}>
-          {loading && <p className="text-sm text-[var(--muted)]">Generating barcodes…</p>}
+          {loading && <p className="text-sm text-[var(--muted)]">Generating QR codes…</p>}
           {!loading && printable.map((l) => (
             <div key={l.key} className={`barcode-label ${l.type === "master" ? "master" : ""} ${thermal ? "thermal" : ""}`}>
-              <div className="bl-head">
-                {l.type === "master" && <div className="bl-code">CODE: {l.code}</div>}
-                <div dangerouslySetInnerHTML={{ __html: l.svg }} />
+              <div className="bl-tier">{l.type === "master" ? "MASTER PACK" : "SINGLE PACK"}</div>
+              <div className="bl-qr-main">
+                <div dangerouslySetInnerHTML={{ __html: l.qrSvg }} />
+                <span className="bl-qr-token">{l.qrToken}</span>
               </div>
               <div className="bl-name">{l.name}</div>
               <div className="bl-qty">

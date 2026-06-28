@@ -47,6 +47,8 @@ export interface SoLine {
   id: number; so_id: number; sku_id: number; qty: number;
   picked_qty: number; packed_qty: number; dispatched_qty: number; price: number;
   mrp: number; discount_pct: number; rate_type: string; foc_qty: number;
+  // Qty formally written off as unfulfillable (legacy Cancellation slip).
+  cancelled_qty: number;
   sku_code?: string; sku_name?: string; qr_token?: string;
   // Reference fields joined in for display only (not stored on so_lines) —
   // mirrors the legacy Sale Order line grid's GST Rate / Std Pack / Bal Qty.
@@ -76,7 +78,8 @@ export type ScanAction = (typeof SCAN_ACTIONS)[number];
 // A line on the dispatch/packing screen: what's ordered vs already packed into cases.
 export interface PackingLine {
   so_line_id: number; sku_id: number; sku_code: string; sku_name: string; qr_token: string;
-  ordered: number; packed: number; remaining: number; on_hand: number;
+  master_qty: number; single_qty: number; barcode_code: string; qr_token_master: string | null;
+  ordered: number; packed: number; cancelled: number; remaining: number; on_hand: number;
 }
 // Contents of one case for a sales order.
 export interface PackingCaseItem { sku_code: string; sku_name: string; qty: number }

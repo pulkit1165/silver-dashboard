@@ -1,7 +1,7 @@
 import "server-only";
 import type { Sql, TransactionSql } from "postgres";
 import { getSql } from "./db";
-import { resolveQrToken, totalQty, inventoryForSku, stockStatus } from "./queries";
+import { resolveScanCode, totalQty, inventoryForSku, stockStatus } from "./queries";
 
 const TOKEN_ERROR: Record<string, string> = {
   unknown: "Unknown or invalid QR code.",
@@ -86,7 +86,7 @@ async function skuView(sku: Sku) {
 /** Validate a scanned QR token — used by the scanner before showing actions. */
 export async function validateToken(rawToken: string) {
   const token = extractToken(rawToken);
-  const resolved = await resolveQrToken(token);
+  const resolved = await resolveScanCode(token);
   if (resolved.state !== "active" || !resolved.sku) {
     return { ok: false as const, error: TOKEN_ERROR[resolved.state] ?? "Unknown or invalid QR code." };
   }
@@ -96,7 +96,7 @@ export async function validateToken(rawToken: string) {
     SELECT so.so_no, so.status, so.invoice_no, l.qty, l.picked_qty, l.packed_qty, l.dispatched_qty
     FROM so_lines l JOIN sales_orders so ON so.id=l.so_id
     WHERE l.sku_id=${sku.id} AND so.status IN ('confirmed','picked','packed','partially dispatched')`;
-  return { ok: true as const, token, sku: await skuView(sku), openOrders };
+  return { ok: true as const, token, sku: await skuView(sku), openOrders, tier: resolved.tier };
 }
 
 async function resolveLoc(client: Client, skuId: number, warehouseId?: number, binId?: number) {
@@ -130,7 +130,7 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
   const sql = getSql();
   const token = extractToken(input.token);
   const device = input.device ?? "web";
-  const resolved = await resolveQrToken(token);
+  const resolved = await resolveScanCode(token);
   const sku = resolved.sku;
 
   if (resolved.state !== "active" || !sku) {
@@ -142,7 +142,11 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
     return { ok: false, message: "Scan rejected", error, eventId: id };
   }
 
-  const qty = input.qty && input.qty > 0 ? input.qty : 1;
+  // A tier-suffixed barcode (-S/-M) carries its own qty (single_qty/master_qty)
+  // when the caller doesn't explicitly supply one — a plain qr_token scan has
+  // no tier and keeps the original default of 1.
+  const defaultQty = resolved.tier === "master" ? sku.master_qty || 1 : resolved.tier === "single" ? sku.single_qty || 1 : 1;
+  const qty = input.qty && input.qty > 0 ? input.qty : defaultQty;
   const batch = input.batch ?? "";
   const ref = input.refDoc ?? null;
 

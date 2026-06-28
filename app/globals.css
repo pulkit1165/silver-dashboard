@@ -244,10 +244,26 @@ body {
   font-size: 10px;
   line-height: 1.25;
 }
-.barcode-label.thermal { width: 50mm; }
-.barcode-label.master { background: #c6ebb0; }
-.barcode-label .bl-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
-.barcode-label .bl-head svg { height: 28px; width: auto; }
+.barcode-label.thermal { width: 45mm; }
+.barcode-label.master {
+  background: #c6ebb0;
+  font-size: 11px;
+  padding: 8px 10px;
+}
+.barcode-label.master.thermal { width: 60mm; }
+.barcode-label .bl-tier {
+  align-self: flex-start;
+  border: 1px solid #000;
+  border-radius: 3px;
+  padding: 0 4px;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+}
+.barcode-label .bl-qr-main { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 4px 0; }
+.barcode-label .bl-qr-main svg { width: 72px; height: 72px; }
+.barcode-label.master .bl-qr-main svg { width: 92px; height: 92px; }
+.barcode-label .bl-qr-token { font-family: monospace; font-size: 8px; opacity: 0.7; word-break: break-all; }
 .barcode-label .bl-code { font-weight: 800; font-size: 11px; }
 .barcode-label .bl-name { font-weight: 800; font-size: 12px; }
 .barcode-label .bl-qty { font-weight: 700; }
