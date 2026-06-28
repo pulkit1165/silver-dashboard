@@ -190,7 +190,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
           return (
             <div key={idx} className="rounded-xl border border-[var(--border)] p-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-7 sm:items-end">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-9 sm:items-end">
                 <div className="sm:col-span-2">
                   <F label="Item">
                     <SearchSelect
@@ -205,17 +205,22 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <F label="MRP">
                   <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? sku.price.toFixed(2) : "—"}</div>
                 </F>
-                <F label="Qty">
-                  <input
-                    type="number" min={1} value={line.qty}
-                    onChange={(e) => updateLine(idx, { qty: Number(e.target.value) || 0 })}
-                    className={inp}
-                  />
+                <F label="Disc %">
+                  <div className={`${inp} bg-[var(--surface-2)]`} title="Party discount % — same for every item (from the Party master)">
+                    {discPct ? `${discPct.toFixed(2)}%` : "—"}
+                  </div>
                 </F>
                 <F label="Net rate">
                   <input
                     type="number" step="0.01" value={line.price}
                     onChange={(e) => updateLine(idx, { price: Number(e.target.value) || 0 })}
+                    className={inp}
+                  />
+                </F>
+                <F label="Qty">
+                  <input
+                    type="number" min={1} value={line.qty}
+                    onChange={(e) => updateLine(idx, { qty: Number(e.target.value) || 0 })}
                     className={inp}
                   />
                 </F>
