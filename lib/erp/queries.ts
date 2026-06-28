@@ -110,12 +110,33 @@ export async function getSalesOrderByNo(soNo: string) {
   return r ? getSalesOrder((r as { id: number }).id) : undefined;
 }
 
+// Self-migrate the sales-order header/line columns the form needs (idempotent),
+// so prod (Neon) works without a manual migration. Runs once per process.
+let soColsEnsured = false;
+async function ensureSalesOrderCols() {
+  if (soColsEnsured) return;
+  try {
+    const sql = getSql();
+    await sql.unsafe(`ALTER TABLE sales_orders
+      ADD COLUMN IF NOT EXISTS bill_type text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS disc_pct double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS disc_pct_18 double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS disc_pct_28 double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS remarks text DEFAULT ''`);
+    await sql.unsafe(`ALTER TABLE so_lines
+      ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS rate_type text DEFAULT 'MRP',
+      ADD COLUMN IF NOT EXISTS foc_qty double precision DEFAULT 0`);
+    soColsEnsured = true;
+  } catch { /* columns may already exist (drizzle push) — ignore */ }
+}
+
 export async function createSalesOrder(input: {
   customerId: number;
   orderDate: string;
   billType?: string;
-  discPct18?: number;
-  discPct28?: number;
+  discPct?: number; // single party discount % (from the party-rate master)
   remarks?: string;
   lines: Array<{
     skuId: number; qty: number; price: number;
@@ -123,15 +144,16 @@ export async function createSalesOrder(input: {
   }>;
 }): Promise<SalesOrder & { lines: SoLine[] }> {
   const sql = getSql();
+  await ensureSalesOrderCols();
   const [{ next }] = await sql`
     SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 4) AS INT)), 1000) + 1 AS next
       FROM sales_orders WHERE so_no LIKE 'SO-%'`;
   const soNo = `SO-${next}`;
   const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
   const [so] = await sql`
-    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct_18, disc_pct_28, remarks)
+    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, remarks)
     VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total},
-      ${input.billType ?? ""}, ${input.discPct18 ?? 0}, ${input.discPct28 ?? 0}, ${input.remarks ?? ""})
+      ${input.billType ?? ""}, ${input.discPct ?? 0}, ${input.remarks ?? ""})
     RETURNING id`;
   for (const l of input.lines) {
     await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)

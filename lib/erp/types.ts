@@ -39,7 +39,7 @@ export interface ScanEvent {
 export interface SalesOrder {
   id: number; so_no: string; customer_id: number; status: string; order_date: string;
   invoice_no: string | null; total: number; customer_name?: string;
-  bill_type: string; disc_pct_18: number; disc_pct_28: number; remarks: string;
+  bill_type: string; disc_pct: number; disc_pct_18?: number; disc_pct_28?: number; remarks: string;
 }
 export interface SoLine {
   id: number; so_id: number; sku_id: number; qty: number;
