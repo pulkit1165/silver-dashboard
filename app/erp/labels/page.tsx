@@ -17,7 +17,7 @@ export default async function BarcodeLabelsPage({
   const all = await stockLevels(sp.q);
   const items = all.slice(0, PAGE_CAP).map((s) => ({
     id: s.id, sku_code: s.sku_code, name: s.name, category: s.category,
-    masterQty: s.master_qty, barcodeCode: s.barcode_code,
+    masterQty: s.master_qty, singleQty: s.single_qty, barcodeCode: s.barcode_code,
   }));
   return (
     <>

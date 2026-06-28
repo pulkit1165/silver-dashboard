@@ -2,12 +2,17 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; barcodeCode: string };
+type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
   skuId: number; sku_code: string; code: string; name: string; unit: string;
-  price: number; masterQty: number; rack: string; lot: string; pkd: string; svg: string;
+  price: number; masterQty: number; singleQty: number; rack: string; lot: string; pkd: string; svg: string;
 };
 type LabelType = "single" | "master";
+
+// Master is only a meaningfully distinct option when it's a larger pack than
+// the single/inner unit — many items have master_qty == single_qty (no real
+// second tier), in which case Single already covers it.
+const hasMaster = (masterQty: number, singleQty: number) => masterQty > (singleQty || 1);
 
 export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [labels, setLabels] = useState<Record<number, Label>>({});
@@ -52,7 +57,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const printable = chosen.flatMap((i) => {
     const l = labels[i.id];
     if (!l) return [];
-    const t = type[i.id] === "master" && l.masterQty ? "master" : "single";
+    const t = type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single";
     return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, type: t as LabelType, key: `${i.id}-${t}-${n}` }));
   });
 
@@ -101,11 +106,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               </button>
               <button
                 onClick={() => setLabelType(i.id, "master")}
-                disabled={!i.masterQty}
-                title={i.masterQty ? "" : "No master carton qty set for this SKU"}
-                className={`rounded px-2 py-1 font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${type[i.id] === "master" && i.masterQty ? "bg-[var(--accent)] text-white" : "border border-[var(--border)]"}`}
+                disabled={!hasMaster(i.masterQty, i.singleQty)}
+                title={hasMaster(i.masterQty, i.singleQty) ? "" : "No distinct master carton qty set for this SKU"}
+                className={`rounded px-2 py-1 font-semibold disabled:cursor-not-allowed disabled:opacity-40 ${type[i.id] === "master" && hasMaster(i.masterQty, i.singleQty) ? "bg-[var(--accent)] text-white" : "border border-[var(--border)]"}`}
               >
-                Master{i.masterQty ? ` (${i.masterQty})` : ""}
+                Master{hasMaster(i.masterQty, i.singleQty) ? ` (${i.masterQty})` : ""}
               </button>
             </div>
           </div>
@@ -124,7 +129,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               </div>
               <div className="bl-name">{l.name}</div>
               <div className="bl-qty">
-                {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. 1 ${l.unit}`}
+                {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
                 {" · "}MRP.Rs.{l.price.toFixed(0)}/-{l.type === "master" ? " E" : ""}
               </div>
               <div className="bl-tax">(Incl. of All Taxes)</div>
