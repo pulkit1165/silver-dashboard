@@ -214,10 +214,13 @@ export const salesOrders = pgTable("sales_orders", {
   orderDate: text("order_date"),
   invoiceNo: text("invoice_no"),
   total: doublePrecision("total").default(0),
-  // Header-level fields matching the legacy Delivery Order / Sale Bill
-  // screens — Bill Type, the two GST-slab discount percentages (Disc 18 /
-  // Disc 28), and free-text remarks.
+  // Header-level fields matching the legacy Delivery Order / Sale Bill screens.
+  // billType is K | O | O/K. discPct is the single party discount % off MRP,
+  // auto-fetched (locked) from the customers.discount_pct master. The old
+  // GST-slab columns (disc_pct_18/28) are kept for legacy data but no longer
+  // entered in the form.
   billType: text("bill_type").default(""),
+  discPct: doublePrecision("disc_pct").default(0),
   discPct18: doublePrecision("disc_pct_18").default(0),
   discPct28: doublePrecision("disc_pct_28").default(0),
   remarks: text("remarks").default(""),

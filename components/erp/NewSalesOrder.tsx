@@ -1,13 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import SearchSelect from "./SearchSelect";
 
 interface SkuOption { id: number; sku_code: string; name: string; price: number; unit: string }
-interface CustomerOption { id: number; code: string; name: string }
+interface CustomerOption { id: number; code: string; name: string; discount_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
-interface PartyDiscount { discountPct: number; asOfDate: string }
 
 interface Line {
   skuId: number | null;
@@ -29,17 +28,15 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const router = useRouter();
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [billType, setBillType] = useState("MRP");
-  const [discPct18, setDiscPct18] = useState(0);
-  const [discPct28, setDiscPct28] = useState(0);
+  const [billType, setBillType] = useState("K");
   const [remarks, setRemarks] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
-  const [partyDiscount, setPartyDiscount] = useState<PartyDiscount | null>(null);
-  const [loadingDiscount, setLoadingDiscount] = useState(false);
 
   const customer = customers.find((c) => c.id === customerId);
+  // The party's locked discount %, from the Party-rate master (customers.discount_pct).
+  const discPct = customer?.discount_pct ?? 0;
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
   const customerOptions = useMemo(
     () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: c.code })),
@@ -50,27 +47,47 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     [skus],
   );
 
-  // The legacy app's actual pricing logic: each customer carries a standing
-  // discount % (stored on their most recent order header, by GST slab) that
-  // gets applied to every item's MRP. Pull it the moment a customer is
-  // picked, so new lines can default to the same net rate automatically.
+  const linesRef = useRef(lines);
+  useEffect(() => { linesRef.current = lines; }, [lines]);
+
+  // Pull an item's party-wise net-rate history from Oracle (read-only).
+  async function loadRates(itemName: string, party: string | null): Promise<{ partyRates: RateRow[]; itemRates: RateRow[] }> {
+    try {
+      const params = new URLSearchParams({ item: itemName });
+      if (party) params.set("party", party);
+      const r = await fetch(`/api/erp/rates?${params}`);
+      const d = await r.json();
+      return { partyRates: d.ok ? d.partyRates ?? [] : [], itemRates: d.ok ? d.itemRates ?? [] : [] };
+    } catch {
+      return { partyRates: [], itemRates: [] };
+    }
+  }
+
+  // When the party changes, re-price every existing line for that party: for
+  // each item, the Rate Type (NET/MRP) and net rate are auto-fetched from the
+  // party-wise net-rate file (NET if the party has a rate for it, else MRP).
   useEffect(() => {
-    setPartyDiscount(null);
     if (!customer) return;
+    const party = customer.name;
+    const d = customer.discount_pct ?? 0;
     let cancelled = false;
-    setLoadingDiscount(true);
-    fetch(`/api/erp/party-discount?party=${encodeURIComponent(customer.name)}`)
-      .then((r) => r.json())
-      .then((d) => {
+    const snapshot = linesRef.current;
+    setLines((ls) => ls.map((l) => {
+      const sku = l.skuId ? skuById.get(l.skuId) : undefined;
+      return sku ? { ...l, loadingRates: true } : l;
+    }));
+    snapshot.forEach((l, idx) => {
+      if (!l.skuId) return;
+      const sku = skuById.get(l.skuId);
+      if (!sku) return;
+      loadRates(sku.name, party).then(({ partyRates, itemRates }) => {
         if (cancelled) return;
-        const disc = d.ok ? (d.discount as PartyDiscount | null) : null;
-        setPartyDiscount(disc);
-        if (disc) setDiscPct18((prev) => (prev === 0 ? round2(disc.discountPct) : prev));
-      })
-      .catch(() => { if (!cancelled) setPartyDiscount(null); })
-      .finally(() => { if (!cancelled) setLoadingDiscount(false); });
+        updateLine(idx, { ...deriveRate(sku.price, partyRates, d), partyRates, itemRates, loadingRates: false });
+      });
+    });
     return () => { cancelled = true; };
-  }, [customer]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId]);
 
   function updateLine(idx: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
@@ -78,19 +95,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   async function onSkuChange(idx: number, skuId: number) {
     const sku = skuById.get(skuId);
-    const mrp = sku?.price ?? 0;
-    const defaultPrice = sku && partyDiscount ? round2(mrp * (1 - partyDiscount.discountPct / 100)) : mrp;
-    updateLine(idx, { skuId, price: defaultPrice, loadingRates: !!sku, itemRates: [], partyRates: [] });
-    if (!sku) return;
-    try {
-      const params = new URLSearchParams({ item: sku.name });
-      if (customer) params.set("party", customer.name);
-      const r = await fetch(`/api/erp/rates?${params}`);
-      const d = await r.json();
-      updateLine(idx, { itemRates: d.ok ? d.itemRates ?? [] : [], partyRates: d.ok ? d.partyRates ?? [] : [], loadingRates: false });
-    } catch {
-      updateLine(idx, { loadingRates: false });
-    }
+    if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", loadingRates: false, itemRates: [], partyRates: [] }); return; }
+    // optimistic MRP default while we fetch the party-wise rate for this item
+    updateLine(idx, { skuId, ...deriveRate(sku.price, [], discPct), loadingRates: true, itemRates: [], partyRates: [] });
+    const { partyRates, itemRates } = await loadRates(sku.name, customer?.name ?? null);
+    updateLine(idx, { ...deriveRate(sku.price, partyRates, discPct), partyRates, itemRates, loadingRates: false });
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
@@ -109,8 +118,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           customer_id: customerId,
           order_date: orderDate,
           bill_type: billType,
-          disc_pct_18: discPct18,
-          disc_pct_28: discPct28,
+          disc_pct: discPct,
           remarks,
           lines: validLines.map((l) => {
             const sku = skuById.get(l.skuId as number);
@@ -148,41 +156,31 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         </F>
         <F label="Bill Type">
           <select value={billType} onChange={(e) => setBillType(e.target.value)} className={inp}>
-            <option value="MRP">MRP</option>
             <option value="K">K</option>
-            <option value="NET">NET</option>
+            <option value="O">O</option>
+            <option value="O/K">O/K</option>
           </select>
+        </F>
+        <F label="Discount % (locked · from Party master)">
+          <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`} title="Set per party in Master Files → Party-wise Net Rate">
+            <span className="font-bold">{discPct.toFixed(2)}%</span>
+            <span className="text-[10px] font-semibold uppercase text-[var(--muted-2)]">🔒 auto</span>
+          </div>
         </F>
         <F label="Remarks">
           <input value={remarks} onChange={(e) => setRemarks(e.target.value)} className={inp} placeholder="Optional" />
-        </F>
-        <F label="Disc 18 (%)">
-          <input
-            type="number" step="0.01" value={discPct18}
-            onChange={(e) => setDiscPct18(Number(e.target.value) || 0)}
-            className={inp}
-          />
-        </F>
-        <F label="Disc 28 (%)">
-          <input
-            type="number" step="0.01" value={discPct28}
-            onChange={(e) => setDiscPct28(Number(e.target.value) || 0)}
-            className={inp}
-          />
         </F>
       </div>
 
       {customer && (
         <div className="text-sm">
-          {loadingDiscount ? (
-            <span className="text-[var(--muted)]">Checking {customer.name}&rsquo;s standing discount in Oracle…</span>
-          ) : partyDiscount ? (
+          {discPct > 0 ? (
             <span className="rounded-lg bg-[var(--surface-2)] px-3 py-1.5 font-semibold text-[var(--accent)]">
-              Standing discount: {partyDiscount.discountPct.toFixed(2)}% off MRP
-              <span className="font-normal text-[var(--muted)]"> (from order on {partyDiscount.asOfDate.slice(0, 10)}) — auto-applied to new lines below</span>
+              {customer.name}: {discPct.toFixed(2)}% off MRP — auto-applied to every line.
+              <span className="font-normal text-[var(--muted)]"> Change it in Master Files → Party-wise Net Rate.</span>
             </span>
           ) : (
-            <span className="text-[var(--muted)]">No standing discount found for {customer.name} in Oracle — new lines default to full MRP.</span>
+            <span className="text-[var(--muted)]">No discount set for {customer.name} in the Party master — lines default to full MRP. Set it in Master Files → Party-wise Net Rate.</span>
           )}
         </div>
       )}
@@ -192,7 +190,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
           return (
             <div key={idx} className="rounded-xl border border-[var(--border)] p-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-7 sm:items-end">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-9 sm:items-end">
                 <div className="sm:col-span-2">
                   <F label="Item">
                     <SearchSelect
@@ -207,12 +205,10 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <F label="MRP">
                   <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? sku.price.toFixed(2) : "—"}</div>
                 </F>
-                <F label="Qty">
-                  <input
-                    type="number" min={1} value={line.qty}
-                    onChange={(e) => updateLine(idx, { qty: Number(e.target.value) || 0 })}
-                    className={inp}
-                  />
+                <F label="Disc %">
+                  <div className={`${inp} bg-[var(--surface-2)]`} title="Party discount % — same for every item (from the Party master)">
+                    {discPct ? `${discPct.toFixed(2)}%` : "—"}
+                  </div>
                 </F>
                 <F label="Net rate">
                   <input
@@ -221,11 +217,20 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     className={inp}
                   />
                 </F>
+                <F label="Qty">
+                  <input
+                    type="number" min={1} value={line.qty}
+                    onChange={(e) => updateLine(idx, { qty: Number(e.target.value) || 0 })}
+                    className={inp}
+                  />
+                </F>
                 <F label="Rate Type">
-                  <select value={line.rateType} onChange={(e) => updateLine(idx, { rateType: e.target.value })} className={inp}>
-                    <option value="MRP">MRP</option>
-                    <option value="NET">NET</option>
-                  </select>
+                  <div
+                    className={`${inp} bg-[var(--surface-2)] font-bold ${line.rateType === "NET" ? "text-[var(--accent)]" : ""}`}
+                    title="Auto: NET if the party has a net rate for this item (party-wise net-rate file), else MRP"
+                  >
+                    {line.loadingRates ? "…" : (line.rateType || "—")}
+                  </div>
                 </F>
                 <F label="FOC Qty">
                   <input
@@ -253,24 +258,22 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 <div className="mt-2 text-xs text-[var(--muted)]">
                   {line.loadingRates ? (
                     "Checking Oracle history for past rates…"
-                  ) : !partyDiscount && line.itemRates.length === 0 && line.partyRates.length === 0 ? (
-                    <span>No Oracle sales history found for this item.</span>
                   ) : (
                     <div className="flex flex-wrap gap-2">
-                      {partyDiscount && (
+                      {discPct > 0 && (
                         <Suggestion
-                          label={`Standing discount (${partyDiscount.discountPct.toFixed(2)}% off MRP)`}
-                          rate={round2(sku.price * (1 - partyDiscount.discountPct / 100))}
-                          date={partyDiscount.asOfDate.slice(0, 10)}
-                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - partyDiscount.discountPct / 100)) })}
+                          label={`MRP rate (${discPct.toFixed(2)}% off)`}
+                          rate={round2(sku.price * (1 - discPct / 100))}
+                          date="MRP"
+                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" })}
                         />
                       )}
                       {line.partyRates.length > 0 && (
                         <Suggestion
-                          label={`${customer?.name ?? "This party"} last paid`}
+                          label={`${customer?.name ?? "This party"} net rate`}
                           rate={line.partyRates[0].rate}
                           date={line.partyRates[0].trdate.slice(0, 10)}
-                          onUse={() => updateLine(idx, { price: line.partyRates[0].rate })}
+                          onUse={() => updateLine(idx, { price: line.partyRates[0].rate, rateType: "NET" })}
                         />
                       )}
                       {line.itemRates.length > 0 && (
@@ -278,8 +281,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                           label="Recent market rate (any party)"
                           rate={line.itemRates[0].rate}
                           date={line.itemRates[0].trdate.slice(0, 10)}
-                          onUse={() => updateLine(idx, { price: line.itemRates[0].rate })}
+                          onUse={() => updateLine(idx, { price: line.itemRates[0].rate, rateType: "NET" })}
                         />
+                      )}
+                      {discPct === 0 && line.partyRates.length === 0 && line.itemRates.length === 0 && (
+                        <span>No party discount set and no Oracle history for this item.</span>
                       )}
                     </div>
                   )}
@@ -330,6 +336,14 @@ function Suggestion({ label, rate, date, onUse }: { label: string; rate: number;
 
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
+}
+
+// Per item, decide Rate Type + net rate from the party-wise net-rate file:
+// if the party has a net rate for this item → NET (use it); otherwise → MRP
+// (MRP minus the party's locked discount %).
+function deriveRate(mrp: number, partyRates: RateRow[], discPct: number): { price: number; rateType: string } {
+  if (partyRates.length > 0) return { price: round2(partyRates[0].rate), rateType: "NET" };
+  return { price: round2(mrp * (1 - discPct / 100)), rateType: "MRP" };
 }
 
 const inp =
