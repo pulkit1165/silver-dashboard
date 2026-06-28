@@ -19,7 +19,7 @@ if (!DB_URL) { console.error("DATABASE_URL not set in .env.local"); process.exit
 async function oraQuery(sql) {
   const res = await fetch(`${REMOTE.replace(/\/$/, "")}/query`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "bypass-tunnel-reminder": "1" },
+    headers: { "Content-Type": "application/json", "bypass-tunnel-reminder": "1", "ngrok-skip-browser-warning": "true" },
     body: JSON.stringify({ sql }),
   });
   const body = await res.json();

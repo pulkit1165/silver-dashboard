@@ -52,7 +52,8 @@ async function remoteJson(path: string, init?: RequestInit): Promise<unknown> {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      "bypass-tunnel-reminder": "1",
+      "bypass-tunnel-reminder": "1", // localtunnel (legacy)
+      "ngrok-skip-browser-warning": "true", // ngrok (current)
       ...(init?.headers || {}),
     },
     cache: "no-store",
