@@ -135,6 +135,11 @@ export const customers = pgTable("customers", {
   // optional whole-order override (takes precedence over the class default).
   discountClassId: integer("discount_class_id"),
   discountPct: doublePrecision("discount_pct"),
+  // GST-slab-specific standing discount %, matching the legacy Sale Order
+  // header's "Disc 18" / "Disc 28" fields — which one applies to a line is
+  // decided by that item's own GST rate (skus.gst_rate).
+  discountPct18: doublePrecision("discount_pct_18").default(0),
+  discountPct28: doublePrecision("discount_pct_28").default(0),
   creditLimit: doublePrecision("credit_limit").default(0),
   paymentTerms: text("payment_terms"),
   createdAt: createdAt(),
@@ -214,11 +219,11 @@ export const salesOrders = pgTable("sales_orders", {
   orderDate: text("order_date"),
   invoiceNo: text("invoice_no"),
   total: doublePrecision("total").default(0),
-  // Header-level fields matching the legacy Delivery Order / Sale Bill screens.
-  // billType is K | O | O/K. discPct is the single party discount % off MRP,
-  // auto-fetched (locked) from the customers.discount_pct master. The old
-  // GST-slab columns (disc_pct_18/28) are kept for legacy data but no longer
-  // entered in the form.
+  // Header-level fields matching the legacy Sale Order screen. billType is
+  // K | O | O/K. discPct18/28 are the party's locked GST-slab discounts (off
+  // MRP), auto-fetched from customers.discount_pct_18/28 — each line uses
+  // whichever one matches its own item's GST rate. discPct is kept as a
+  // single blended fallback for items at neither slab.
   billType: text("bill_type").default(""),
   discPct: doublePrecision("disc_pct").default(0),
   discPct18: doublePrecision("disc_pct_18").default(0),

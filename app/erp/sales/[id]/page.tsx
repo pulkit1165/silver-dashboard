@@ -37,7 +37,8 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
         <div className="panel-hd">Order details</div>
         <div className="grid grid-cols-2 gap-3 p-4 text-sm sm:grid-cols-4">
           <Detail label="Bill Type" value={so.bill_type || "—"} />
-          <Detail label="Discount (%)" value={so.disc_pct ? `${so.disc_pct.toFixed(2)}%` : "—"} />
+          <Detail label="Disc 18%" value={so.disc_pct_18 ? `${so.disc_pct_18.toFixed(2)}%` : "—"} />
+          <Detail label="Disc 28%" value={so.disc_pct_28 ? `${so.disc_pct_28.toFixed(2)}%` : "—"} />
           <Detail label="Remarks" value={so.remarks || "—"} />
         </div>
       </section>
@@ -48,8 +49,9 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
           <table className="rtable">
             <thead>
               <tr>
-                <th>SKU</th><th className="!text-right">MRP</th><th className="!text-right">Net Rate</th>
+                <th>SKU</th><th className="!text-right">GST%</th><th className="!text-right">MRP</th><th className="!text-right">Net Rate</th>
                 <th className="!text-right">Disc %</th><th>Rate Type</th>
+                <th className="!text-right">Std Pack</th><th className="!text-right">Bal Qty</th>
                 <th className="!text-right">Ordered</th><th className="!text-right">FOC Qty</th>
                 <th className="!text-right">Picked</th><th className="!text-right">Packed</th><th className="!text-right">Dispatched</th>
                 <th className="!text-right">Line total</th>
@@ -59,10 +61,13 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
               {so.lines.map((l) => (
                 <tr key={l.id}>
                   <td><span className="font-semibold">{l.sku_name}</span><div className="font-mono text-xs text-[var(--muted)]">{l.sku_code}</div></td>
+                  <td className="num-cell">{l.gst_rate ?? "—"}</td>
                   <td className="num-cell">{l.mrp?.toFixed(2) ?? "—"}</td>
                   <td className="num-cell">{l.price.toFixed(2)}</td>
                   <td className="num-cell">{l.discount_pct ? l.discount_pct.toFixed(2) : "—"}</td>
                   <td>{l.rate_type || "—"}</td>
+                  <td className="num-cell">{l.std_pack || "—"}</td>
+                  <td className="num-cell">{l.bal_qty?.toLocaleString("en-IN") ?? "—"}</td>
                   <td className="num-cell">{l.qty}</td>
                   <td className="num-cell">{l.foc_qty || "—"}</td>
                   <td className="num-cell">{l.picked_qty}</td>
@@ -72,7 +77,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
                 </tr>
               ))}
               <tr className="bg-[var(--accent-bg)] font-extrabold">
-                <td colSpan={10} className="uppercase tracking-wide text-[var(--accent-strong)]">Total</td>
+                <td colSpan={13} className="uppercase tracking-wide text-[var(--accent-strong)]">Total</td>
                 <td className="num-cell">{total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
               </tr>
             </tbody>

@@ -9,6 +9,7 @@ export interface Sku {
   purchase_price: number;
   selling_price: number;
   hsn: string;
+  gst_rate: number;
   min_stock: number;
   reorder_level: number;
   master_qty: number;
@@ -46,6 +47,9 @@ export interface SoLine {
   picked_qty: number; packed_qty: number; dispatched_qty: number; price: number;
   mrp: number; discount_pct: number; rate_type: string; foc_qty: number;
   sku_code?: string; sku_name?: string; qr_token?: string;
+  // Reference fields joined in for display only (not stored on so_lines) —
+  // mirrors the legacy Sale Order line grid's GST Rate / Std Pack / Bal Qty.
+  gst_rate?: number; std_pack?: number; bal_qty?: number;
 }
 
 export interface Vendor {
@@ -56,6 +60,8 @@ export interface Customer {
   id: number; code: string; name: string; gst: string; email: string; phone: string;
   billing: string; shipping: string; credit_limit: number; payment_terms: string;
   discount_pct: number | null; discount_class_id: number | null;
+  // GST-slab-specific standing discount % off MRP (legacy "Disc 18"/"Disc 28").
+  discount_pct_18: number | null; discount_pct_28: number | null;
 }
 export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;
