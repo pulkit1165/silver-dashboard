@@ -217,12 +217,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     {hasItemNetRate ? "—" : (discPct ? `${discPct.toFixed(2)}%` : "—")}
                   </div>
                 </F>
-                <F label="Net rate">
-                  <input
-                    type="number" step="0.01" value={line.price}
-                    onChange={(e) => updateLine(idx, { price: Number(e.target.value) || 0 })}
-                    className={inp}
-                  />
+                <F label="Net rate (locked)">
+                  <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`} title="Auto-computed — item net rate, then party history, then MRP minus discount. Pick a different value below if more than one applies.">
+                    <span className="font-bold">{line.loadingRates ? "…" : `₹${line.price.toFixed(2)}`}</span>
+                    <span className="text-[10px] font-semibold uppercase text-[var(--muted-2)]">🔒 auto</span>
+                  </div>
                 </F>
                 <F label="Qty">
                   <input
