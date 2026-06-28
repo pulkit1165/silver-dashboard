@@ -59,28 +59,40 @@ function bestDisc(r) {
   return Math.max(Number(r.DISCPERCENT) || 0, Number(r.DISCPERCENT18) || 0, Number(r.DISCPERCENT28) || 0);
 }
 
-async function importCustomers() {
-  console.log("Fetching ALL active parties from Oracle party master (DTA02)...");
-  const rows = await oraQueryAllPaged(
-    `select p.acntid, p.acntcode, p.acntdesc, p.gstinno, p.add1, p.add2, p.add3, p.add4, p.add5,
-            p.mobile, p.phoneoff, p.email, p.creditdays, p.credit_limit_amount
-       from SILVER_MASTER.DTA02 p
-      where p.status = 'ACTIVE' and p.acntdesc is not null`,
-    "p.acntid",
-  );
-  console.log(`  ${rows.length} active parties found.`);
+// DTA02 (the shared party master) mixes real trade customers together with
+// internal ledger accounts — bank deposits, owner/family personal accounts,
+// HUF entities, drawings accounts — with no reliable flag to tell them
+// apart. The only trustworthy definition of "customer" is: someone who has
+// actually been the party on a real Sales Order. Order history lives in
+// per-fiscal-year schemas (SILVER_2023..SILVER_2026), not just the one this
+// connector is pointed at, so we reach across schemas for the full picture.
+const ORDER_YEAR_SCHEMAS = ["SILVER_2023", "SILVER_2024", "SILVER_2025", "SILVER_2026"];
 
-  console.log("  Backfilling standing discount % from each party's most recent Sales Order...");
+async function importCustomers() {
+  console.log(`Finding real customers via Sales Order history across ${ORDER_YEAR_SCHEMAS.join(", ")}...`);
+  const union = ORDER_YEAR_SCHEMAS.map((s) => `select partyid, discpercent, discpercent18, discpercent28, trdate from ${s}.DTC102`).join(" union all ");
   const discRows = await oraQueryAllPaged(
     `select partyid, discpercent, discpercent18, discpercent28 from (
        select partyid, discpercent, discpercent18, discpercent28,
               row_number() over (partition by partyid order by trdate desc) rn
-         from DTC102
+         from (${union})
      ) where rn = 1`,
     "partyid",
   );
   const discByParty = new Map(discRows.map((r) => [Number(r.PARTYID), bestDisc(r)]));
-  console.log(`  ${discByParty.size} parties have order history to derive a discount from.`);
+  console.log(`  ${discByParty.size} distinct real customers found (had at least one Sales Order, 2023-2026).`);
+
+  const partyIds = [...discByParty.keys()];
+  const idList = partyIds.join(",");
+  const rows = idList
+    ? await oraQueryAllPaged(
+        `select p.acntid, p.acntcode, p.acntdesc, p.gstinno, p.add1, p.add2, p.add3, p.add4, p.add5,
+                p.mobile, p.phoneoff, p.email, p.creditdays, p.credit_limit_amount
+           from SILVER_MASTER.DTA02 p
+          where p.acntid in (${idList}) and p.acntdesc is not null`,
+        "p.acntid",
+      )
+    : [];
 
   const batch = rows
     .map((r) => {
@@ -97,7 +109,6 @@ async function importCustomers() {
         credit_limit: Number(r.CREDIT_LIMIT_AMOUNT) || 0,
         payment_terms: r.CREDITDAYS ? `Net ${r.CREDITDAYS}` : null,
         discount_pct: discByParty.get(Number(r.ACNTID)) ?? 0,
-        _hasHistory: discByParty.has(Number(r.ACNTID)),
       };
     })
     .filter(Boolean);
@@ -107,10 +118,6 @@ async function importCustomers() {
   for (const r of batch) byCode.set(r.code, r);
   const finalRows = [...byCode.values()];
 
-  const existingDisc = new Map(
-    (await sqlpg`SELECT code, discount_pct FROM customers`).map((r) => [r.code, r.discount_pct]),
-  );
-
   const cols = ["code", "name", "gst", "email", "phone", "billing", "shipping", "credit_limit", "payment_terms", "discount_pct"];
   const size = 400;
   let inserted = 0, updated = 0;
@@ -118,9 +125,7 @@ async function importCustomers() {
     const chunk = finalRows.slice(i, i + size).map((r) => ({
       code: r.code, name: r.name, gst: r.gst, email: r.email, phone: r.phone,
       billing: r.billing, shipping: r.billing, credit_limit: r.credit_limit, payment_terms: r.payment_terms,
-      // Don't clobber a manually-set discount with 0 just because this party
-      // has no Oracle order history — only overwrite when we have a real value.
-      discount_pct: r._hasHistory ? r.discount_pct : (existingDisc.get(r.code) ?? 0),
+      discount_pct: r.discount_pct,
     }));
     const result = await sqlpg`
       INSERT INTO customers ${sqlpg(chunk, ...cols)}
@@ -135,6 +140,30 @@ async function importCustomers() {
     console.log(`  ...batch ${i + 1}-${Math.min(i + size, finalRows.length)}: ${result.length} upserted (${newCount} new)`);
   }
   console.log(`  Customers: ${inserted} inserted, ${updated} updated.`);
+  return new Set(finalRows.map((r) => r.code));
+}
+
+// Remove customers in Postgres that aren't in the legitimate (real Sales
+// Order history) set — covers both leftover seed data and the fallout from
+// an earlier broken import that pulled in every active DTA02 party,
+// including bank accounts and owner/family personal ledger entries.
+async function cleanupNonCustomers(legitCodes) {
+  console.log("Checking for non-customer entries in the customers table...");
+  const pgCustomers = await sqlpg`SELECT id, code, name FROM customers`;
+  const bogus = pgCustomers.filter((c) => !legitCodes.has(c.code));
+  if (bogus.length === 0) { console.log("  None found."); return; }
+  console.log(`  ${bogus.length} customer row(s) have no real Sales Order history:`);
+  for (const c of bogus.slice(0, 20)) console.log(`    - ${c.code}: ${c.name}`);
+  if (bogus.length > 20) console.log(`    ...and ${bogus.length - 20} more.`);
+
+  const ids = bogus.map((c) => c.id);
+  const [{ n: refSo }] = await sqlpg`SELECT COUNT(*)::int n FROM sales_orders WHERE customer_id IN ${sqlpg(ids)}`;
+  if (refSo > 0) {
+    console.log(`  Skipping deletion — ${refSo} sales order(s) in Postgres reference these. Review manually.`);
+    return;
+  }
+  await sqlpg`DELETE FROM customers WHERE id IN ${sqlpg(ids)}`;
+  console.log(`  Deleted ${bogus.length} non-customer entr${bogus.length === 1 ? "y" : "ies"}.`);
 }
 
 async function importVendors() {
@@ -290,7 +319,8 @@ async function cleanupFakeSkus() {
   console.log(`  Deleted ${fake.length} fake SKU(s).`);
 }
 
-await importCustomers();
+const legitCustomerCodes = await importCustomers();
+await cleanupNonCustomers(legitCustomerCodes);
 await importVendors();
 await importItems();
 await cleanupFakeSkus();
