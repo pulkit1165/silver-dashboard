@@ -4,6 +4,7 @@ import PageHeader from "@/components/PageHeader";
 import PrintButton from "@/components/erp/PrintButton";
 import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
 import ConfirmOrderButton from "@/components/erp/ConfirmOrderButton";
+import CancelLineButton from "@/components/erp/CancelLineButton";
 import { getSalesOrder } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
@@ -53,11 +54,13 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
                 <th className="!text-right">Std Pack</th><th className="!text-right">Bal Qty</th>
                 <th className="!text-right">Ordered</th><th className="!text-right">FOC Qty</th>
                 <th className="!text-right">Picked</th><th className="!text-right">Packed</th><th className="!text-right">Dispatched</th>
-                <th className="!text-right">Line total</th>
+                <th className="!text-right">Cancelled</th><th className="!text-right">Line total</th>
               </tr>
             </thead>
             <tbody>
-              {so.lines.map((l) => (
+              {so.lines.map((l) => {
+                const remaining = l.qty - l.packed_qty - (l.cancelled_qty ?? 0);
+                return (
                 <tr key={l.id}>
                   <td><span className="font-semibold">{l.sku_name}</span><div className="font-mono text-xs text-[var(--muted)]">{l.sku_code}</div></td>
                   <td className="num-cell">{l.gst_rate ?? "—"}</td>
@@ -72,11 +75,18 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
                   <td className="num-cell">{l.picked_qty}</td>
                   <td className="num-cell">{l.packed_qty}</td>
                   <td className="num-cell">{l.dispatched_qty}</td>
+                  <td className="num-cell">
+                    <div className="flex items-center justify-end gap-2">
+                      <span>{l.cancelled_qty || "—"}</span>
+                      <CancelLineButton soLineId={l.id} remaining={remaining} skuCode={l.sku_code ?? ""} />
+                    </div>
+                  </td>
                   <td className="num-cell">{(l.qty * l.price).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
                 </tr>
-              ))}
+                );
+              })}
               <tr className="bg-[var(--accent-bg)] font-extrabold">
-                <td colSpan={13} className="uppercase tracking-wide text-[var(--accent-strong)]">Total</td>
+                <td colSpan={14} className="uppercase tracking-wide text-[var(--accent-strong)]">Total</td>
                 <td className="num-cell">{total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
               </tr>
             </tbody>

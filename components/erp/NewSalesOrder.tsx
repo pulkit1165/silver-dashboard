@@ -106,9 +106,11 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
+  const [creditWarning, setCreditWarning] = useState<{ message: string; creditLimit: number; outstanding: number; orderTotal: number } | null>(null);
 
-  async function submit() {
+  async function submit(allowOverCreditLimit = false) {
     setErr("");
+    if (!allowOverCreditLimit) setCreditWarning(null);
     if (!customerId) { setErr("Select a customer."); return; }
     const validLines = lines.filter((l) => l.skuId && l.qty > 0);
     if (validLines.length === 0) { setErr("Add at least one item."); return; }
@@ -123,6 +125,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           bill_type: billType,
           disc_pct: discPct,
           remarks,
+          allow_over_credit_limit: allowOverCreditLimit,
           lines: validLines.map((l) => {
             const sku = skuById.get(l.skuId as number);
             const mrp = sku?.price ?? l.price;
@@ -136,7 +139,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
       });
       const d = await r.json();
       if (d.ok) router.push(`/erp/sales/${d.order.id}`);
-      else setErr(d.error ?? "Failed to create order");
+      else if (d.creditLimitExceeded) {
+        setCreditWarning({ message: d.error, creditLimit: d.creditLimit, outstanding: d.outstanding, orderTotal: d.orderTotal });
+      } else setErr(d.error ?? "Failed to create order");
     } finally {
       setBusy(false);
     }
@@ -326,13 +331,37 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         + Add item
       </button>
 
+      {creditWarning && (
+        <div className="rounded-lg border border-[var(--danger)] bg-[var(--danger-bg)] p-3 text-sm">
+          <p className="font-semibold text-[var(--danger)]">⚠ Credit limit exceeded</p>
+          <p className="mt-1">{creditWarning.message}</p>
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => submit(true)}
+              className="rounded-lg bg-[var(--danger)] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-60"
+            >
+              Create anyway
+            </button>
+            <button
+              type="button"
+              onClick={() => setCreditWarning(null)}
+              className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
         <div className="text-base font-bold">Order total: ₹{total.toFixed(2)}</div>
         <div className="flex items-center gap-3">
           {err && <span className="text-sm font-semibold text-[var(--danger)]">{err}</span>}
           <button
             disabled={busy}
-            onClick={submit}
+            onClick={() => submit(false)}
             className="rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white disabled:opacity-60"
           >
             {busy ? "Creating…" : "Create Sales Order"}

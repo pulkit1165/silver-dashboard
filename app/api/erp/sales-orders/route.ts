@@ -43,12 +43,13 @@ export async function POST(req: Request) {
     }
   }
 
-  const order = await createSalesOrder({
+  const result = await createSalesOrder({
     customerId,
     orderDate: typeof b.order_date === "string" && b.order_date ? b.order_date : new Date().toISOString().slice(0, 10),
     billType: typeof b.bill_type === "string" ? b.bill_type : undefined,
     discPct: b.disc_pct != null ? Number(b.disc_pct) : undefined,
     remarks: typeof b.remarks === "string" ? b.remarks : undefined,
+    allowOverCreditLimit: b.allow_over_credit_limit === true,
     lines: lines.map((l) => ({
       skuId: Number(l.sku_id),
       qty: Number(l.qty),
@@ -59,5 +60,11 @@ export async function POST(req: Request) {
       focQty: l.foc_qty != null ? Number(l.foc_qty) : undefined,
     })),
   });
-  return NextResponse.json({ ok: true, order }, { status: 201 });
+  if ("error" in result && result.error === "CREDIT_LIMIT_EXCEEDED") {
+    return NextResponse.json({
+      ok: false, error: result.message, creditLimitExceeded: true,
+      creditLimit: result.creditLimit, outstanding: result.outstanding, orderTotal: result.orderTotal,
+    }, { status: 422 });
+  }
+  return NextResponse.json({ ok: true, order: result }, { status: 201 });
 }
