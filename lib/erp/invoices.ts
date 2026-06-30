@@ -188,12 +188,19 @@ async function gatherDraft(sql: Sql, soId: number) {
     for (const o of overrides) classSkuPct.set(o.sku_id, o.pct);
   }
 
-  // Billable lines = dispatched - already-invoiced (> 0).
+  // Billable lines = qty on VERIFIED delivery orders - already-invoiced (> 0).
+  // A Delivery Order (packed case) has to be verified before it counts.
   const rows = (await sql`
     SELECT l.id AS so_line_id, l.sku_id,
-           GREATEST(COALESCE(l.dispatched_qty,0) - COALESCE(l.invoiced_qty,0), 0) AS billable,
+           GREATEST(COALESCE(vp.verified_qty,0) - COALESCE(l.invoiced_qty,0), 0) AS billable,
            s.sku_code, s.name AS description, s.price AS mrp, s.hsn, s.unit, s.gst_rate
     FROM so_lines l JOIN skus s ON s.id = l.sku_id
+    LEFT JOIN (
+      SELECT pl.so_line_id, SUM(pl.qty)::float8 AS verified_qty
+      FROM package_lines pl JOIN packages p ON p.id = pl.package_id
+      WHERE p.status = 'verified'
+      GROUP BY pl.so_line_id
+    ) vp ON vp.so_line_id = l.id
     WHERE l.so_id = ${soId}
     ORDER BY l.id`) as unknown as Array<{
     so_line_id: number; sku_id: number; billable: number; sku_code: string; description: string;

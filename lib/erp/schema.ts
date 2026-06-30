@@ -209,6 +209,51 @@ export const poLines = pgTable("po_lines", {
   price: doublePrecision("price"),
 });
 
+// Purchase-side mirror of packages/package_lines: a goods receipt (GRN) is
+// what physically came in against a PO, status 'received' -> 'verified' —
+// only verified qty is vendor-billable (see lib/erp/vendor-bills.ts).
+export const goodsReceipts = pgTable("goods_receipts", {
+  id: serial("id").primaryKey(),
+  poId: integer("po_id").notNull(),
+  grnNo: text("grn_no"),
+  status: text("status").default("received"), // received | verified
+  createdBy: text("created_by"),
+  createdAt: createdAt(),
+});
+
+export const goodsReceiptLines = pgTable("goods_receipt_lines", {
+  id: serial("id").primaryKey(),
+  grnId: integer("grn_id").notNull(),
+  poLineId: integer("po_line_id").notNull(),
+  skuId: integer("sku_id").notNull(),
+  qty: doublePrecision("qty").default(0),
+  createdAt: createdAt(),
+});
+
+// Vendor bill — mirrors invoices/invoice_lines but deliberately simpler (no
+// GST/ITC split). billNo is the VENDOR's own invoice number, not ours.
+export const vendorBills = pgTable("vendor_bills", {
+  id: serial("id").primaryKey(),
+  poId: integer("po_id").notNull(),
+  vendorId: integer("vendor_id").notNull(),
+  billNo: text("bill_no").default(""),
+  billDate: text("bill_date"),
+  status: text("status").default("draft"),
+  total: doublePrecision("total").default(0),
+  createdBy: text("created_by"),
+  createdAt: createdAt(),
+});
+
+export const vendorBillLines = pgTable("vendor_bill_lines", {
+  id: serial("id").primaryKey(),
+  billId: integer("bill_id").notNull(),
+  poLineId: integer("po_line_id").notNull(),
+  skuId: integer("sku_id").notNull(),
+  qty: doublePrecision("qty").default(0),
+  rate: doublePrecision("rate").default(0),
+  amount: doublePrecision("amount").default(0),
+});
+
 export const salesOrders = pgTable("sales_orders", {
   id: serial("id").primaryKey(),
   soNo: text("so_no").unique(),

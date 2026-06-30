@@ -4,8 +4,9 @@ import { genToken } from "./token";
 import { logActivity } from "./activity";
 import type {
   Sku, Warehouse, Bin, InventoryRow, StockStatus, ScanEvent,
-  SalesOrder, SoLine, Vendor, Customer, PurchaseOrder,
+  SalesOrder, SoLine, Vendor, Customer, PurchaseOrder, PoLine, PurchaseOrderDoc,
   OrderPacking, PackingLine, PackingCase, DeliveryOrderDoc, DeliveryOrderLine,
+  GoodsReceiptListRow, GoodsReceiptDoc, GoodsReceiptLine,
 } from "./types";
 
 export function stockStatus(sku: { min_stock: number; reorder_level: number }, qty: number): StockStatus {
@@ -320,22 +321,30 @@ export interface PendingBillRow {
   id: number; so_no: string; customer_name: string; order_date: string; status: string;
   lines: number; dispatched_qty: number; invoiced_qty: number; billable_qty: number;
 }
-// Queue for the billing screen: orders with dispatched-but-uninvoiced qty —
-// the legacy app's "pending Delivery Orders to be billed."
+// Queue for the billing screen: orders with verified-DO-but-uninvoiced qty —
+// the legacy app's "pending Delivery Orders to be billed." Billable is sourced
+// from VERIFIED package_lines (not raw so_lines.dispatched_qty) — a Delivery
+// Order has to be verified before it's billable.
 export async function getPendingToBill(): Promise<PendingBillRow[]> {
   const sql = getSql();
   return (await sql`
     SELECT so.id, so.so_no, c.name AS customer_name, so.order_date, so.status,
            COUNT(l.id)::int AS lines,
-           COALESCE(SUM(l.dispatched_qty),0)::float8 AS dispatched_qty,
+           COALESCE(SUM(vp.verified_qty),0)::float8 AS dispatched_qty,
            COALESCE(SUM(l.invoiced_qty),0)::float8 AS invoiced_qty,
-           COALESCE(SUM(GREATEST(l.dispatched_qty - l.invoiced_qty,0)),0)::float8 AS billable_qty
+           COALESCE(SUM(GREATEST(COALESCE(vp.verified_qty,0) - l.invoiced_qty,0)),0)::float8 AS billable_qty
     FROM sales_orders so
     JOIN customers c ON c.id = so.customer_id
     JOIN so_lines l ON l.so_id = so.id
+    LEFT JOIN (
+      SELECT pl.so_line_id, SUM(pl.qty)::float8 AS verified_qty
+      FROM package_lines pl JOIN packages p ON p.id = pl.package_id
+      WHERE p.status = 'verified'
+      GROUP BY pl.so_line_id
+    ) vp ON vp.so_line_id = l.id
     WHERE so.status IN ('partially dispatched','dispatched')
     GROUP BY so.id, c.name, so.order_date, so.status, so.so_no
-    HAVING COALESCE(SUM(GREATEST(l.dispatched_qty - l.invoiced_qty,0)),0) > 0
+    HAVING COALESCE(SUM(GREATEST(COALESCE(vp.verified_qty,0) - l.invoiced_qty,0)),0) > 0
     ORDER BY so.order_date, so.id`) as unknown as PendingBillRow[];
 }
 
@@ -443,6 +452,46 @@ export async function getDeliveryOrder(packageId: number): Promise<DeliveryOrder
   return { ...pkg, lines };
 }
 
+// Marks a packed case as verified — the gate that makes it billable
+// (see getPendingToBill / invoices.ts gatherDraft). Only a 'packed' DO can be
+// verified; already-verified or still-open ones are left alone.
+export async function verifyDeliveryOrder(packageId: number): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  const [pkg] = (await sql`UPDATE packages SET status='verified' WHERE id=${packageId} AND status='packed' RETURNING id`) as unknown as Array<{ id: number }>;
+  return pkg ? { ok: true } : { error: "Delivery order not found or not in packed status." };
+}
+
+// Next sequential Packing Slip No. in the "PS26/0001" format already used —
+// auto-fills on a new slip instead of the user typing one.
+export async function nextPackingSlipNo(prefix = "PS26"): Promise<string> {
+  const sql = getSql();
+  const rows = (await sql`
+    SELECT slip_no FROM packing_slips WHERE slip_no LIKE ${prefix + "/%"} ORDER BY id DESC LIMIT 50`) as unknown as Array<{ slip_no: string }>;
+  let max = 0;
+  for (const r of rows) {
+    const m = /\/(\d+)$/.exec(r.slip_no);
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}/${String(max + 1).padStart(4, "0")}`;
+}
+
+// Bill No. lives inside packing_slips.data (JSON), not its own column — same
+// sequential idea as nextPackingSlipNo, kept fully separate from the real GST
+// invoice numbering (company_settings.invoice_next_no) since this is just an
+// internal packing-slip reference, not the legal invoice number.
+export async function nextBillNo(prefix = "GC26/"): Promise<string> {
+  const sql = getSql();
+  const rows = (await sql`
+    SELECT data->'hdr'->>'billNo' AS bill_no FROM packing_slips
+    WHERE data->'hdr'->>'billNo' LIKE ${prefix + "%"} ORDER BY id DESC LIMIT 50`) as unknown as Array<{ bill_no: string | null }>;
+  let max = 0;
+  for (const r of rows) {
+    const m = /(\d+)$/.exec(r.bill_no || "");
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `${prefix}${String(max + 1).padStart(6, "0")}`;
+}
+
 export async function updateDeliveryOrderHeader(
   packageId: number,
   patch: { trType?: string; doType?: string; slipNo?: string },
@@ -511,6 +560,62 @@ export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   return (await getSql()`
     SELECT po.*, v.name AS vendor_name FROM purchase_orders po
     JOIN vendors v ON v.id=po.vendor_id ORDER BY po.id DESC`) as unknown as PurchaseOrder[];
+}
+
+// Single PO + lines (ordered/received/remaining) — the receiving screen.
+export async function getPurchaseOrder(id: number): Promise<PurchaseOrderDoc | undefined> {
+  const sql = getSql();
+  const [po] = (await sql`
+    SELECT po.*, v.name AS vendor_name FROM purchase_orders po
+    JOIN vendors v ON v.id=po.vendor_id WHERE po.id=${id}`) as unknown as PurchaseOrder[];
+  if (!po) return undefined;
+  const lines = (await sql`
+    SELECT l.id, l.po_id, l.sku_id, l.qty, l.received_qty, l.price, s.sku_code, s.name AS sku_name
+    FROM po_lines l JOIN skus s ON s.id=l.sku_id WHERE l.po_id=${id} ORDER BY l.id`) as unknown as
+    Array<Omit<PoLine, "remaining">>;
+  return { ...po, lines: lines.map((l) => ({ ...l, remaining: l.qty - l.received_qty })) };
+}
+
+export interface GrnFilter { vendor?: string; from?: string; to?: string; status?: string }
+// Every GRN (goods receipt) — mirrors getDeliveryOrders().
+export async function getGoodsReceipts(f: GrnFilter = {}): Promise<GoodsReceiptListRow[]> {
+  const sql = getSql();
+  const vendor = f.vendor?.trim() ? `%${f.vendor.trim()}%` : null;
+  return (await sql`
+    SELECT g.id AS grn_id, g.grn_no, g.status, g.created_at,
+           po.id AS po_id, po.po_no, v.name AS vendor_name,
+           COUNT(gl.id)::int AS lines, COALESCE(SUM(gl.qty),0)::float8 AS total_qty
+    FROM goods_receipts g
+    JOIN purchase_orders po ON po.id = g.po_id
+    JOIN vendors v ON v.id = po.vendor_id
+    LEFT JOIN goods_receipt_lines gl ON gl.grn_id = g.id
+    WHERE (${vendor}::text IS NULL OR v.name ILIKE ${vendor})
+      AND (${f.from ?? null}::text IS NULL OR g.created_at >= ${f.from ?? null})
+      AND (${f.to ?? null}::text IS NULL OR g.created_at <= ${f.to ?? null})
+      AND (${f.status ?? null}::text IS NULL OR g.status = ${f.status ?? null})
+    GROUP BY g.id, g.grn_no, g.status, g.created_at, po.id, po.po_no, v.name
+    ORDER BY g.id DESC`) as unknown as GoodsReceiptListRow[];
+}
+
+// One GRN's full detail — mirrors getDeliveryOrder().
+export async function getGoodsReceipt(grnId: number): Promise<GoodsReceiptDoc | undefined> {
+  const sql = getSql();
+  const [grn] = (await sql`
+    SELECT g.id AS grn_id, g.grn_no, g.status, g.created_at,
+           po.id AS po_id, po.po_no, v.name AS vendor_name
+    FROM goods_receipts g
+    JOIN purchase_orders po ON po.id = g.po_id
+    JOIN vendors v ON v.id = po.vendor_id
+    WHERE g.id = ${grnId}`) as unknown as Array<Omit<GoodsReceiptDoc, "lines">>;
+  if (!grn) return undefined;
+  const lines = (await sql`
+    SELECT gl.id AS grn_line_id, s.sku_code, s.name AS sku_name,
+           pl.qty AS po_qty, gl.qty AS received_qty, pl.price
+    FROM goods_receipt_lines gl
+    JOIN po_lines pl ON pl.id = gl.po_line_id
+    JOIN skus s ON s.id = gl.sku_id
+    WHERE gl.grn_id = ${grnId} ORDER BY gl.id`) as unknown as GoodsReceiptLine[];
+  return { ...grn, lines };
 }
 
 export interface ScanFilter {
@@ -588,7 +693,7 @@ export async function erpStats() {
     (q as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c);
   const [
     levels, skus, warehouses, openSales, openPurchases,
-    vendors, customers, scansToday, scansTotal, pendingDispatch,
+    vendors, customers, scansToday, scansTotal, pendingDispatch, pendingVerifyDo,
   ] = await Promise.all([
     stockLevels(),
     c(sql`SELECT COUNT(*)::int AS c FROM skus`),
@@ -600,6 +705,7 @@ export async function erpStats() {
     c(sql`SELECT COUNT(*)::int AS c FROM scan_events WHERE created_at >= to_char(current_date,'YYYY-MM-DD')`),
     c(sql`SELECT COUNT(*)::int AS c FROM scan_events`),
     c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
+    c(sql`SELECT COUNT(*)::int AS c FROM packages WHERE status='packed'`),
   ]);
   const lowStockItems = levels.filter((s) => s.status === "low" || s.status === "out");
   return {
@@ -607,6 +713,6 @@ export async function erpStats() {
     stockUnits: levels.reduce((a, s) => a + s.qty, 0),
     lowStock: lowStockItems.length,
     warehouses, openSales, openPurchases, vendors, customers,
-    scansToday, scansTotal, pendingDispatch, lowStockItems,
+    scansToday, scansTotal, pendingDispatch, pendingVerifyDo, lowStockItems,
   };
 }

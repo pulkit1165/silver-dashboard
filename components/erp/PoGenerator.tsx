@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 type Suggestion = {
@@ -354,7 +355,7 @@ export default function PoGenerator({
                 {pos.length === 0 && <tr><td colSpan={4} className="!py-6 text-center text-[var(--muted)]">No purchase orders yet. Generate one above.</td></tr>}
                 {pos.map((p) => (
                   <tr key={p.id}>
-                    <td className="font-semibold">{p.po_no}</td>
+                    <td><Link href={`/erp/purchase/${p.id}`} className="font-semibold text-[var(--accent)] hover:underline">{p.po_no}</Link></td>
                     <td>{p.vendor_name ?? "—"}</td>
                     <td className="text-[var(--muted)]">{p.order_date}</td>
                     <td><span className={`tag ${PO_TAG[p.status] ?? "n"}`}>{p.status}</span></td>

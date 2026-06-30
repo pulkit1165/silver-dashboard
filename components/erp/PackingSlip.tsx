@@ -44,7 +44,10 @@ const blankRow = (csNo: number | null): Row => ({
 });
 const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", partyName: "", date: new Date().toISOString().slice(0, 10), trType: "PS26", trSno: "", remarks: "" });
 
-export default function PackingSlip() {
+type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
+type SoLineInfo = { sku_code?: string; sku_name?: string; qr_token?: string; qty: number; dispatched_qty: number; mrp: number; std_pack?: number };
+
+export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
@@ -56,6 +59,13 @@ export default function PackingSlip() {
   const [collab, setCollab] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  // Real-order linkage: selecting a SO seeds rows from its actual lines and,
+  // on Done Case, packs for real (deducts stock, creates the Delivery Order)
+  // instead of just building the Excel document.
+  const [soId, setSoId] = useState<number | null>(null);
+  const [soLines, setSoLines] = useState<SoLineInfo[]>([]);
+  const [qrByCode, setQrByCode] = useState<Record<string, string>>({});
+  const [packing, setPacking] = useState(false);
 
   // refs so interval callbacks read fresh values without stale closures
   const stateRef = useRef<SlipDoc>({ hdr, activeCaseNo, activeRows, completed });
@@ -82,8 +92,42 @@ export default function PackingSlip() {
     try {
       const r = await fetch(`/api/erp/packing-slips/${id}`, { cache: "no-store" });
       const d = await r.json();
-      if (d.ok) { applyDoc(d.slip.data as SlipDoc); setSlipId(d.slip.id); serverAtRef.current = d.slip.updated_at; dirtyRef.current = false; flash(true, `Opened ${d.slip.slip_no}`); }
+      if (d.ok) {
+        applyDoc(d.slip.data as SlipDoc); setSlipId(d.slip.id); serverAtRef.current = d.slip.updated_at; dirtyRef.current = false;
+        setSoId(null); setSoLines([]); // reopening a saved doc doesn't carry the live SO link back
+        flash(true, `Opened ${d.slip.slip_no}`);
+      }
     } catch { /* ignore */ }
+  }
+
+  async function assignNewSlipNo() {
+    try {
+      const r = await fetch("/api/erp/packing-slips/next-no", { cache: "no-store" });
+      const d = await r.json();
+      if (d.ok) setHdr((h) => ({
+        ...h,
+        slipNo: h.slipNo.trim() ? h.slipNo : d.slipNo ?? h.slipNo,
+        billNo: h.billNo.trim() ? h.billNo : d.billNo ?? h.billNo,
+      }));
+    } catch { /* ignore — manual entry still works */ }
+  }
+
+  async function selectSo(id: number) {
+    setSoId(id);
+    touch();
+    try {
+      const r = await fetch(`/api/erp/sales-orders/${id}`, { cache: "no-store" });
+      const d = await r.json();
+      if (d.ok && d.order) {
+        setHdr((h) => ({ ...h, salesOrderNo: d.order.so_no, partyName: d.order.customer_name || h.partyName }));
+        const lines: SoLineInfo[] = d.order.lines || [];
+        setSoLines(lines);
+        const map: Record<string, string> = {};
+        for (const l of lines) if (l.sku_code && l.qr_token) map[l.sku_code] = l.qr_token;
+        setQrByCode((m) => ({ ...m, ...map }));
+        flash(true, `Loaded ${d.order.so_no}`);
+      } else flash(false, "Could not load that order.");
+    } catch { flash(false, "Could not load that order."); }
   }
 
   async function doSave() {
@@ -115,6 +159,7 @@ export default function PackingSlip() {
       if (last) openId = Number(last);
     }
     if (openId != null) openById(openId);
+    else assignNewSlipNo();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => { if (slipId) { try { localStorage.setItem("erp_ps_last_id", String(slipId)); } catch { /* ignore */ } } }, [slipId]);
@@ -162,10 +207,24 @@ export default function PackingSlip() {
 
   const setHeader = (field: keyof Header, value: string) => { setHdr((h) => ({ ...h, [field]: value })); touch(); };
 
+  // Already-entered qty for a SKU across cases closed so far this session —
+  // used to suggest what's actually still left when seeding a new case.
+  function remainingForLine(l: SoLineInfo): number {
+    const already = completed.flatMap((c) => c.rows).filter((r) => r.itemCode === l.sku_code).reduce((a, r) => a + num(r.quantity), 0);
+    return Math.max(0, l.qty - l.dispatched_qty - already);
+  }
   function startCase() {
     if (activeCaseNo) { flash(false, "Finish the current case first (Done Case)."); return; }
     if (usedCases.has(pickCase)) { flash(false, `Case ${pickCase} already exists for this slip — use Edit to change it.`); return; }
-    setActiveCaseNo(pickCase); setActiveRows([]); touch();
+    const seeded: Row[] = soLines.filter((l) => remainingForLine(l) > 0).map((l) => ({
+      ...blankRow(pickCase),
+      itemCode: l.sku_code ?? "", itemDesc: l.sku_name ?? "",
+      mrp: l.mrp != null ? String(l.mrp) : "", mMrp: l.mrp != null ? String(l.mrp) : "",
+      mPack: l.std_pack ? String(l.std_pack) : "",
+      qtyOrdered: String(l.qty), qtyDispatched: String(l.dispatched_qty),
+      pendingQty: String(remainingForLine(l)), quantity: String(remainingForLine(l)),
+    }));
+    setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
   async function handleScan(code: string) {
     if (!activeCaseNo) return;
@@ -174,6 +233,7 @@ export default function PackingSlip() {
       const r = await fetch("/api/erp/scan/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
       const d = await r.json();
       if (d.ok && d.sku) {
+        if (d.sku.qr_token) setQrByCode((m) => ({ ...m, [d.sku.sku_code]: d.sku.qr_token }));
         setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: d.sku.sku_code, itemDesc: d.sku.name, unit: d.sku.unit || "", mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "" }]);
         flash(true, `Added ${d.sku.sku_code}`);
       } else { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); flash(false, `Not in master — added "${code}" to fill manually`); }
@@ -192,15 +252,68 @@ export default function PackingSlip() {
   const deleteRow = (id: string) => { setActiveRows((rows) => rows.filter((r) => r.id !== id)); touch(); };
   const autoPending = () => { setActiveRows((rows) => rows.map((r) => ({ ...r, pendingQty: String(num(r.qtyOrdered) - num(r.qtyDispatched)) }))); touch(); };
 
-  function doneCase() {
+  // Resolve a row's scannable token: cached from the SO lines / a prior scan,
+  // or a fresh lookup by exact sku_code match.
+  async function tokenFor(itemCode: string): Promise<string | null> {
+    if (qrByCode[itemCode]) return qrByCode[itemCode];
+    try {
+      const r = await fetch(`/api/erp/skus?q=${encodeURIComponent(itemCode)}`, { cache: "no-store" });
+      const d = await r.json();
+      const match = (d.skus || []).find((s: { sku_code: string; qr_token: string }) => s.sku_code === itemCode);
+      if (match?.qr_token) { setQrByCode((m) => ({ ...m, [itemCode]: match.qr_token })); return match.qr_token; }
+    } catch { /* ignore */ }
+    return null;
+  }
+
+  async function doneCase() {
     if (!activeCaseNo) return;
     if (activeRows.length === 0) { flash(false, "Add at least one item before closing the case."); return; }
     const incomplete = activeRows.filter((r) => rowMissingFields(r).length > 0);
     if (incomplete.length) { flash(false, `${incomplete.length} item(s) missing required fields (Item Code, Description, L.MRP, Quantity) — fill the highlighted cells.`); return; }
     if (completed.some((c) => c.caseNo === activeCaseNo)) { flash(false, `Case ${activeCaseNo} already exists — can't duplicate. Use Edit instead.`); return; }
+
+    // No real Sales Order linked (manual/legacy use) — keep this an Excel-only
+    // document, exactly as before.
+    if (!soId) {
+      setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
+      setActiveCaseNo(null); setActiveRows([]); touch();
+      flash(true, `Case ${activeCaseNo} closed`);
+      return;
+    }
+
+    // A real SO is linked — pack each row for real (deducts stock, creates the
+    // Delivery Order) via the same endpoint Pack & Dispatch uses. The user
+    // already typed an exact qty per row, so overpack is allowed without an
+    // extra confirm step (unlike scan-by-scan packing).
+    setPacking(true);
+    const toPack = activeRows.filter((r) => num(r.quantity) > 0);
+    const failures: string[] = [];
+    let skippedNoSku = 0;
+    for (const r of toPack) {
+      const token = await tokenFor(r.itemCode);
+      if (!token) { skippedNoSku++; continue; }
+      try {
+        const pr = await fetch("/api/erp/scan/action", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            code: token, action: "pack_case", refDoc: hdr.salesOrderNo,
+            packageNo: String(activeCaseNo), qty: num(r.quantity), device: "packing-slip", allowOverpack: true,
+          }),
+        });
+        const pd = await pr.json();
+        if (!pd.ok) failures.push(`${r.itemCode}: ${pd.error ?? "failed"}`);
+      } catch { failures.push(`${r.itemCode}: network error`); }
+    }
+    setPacking(false);
+
+    if (failures.length) {
+      flash(false, `Case ${activeCaseNo}: ${failures.length} item(s) failed to pack — fix and retry. ${failures.slice(0, 2).join("; ")}`);
+      return; // keep the case open so the user can fix and retry
+    }
+
     setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
     setActiveCaseNo(null); setActiveRows([]); touch();
-    flash(true, `Case ${activeCaseNo} closed`);
+    flash(true, `Case ${activeCaseNo} packed for real — now in Delivery Orders${skippedNoSku ? ` (${skippedNoSku} item(s) not in SKU master, Excel-only)` : ""}`);
   }
   function editCase(caseNo: number) {
     if (activeCaseNo) { flash(false, "Finish the current case before editing another."); return; }
@@ -212,8 +325,10 @@ export default function PackingSlip() {
   function newSlip() {
     if (!confirm("Start a new packing slip?")) return;
     setHdr(emptyHeader()); setActiveCaseNo(null); setActiveRows([]); setCompleted([]); setSlipId(null);
+    setSoId(null); setSoLines([]);
     serverAtRef.current = null; dirtyRef.current = false;
     try { localStorage.removeItem("erp_ps_last_id"); } catch { /* ignore */ }
+    assignNewSlipNo();
   }
 
   function validate(): string[] {
@@ -314,7 +429,13 @@ export default function PackingSlip() {
         <div className="grid grid-cols-2 gap-3 p-4 md:grid-cols-4">
           <Field label="Packing Slip No." req><input className="ctl" value={hdr.slipNo} onChange={(e) => setHeader("slipNo", e.target.value)} placeholder="PS26/0001" /></Field>
           <Field label="Bill No."><input className="ctl" value={hdr.billNo} onChange={(e) => setHeader("billNo", e.target.value)} placeholder="GC26/000227" /></Field>
-          <Field label="Sales Order No." req><input className="ctl" value={hdr.salesOrderNo} onChange={(e) => setHeader("salesOrderNo", e.target.value)} placeholder="SO26/000283" /></Field>
+          <Field label="Sales Order" req>
+            <select className="ctl" value={soId ?? ""} onChange={(e) => e.target.value && selectSo(Number(e.target.value))}>
+              <option value="">— select unpacked order —</option>
+              {orders.map((o) => <option key={o.id} value={o.id}>{o.so_no} — {o.customer_name ?? "—"} ({o.status})</option>)}
+            </select>
+            {hdr.salesOrderNo && !soId && <div className="mt-1 text-xs text-[var(--muted)]">From saved slip: <b>{hdr.salesOrderNo}</b> (not in the live unpacked list)</div>}
+          </Field>
           <Field label="Customer / Party Name" req><input className="ctl" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="SAMY AUTO PARTS" /></Field>
           <Field label="Packing Slip Date" req><input type="date" className="ctl" value={hdr.date} onChange={(e) => setHeader("date", e.target.value)} /></Field>
           <Field label="Tr Type"><input className="ctl" value={hdr.trType} onChange={(e) => setHeader("trType", e.target.value)} /></Field>
@@ -382,7 +503,7 @@ export default function PackingSlip() {
                 </div>
                 <p className="mt-1 text-xs text-[var(--muted)]">Required for every item (from the packing slip): <b>Item Code, Item Description, L.MRP, Quantity</b>. Highlighted cells must be filled before the case can be closed.</p>
                 <div className="mt-3 flex items-center gap-2">
-                  <button onClick={doneCase} className="rounded-lg bg-[var(--accent-2)] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90">✓ Done Case {activeCaseNo}</button>
+                  <button onClick={doneCase} disabled={packing} className="rounded-lg bg-[var(--accent-2)] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60">{packing ? "Packing…" : `✓ Done Case ${activeCaseNo}`}</button>
                   <span className="text-xs text-[var(--muted)]">{activeRows.length} item(s) in this case · {activeRows.filter((r) => rowMissingFields(r).length === 0).length} ready</span>
                 </div>
               </div>

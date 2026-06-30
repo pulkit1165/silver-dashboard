@@ -19,6 +19,7 @@ export default async function ErpDashboard() {
     { label: "Low / out of stock", value: s.lowStock, sub: "needs reorder", alert: s.lowStock > 0 },
     { label: "Open sales orders", value: s.openSales, sub: `${s.pendingDispatch} to dispatch` },
     { label: "Open purchase orders", value: s.openPurchases, sub: `${s.vendors} vendors` },
+    { label: "Pending DO verification", value: s.pendingVerifyDo, sub: "not yet billable", alert: s.pendingVerifyDo > 0, href: "/erp/deliveries" },
     { label: "Scans today", value: s.scansToday, sub: `${s.scansTotal} all time` },
   ];
 
@@ -29,14 +30,21 @@ export default async function ErpDashboard() {
         subtitle={`Welcome, ${user.name} · ${roleLabel(user.role)} — operations at a glance.`}
       />
 
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
-        {kpis.map((k) => (
-          <div key={k.label} className={`kpi ${k.alert ? "alert" : ""}`}>
-            <div className="lab">{k.label}</div>
-            <div className="num" style={k.alert ? { color: "var(--danger)" } : undefined}>{k.value}</div>
-            <div className="sub">{k.sub}</div>
-          </div>
-        ))}
+      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+        {kpis.map((k) => {
+          const body = (
+            <>
+              <div className="lab">{k.label}</div>
+              <div className="num" style={k.alert ? { color: "var(--danger)" } : undefined}>{k.value}</div>
+              <div className="sub">{k.sub}</div>
+            </>
+          );
+          return k.href ? (
+            <Link key={k.label} href={k.href} className={`kpi hover:opacity-80 ${k.alert ? "alert" : ""}`}>{body}</Link>
+          ) : (
+            <div key={k.label} className={`kpi ${k.alert ? "alert" : ""}`}>{body}</div>
+          );
+        })}
       </div>
 
       {/* quick actions */}

@@ -6,8 +6,9 @@ import { useState } from "react";
 export interface FilterField {
   key: string; // URL query param name
   label: string;
-  type?: "text" | "date";
+  type?: "text" | "date" | "select";
   placeholder?: string;
+  options?: { value: string; label: string }[]; // for type: "select"
 }
 
 // A generic filter bar driven by URL search params — server pages read
@@ -19,7 +20,7 @@ export default function ListFilters({ fields }: { fields: FilterField[] }) {
   const sp = useSearchParams();
   const [values, setValues] = useState<Record<string, string>>(() => {
     const v: Record<string, string> = {};
-    fields.forEach((f) => { v[f.key] = sp.get(f.key) ?? ""; });
+    fields.forEach((f) => { v[f.key] = sp.get(f.key) ?? (f.type === "select" ? f.options?.[0]?.value ?? "" : ""); });
     return v;
   });
 
@@ -42,19 +43,32 @@ export default function ListFilters({ fields }: { fields: FilterField[] }) {
 
   return (
     <div className="mb-4 flex flex-wrap items-end gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-      {fields.map((f) => (
-        <label key={f.key} className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-          {f.label}
-          <input
-            type={f.type ?? "text"}
-            value={values[f.key] ?? ""}
-            onChange={(e) => update(f.key, e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") apply(values); }}
-            placeholder={f.placeholder}
-            className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
-          />
-        </label>
-      ))}
+      {fields.map((f) =>
+        f.type === "select" ? (
+          <label key={f.key} className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            {f.label}
+            <select
+              value={values[f.key] ?? ""}
+              onChange={(e) => { const next = { ...values, [f.key]: e.target.value }; update(f.key, e.target.value); apply(next); }}
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+            >
+              {(f.options ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </label>
+        ) : (
+          <label key={f.key} className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            {f.label}
+            <input
+              type={f.type ?? "text"}
+              value={values[f.key] ?? ""}
+              onChange={(e) => update(f.key, e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") apply(values); }}
+              placeholder={f.placeholder}
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
+            />
+          </label>
+        ),
+      )}
       <button
         onClick={() => apply(values)}
         className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]"

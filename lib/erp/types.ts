@@ -68,6 +68,36 @@ export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;
   total: number; vendor_name?: string;
 }
+export interface PoLine {
+  id: number; po_id: number; sku_id: number; qty: number; received_qty: number; price: number;
+  sku_code?: string; sku_name?: string; remaining: number;
+}
+export interface PurchaseOrderDoc extends PurchaseOrder {
+  lines: PoLine[];
+}
+
+// Purchase-side mirror of PackingCase/DeliveryOrderDoc.
+export interface GoodsReceiptListRow {
+  grn_id: number; grn_no: string; status: string; created_at: string;
+  po_id: number; po_no: string; vendor_name: string; lines: number; total_qty: number;
+}
+export interface GoodsReceiptLine {
+  grn_line_id: number; sku_code: string; sku_name: string; po_qty: number; received_qty: number; price: number;
+}
+export interface GoodsReceiptDoc {
+  grn_id: number; grn_no: string; status: string; created_at: string;
+  po_id: number; po_no: string; vendor_name: string;
+  lines: GoodsReceiptLine[];
+}
+
+export interface VendorBillableRow {
+  po_id: number; po_no: string; vendor_name: string; order_date: string; status: string;
+  lines: number; received_qty: number; billed_qty: number; billable_qty: number;
+}
+export interface VendorBillRow {
+  id: number; bill_no: string; bill_date: string | null; status: string; total: number;
+  po_no?: string; vendor_name?: string;
+}
 
 export const SCAN_ACTIONS = [
   "lookup", "inward", "outward", "transfer", "count", "pick", "pack", "dispatch", "damage", "verify",

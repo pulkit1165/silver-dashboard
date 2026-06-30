@@ -4,7 +4,14 @@ import ListFilters from "@/components/erp/ListFilters";
 import { getDeliveryOrders } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
-const TAG: Record<string, string> = { open: "n", packed: "g", dispatched: "g" };
+const TAG: Record<string, string> = { open: "n", packed: "n", verified: "g", dispatched: "g" };
+const STATUS_OPTIONS = [
+  { value: "packed", label: "Packed — pending verification" },
+  { value: "verified", label: "Verified — billable" },
+  { value: "open", label: "Open" },
+  { value: "dispatched", label: "Dispatched" },
+  { value: "all", label: "All" },
+];
 
 export default async function DeliveryOrdersPage({
   searchParams,
@@ -12,17 +19,18 @@ export default async function DeliveryOrdersPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  const rows = await getDeliveryOrders({ party: sp.party, from: sp.from, to: sp.to, status: sp.status });
+  const status = sp.status ?? "packed";
+  const rows = await getDeliveryOrders({ party: sp.party, from: sp.from, to: sp.to, status: status === "all" ? undefined : status });
   return (
     <>
       <PageHeader
         title="Delivery Orders"
-        subtitle="Every packed case (DO) — TR Type, DO Type, PSlip No, and the full item-wise detail."
+        subtitle="Every packed case (DO) — TR Type, DO Type, PSlip No, and the full item-wise detail. Verify a case to make it billable."
       />
       <ListFilters
         fields={[
+          { key: "status", label: "Status", type: "select", options: STATUS_OPTIONS },
           { key: "party", label: "Customer", placeholder: "Search customer…" },
-          { key: "status", label: "Status", placeholder: "open / packed / dispatched" },
           { key: "from", label: "From date", type: "date" },
           { key: "to", label: "To date", type: "date" },
         ]}
@@ -39,7 +47,9 @@ export default async function DeliveryOrdersPage({
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={10} className="!py-6 text-center text-[var(--muted)]">No delivery orders yet — pack a case from the Dispatch screen.</td></tr>
+                <tr><td colSpan={10} className="!py-6 text-center text-[var(--muted)]">
+                  {status === "packed" ? "Nothing pending verification right now." : "No delivery orders match this filter."}
+                </td></tr>
               )}
               {rows.map((r) => (
                 <tr key={r.package_id}>
