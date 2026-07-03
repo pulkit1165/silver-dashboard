@@ -288,33 +288,45 @@ body {
 .barcode-label .bl-meta { display: flex; justify-content: space-between; gap: 6px; font-size: 9px; }
 .barcode-label .bl-footer { margin-top: 2px; border-top: 1px solid #b00; padding-top: 2px; font-size: 8px; font-weight: 700; color: #b00; }
 /* ── Thermal die-cut labels ─────────────────────────────────────────────
-   The exact mm box comes from the inline width/height. Keep the same on-screen
-   layout — tier badge top-left, QR centred, item details, full 3-line SILVER
-   IND. address — but scale everything down so it all fits one small die-cut
-   (e.g. 65 × 35 mm). Content is clipped to the box so a label never spills. */
+   The exact mm box comes from the inline width/height. Layout is horizontal —
+   QR on the left, item details on the right — anchored to the top or bottom of
+   the label so it lands in the blank area of the pre-printed stock. */
 .barcode-label.thermal {
   overflow: hidden; box-sizing: border-box;
-  padding: 1mm 1.5mm; gap: 0; justify-content: flex-start;
-  font-size: 6px; line-height: 1.12;
+  padding: 2mm; gap: 0; justify-content: flex-start; align-items: stretch;
+  font-size: 6px; line-height: 1.15;
 }
-.barcode-label.thermal .bl-tier { font-size: 6px; padding: 0 3px; border-radius: 2px; }
-.barcode-label.thermal .bl-qr-main { padding: 0.3mm 0; gap: 0.3mm; }
-.barcode-label.thermal .bl-qr-main svg { width: 14mm; height: 14mm; }
+.barcode-label.thermal.pos-bottom { justify-content: flex-end; }
+.barcode-label.thermal .bl-row { display: flex; flex-direction: row; align-items: center; gap: 2.5mm; width: 100%; }
+.barcode-label.thermal .bl-qr-main { flex: 0 0 auto; padding: 0; gap: 0.3mm; }
+.barcode-label.thermal .bl-qr-main svg { width: 17mm; height: 17mm; }
 .barcode-label.thermal .bl-qr-token { font-size: 5px; }
-.barcode-label.thermal .bl-name { font-size: 8px; }
-.barcode-label.thermal .bl-qty { font-size: 7px; }
-.barcode-label.thermal .bl-tax { font-size: 5.5px; }
-.barcode-label.thermal .bl-meta { font-size: 5.5px; gap: 2px; }
-.barcode-label.thermal .bl-footer { font-size: 5px; margin-top: 0.4mm; padding-top: 0.4mm; line-height: 1.05; }
-/* Master keeps its green background but drops the big padding/font so it fits too. */
-.barcode-label.master.thermal { padding: 1mm 1.5mm; font-size: 6px; }
+.barcode-label.thermal .bl-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 0.4mm; align-items: flex-start; text-align: left; }
+.barcode-label.thermal .bl-tier { font-size: 6px; padding: 0 3px; border-radius: 2px; }
+.barcode-label.thermal .bl-name { font-size: 9px; font-weight: 800; }
+.barcode-label.thermal .bl-qty { font-size: 8px; }
+.barcode-label.thermal .bl-meta { display: flex; flex-wrap: wrap; justify-content: flex-start; font-size: 6px; gap: 0 3mm; }
+/* bigger stocks (≥ medium) can afford a larger QR + text */
+.barcode-label.thermal[style*="70mm"] .bl-qr-main svg,
+.barcode-label.thermal[style*="85mm"] .bl-qr-main svg,
+.barcode-label.thermal[style*="95mm"] .bl-qr-main svg { width: 22mm; height: 22mm; }
+
+/* Pre-printed stock already carries the address + colour, so print ONLY the
+   black content — no border, no background (not even the Master green). */
+.barcode-label.preprinted { border: none !important; background: transparent !important; color: #000; box-shadow: none; }
+.barcode-label.preprinted.master { background: transparent !important; }
+@media screen {
+  /* show the die-cut outline on screen so you can see where content will sit */
+  .barcode-label.preprinted { outline: 1px dashed #cbd5e1; background: #fbfbfb !important; }
+}
 
 /* Page-sized wrapper: the label is centred inside it and can be spun 90° so it
    still reads correctly when a printer feeds the die-cut the other way round.
    Because the wrapper is the exact page size, one label = one die-cut either way. */
 .label-rot { position: relative; overflow: hidden; box-sizing: border-box; }
-.label-rot > .barcode-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
-.label-rot > .barcode-label.rot { transform: translate(-50%, -50%) rotate(90deg); }
+/* Non-rotated: the label just fills the page-sized wrapper (its inline w/h match). */
+/* Rotated: centre it and spin 90° so a 65x35 label fills a 35x65 page. */
+.label-rot > .barcode-label.rot { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(90deg); }
 
 ::-webkit-scrollbar {
   width: 10px;

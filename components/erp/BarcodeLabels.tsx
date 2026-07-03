@@ -16,18 +16,15 @@ type LabelType = "single" | "master";
 // second tier), in which case Single already covers it.
 const hasMaster = (masterQty: number, singleQty: number) => masterQty > (singleQty || 1);
 
-// Physical die-cut sizes for the thermal roll (width × height in mm). The chosen
-// size drives the print @page size so ONE label lands on ONE die-cut and sizes
-// the on-screen preview 1:1. Small item rolls vs the wide 4" master roll.
+// The four physical label stocks Silver uses (width × height in mm). Any SKU can
+// print on any size. The chosen size drives the print @page size so ONE label
+// lands on ONE die-cut and sizes the on-screen preview 1:1.
 type LabelSize = { id: string; label: string; w: number; h: number };
 const LABEL_SIZES: LabelSize[] = [
-  { id: "single-65x35", label: "Small · 65 × 35 mm (wide)", w: 65, h: 35 },
-  { id: "single-50x25", label: "Small · 50 × 25 mm", w: 50, h: 25 },
-  { id: "single-40x30", label: "Small · 40 × 30 mm", w: 40, h: 30 },
-  { id: "single-35x65", label: "Small · 35 × 65 mm (tall)", w: 35, h: 65 },
-  { id: "master-100x75", label: "Master · 100 × 75 mm (4×3\")", w: 100, h: 75 },
-  { id: "master-100x50", label: "Master · 100 × 50 mm (4×2\")", w: 100, h: 50 },
-  { id: "master-100x150", label: "Master · 100 × 150 mm (4×6\")", w: 100, h: 150 },
+  { id: "big-95x70", label: "Big green · 95 × 70 mm", w: 95, h: 70 },
+  { id: "red-85x55", label: "Red · 85 × 55 mm", w: 85, h: 55 },
+  { id: "med-70x40", label: "Medium green · 70 × 40 mm", w: 70, h: 40 },
+  { id: "small-50x30", label: "Small green · 50 × 30 mm", w: 50, h: 30 },
   { id: "custom", label: "Custom…", w: 0, h: 0 },
 ];
 
@@ -37,18 +34,24 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [type, setType] = useState<Record<number, LabelType>>({});
   const [copies, setCopies] = useState(1);
   const [mode, setMode] = useState<"sheet" | "roll">("roll");
-  const [sizeId, setSizeId] = useState("single-65x35");
-  const [customW, setCustomW] = useState(65);
-  const [customH, setCustomH] = useState(35);
+  const [sizeId, setSizeId] = useState("med-70x40");
+  const [customW, setCustomW] = useState(70);
+  const [customH, setCustomH] = useState(40);
   const [loading, setLoading] = useState(false);
   const [rotate, setRotate] = useState(false);
+  // Silver's labels already have the company address (and colour) printed on
+  // them, so by default we print ONLY the black content into the blank area.
+  const [preprinted, setPreprinted] = useState(true);
+  // Where in the blank area our content sits: green labels have the address at
+  // the bottom (content = top); the red label has its banner at the top (content = bottom).
+  const [contentPos, setContentPos] = useState<"top" | "bottom">("top");
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
   const roll = mode === "roll";
   const dims = useMemo(() => {
     if (sizeId === "custom") return { w: Math.max(10, customW || 10), h: Math.max(10, customH || 10) };
-    return LABEL_SIZES.find((s) => s.id === sizeId) ?? { w: 65, h: 35 };
+    return LABEL_SIZES.find((s) => s.id === sizeId) ?? { w: 70, h: 40 };
   }, [sizeId, customW, customH]);
   // The printed page matches the die-cut. If the roll feeds the label the other
   // way, "Rotate 90°" swaps the page and spins the label so it still reads right.
@@ -104,28 +107,35 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {!loading && printable.map((l) => {
         const label = (
         <div style={labelStyle}
-          className={`barcode-label ${l.type === "master" ? "master" : ""} ${roll ? "thermal" : ""} ${rotate ? "rot" : ""}`}>
-          <div className="bl-tier">{l.type === "master" ? "MASTER PACK" : "SINGLE PACK"}</div>
-          <div className="bl-qr-main">
-            <div dangerouslySetInnerHTML={{ __html: l.qrSvg }} />
-            <span className="bl-qr-token">{l.qrToken}</span>
+          className={`barcode-label ${l.type === "master" ? "master" : ""} ${roll ? "thermal" : ""} ${rotate ? "rot" : ""} ${preprinted ? "preprinted" : ""} pos-${contentPos}`}>
+          <div className="bl-row">
+            <div className="bl-qr-main">
+              <div dangerouslySetInnerHTML={{ __html: l.qrSvg }} />
+              <span className="bl-qr-token">{l.qrToken}</span>
+            </div>
+            <div className="bl-body">
+              <div className="bl-tier">{l.type === "master" ? "MASTER PACK" : "SINGLE PACK"}</div>
+              <div className="bl-name">{l.name}</div>
+              <div className="bl-qty">
+                {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
+                {" · "}MRP.Rs.{l.price.toFixed(0)}/-{l.type === "master" ? " E" : ""}
+              </div>
+              <div className="bl-meta">
+                <span>Lot: {l.lot || "—"}</span>
+                <span>{l.type === "master" ? "Rack_No" : "RackNo"}: {l.rack || "—"}</span>
+                <span>PKD: {l.pkd}</span>
+              </div>
+              {!preprinted && <div className="bl-tax">(Incl. of All Taxes)</div>}
+            </div>
           </div>
-          <div className="bl-name">{l.name}</div>
-          <div className="bl-qty">
-            {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
-            {" · "}MRP.Rs.{l.price.toFixed(0)}/-{l.type === "master" ? " E" : ""}
-          </div>
-          <div className="bl-tax">(Incl. of All Taxes)</div>
-          <div className="bl-meta">
-            <span>Lot: {l.lot || "—"}</span>
-            <span>{l.type === "master" ? "Rack_No" : "RackNo"}: {l.rack || "—"}</span>
-            <span>PKD: {l.pkd}</span>
-          </div>
-          <div className="bl-footer">
-            <div>SILVER IND. 50, OSWAL IND. COMPLEX</div>
-            <div>G.T. ROAD, LUDHIANA-141010</div>
-            <div>CUS. CARE: Mail: silverup.ldh@gmail.com PH.NO. 0161-5196409</div>
-          </div>
+          {/* Company address is skipped on pre-printed stock (it's already on the label). */}
+          {!preprinted && (
+            <div className="bl-footer">
+              <div>SILVER IND. 50, OSWAL IND. COMPLEX</div>
+              <div>G.T. ROAD, LUDHIANA-141010</div>
+              <div>CUS. CARE: Mail: silverup.ldh@gmail.com PH.NO. 0161-5196409</div>
+            </div>
+          )}
         </div>
         );
         // In roll mode every label sits in a page-sized box (so it's exactly one
@@ -182,6 +192,22 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             Rotate 90°
           </label>
         )}
+        {roll && (
+          <label className="flex items-center gap-2 text-sm font-semibold" title="Your labels already have the address & colour printed. Keep this on so we print only the QR + item details into the blank area.">
+            <input type="checkbox" checked={preprinted} onChange={(e) => setPreprinted(e.target.checked)} />
+            Pre-printed labels
+          </label>
+        )}
+        {roll && preprinted && (
+          <label className="flex items-center gap-2 text-sm font-semibold" title="Green labels have the address at the bottom (content → Top). The red label has its banner at the top (content → Bottom).">
+            Content
+            <select value={contentPos} onChange={(e) => setContentPos(e.target.value as "top" | "bottom")}
+              className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm">
+              <option value="top">Top</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </label>
+        )}
 
         <label className="flex items-center gap-2 text-sm font-semibold">
           Copies
@@ -206,9 +232,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       </div>
       {roll && (
         <p className="no-print -mt-2 text-xs text-[var(--muted)]">
-          One label per die-cut. In the print dialog set <b>Paper size = {pageW} × {pageH} mm</b> (or Custom),
-          <b> Margins = None</b>, <b>Scale = 100% / Actual size</b>. If it prints sideways / on the wrong
-          orientation, tick <b>Rotate 90°</b> above.{rotate ? " (Rotated: page is now " + pageW + " × " + pageH + " mm.)" : ""}
+          Set your <b>printer's label/paper size to {pageW} × {pageH} mm</b> in its driver (this is what stops the
+          sideways / shrunk / 3-labels problem), then in the print dialog use that paper, <b>Margins = None</b>,
+          <b> Scale = 100%</b>. Prints sideways → tick <b>Rotate 90°</b>. Content lands on the pre-printed address →
+          switch <b>Content</b> to Top/Bottom.
         </p>
       )}
 
