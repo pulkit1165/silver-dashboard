@@ -24,19 +24,23 @@ const COLS: { key: keyof Row; label: string; w: string }[] = [
   { key: "pendingQty", label: "Gap Qty", w: "90px" },
 ];
 const EXPORT_HEADERS = ["Sr.No", ...COLS.map((c) => c.label)];
-// Attributes that appear on the printed packing slip — compulsory for every scanned row
-// (Case No is the case you start; Sr No is automatic).
-const REQUIRED_ROW_FIELDS: (keyof Row)[] = ["itemCode", "itemDesc", "mrp", "quantity"];
+// Columns hidden from the on-screen packing grid (still kept in the row data and
+// in the Excel export). Quantity is driven by Qty Dispatched (the scanned qty).
+const HIDDEN_COL_KEYS = new Set<keyof Row>(["unit", "mPack", "slipType", "pcs", "quantity"]);
+const VISIBLE_COLS = COLS.filter((c) => !HIDDEN_COL_KEYS.has(c.key));
+// Compulsory for every scanned row. Qty Dispatched replaces Quantity (which is
+// now hidden and mirrors it).
+const REQUIRED_ROW_FIELDS: (keyof Row)[] = ["itemCode", "itemDesc", "mrp", "qtyDispatched"];
 function rowMissingFields(r: Row): string[] {
   const miss: string[] = [];
   if (!r.itemCode.trim()) miss.push("Item Code");
   if (!r.itemDesc.trim()) miss.push("Item Description");
   if (!String(r.mrp).trim()) miss.push("L.MRP");
-  if (!(num(r.quantity) > 0)) miss.push("Quantity");
+  if (!(num(r.qtyDispatched) > 0)) miss.push("Qty Dispatched");
   return miss;
 }
 const cellMissing = (r: Row, key: keyof Row) =>
-  REQUIRED_ROW_FIELDS.includes(key) && (key === "quantity" ? !(num(r.quantity) > 0) : !String(r[key]).trim());
+  REQUIRED_ROW_FIELDS.includes(key) && (key === "qtyDispatched" ? !(num(r.qtyDispatched) > 0) : !String(r[key]).trim());
 const uid = () => (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
 const blankRow = (csNo: number | null): Row => ({
   id: uid(), itemCode: "", itemDesc: "", unit: "", mPack: "", mMrp: "", mrp: "", slipType: "",
@@ -47,7 +51,7 @@ const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", p
 type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
 type SoLineInfo = { sku_code?: string; sku_name?: string; qr_token?: string; qty: number; dispatched_qty: number; mrp: number; std_pack?: number };
 
-export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
+export default function PackingSlip({ orders = [], parties = [] }: { orders?: OrderOpt[]; parties?: string[] }) {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
@@ -59,6 +63,8 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
   const [collab, setCollab] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
+  // `${rowId}:qtyDispatched` while a scan-driven cell is being hand-edited (double-click).
+  const [editCell, setEditCell] = useState<string | null>(null);
   // Real-order linkage: selecting a SO seeds rows from its actual lines and,
   // on Done Case, packs for real (deducts stock, creates the Delivery Order)
   // instead of just building the Excel document.
@@ -221,8 +227,10 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
       itemCode: l.sku_code ?? "", itemDesc: l.sku_name ?? "",
       mrp: l.mrp != null ? String(l.mrp) : "", mMrp: l.mrp != null ? String(l.mrp) : "",
       mPack: l.std_pack ? String(l.std_pack) : "",
-      qtyOrdered: String(l.qty), qtyDispatched: String(l.dispatched_qty),
-      pendingQty: String(remainingForLine(l)), quantity: String(remainingForLine(l)),
+      // Ordered auto-fetched from the Sales Order; Dispatched fills in as items
+      // are scanned into this case; Gap = Ordered − Dispatched.
+      qtyOrdered: String(l.qty), qtyDispatched: "", quantity: "",
+      pendingQty: String(l.qty),
     }));
     setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
@@ -234,8 +242,32 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
       const d = await r.json();
       if (d.ok && d.sku) {
         if (d.sku.qr_token) setQrByCode((m) => ({ ...m, [d.sku.sku_code]: d.sku.qr_token }));
-        setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: d.sku.sku_code, itemDesc: d.sku.name, unit: d.sku.unit || "", mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "" }]);
-        flash(true, `Added ${d.sku.sku_code}`);
+        // Single/master logic: a master QR adds a full carton (master_qty), a
+        // single QR adds one unit (single_qty). Qty Dispatched populates itself.
+        const tier = d.tier === "master" ? "master" : "single";
+        const addQty = tier === "master" ? (Number(d.sku.master_qty) || 1) : (Number(d.sku.single_qty) || 1);
+        const skuCode = d.sku.sku_code as string;
+        const soLine = soLines.find((l) => l.sku_code === skuCode);
+        const orderedStr = soLine ? String(soLine.qty) : "";
+        setActiveRows((rows) => {
+          const idx = rows.findIndex((row) => row.itemCode === skuCode);
+          if (idx >= 0) {
+            return rows.map((row, i) => {
+              if (i !== idx) return row;
+              const disp = num(row.qtyDispatched) + addQty;
+              const ordered = row.qtyOrdered || orderedStr;
+              return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ordered, pendingQty: String(num(ordered) - disp) };
+            });
+          }
+          return [...rows, {
+            ...blankRow(activeCaseNo),
+            itemCode: skuCode, itemDesc: d.sku.name, unit: d.sku.unit || "",
+            mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "",
+            qtyOrdered: orderedStr, qtyDispatched: String(addQty), quantity: String(addQty),
+            pendingQty: String(num(orderedStr) - addQty),
+          }];
+        });
+        flash(true, `${skuCode}: +${addQty} dispatched (${tier})`);
       } else { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); flash(false, `Not in master — added "${code}" to fill manually`); }
     } catch { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); }
   }
@@ -243,6 +275,8 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
     setActiveRows((rows) => rows.map((r) => {
       if (r.id !== id) return r;
       const nr = { ...r, [key]: value };
+      // Quantity (hidden) mirrors the scanned/entered Qty Dispatched.
+      if (key === "qtyDispatched") nr.quantity = value;
       // Gap auto-calculates as Ordered − Dispatched whenever either changes.
       if (key === "qtyOrdered" || key === "qtyDispatched") nr.pendingQty = String(num(nr.qtyOrdered) - num(nr.qtyDispatched));
       return nr;
@@ -267,15 +301,18 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
 
   async function doneCase() {
     if (!activeCaseNo) return;
-    if (activeRows.length === 0) { flash(false, "Add at least one item before closing the case."); return; }
-    const incomplete = activeRows.filter((r) => rowMissingFields(r).length > 0);
-    if (incomplete.length) { flash(false, `${incomplete.length} item(s) missing required fields (Item Code, Description, L.MRP, Quantity) — fill the highlighted cells.`); return; }
+    // Only rows that actually got a dispatched qty (scanned or hand-entered) are
+    // packed — unscanned pre-seeded lines are dropped from the case.
+    const scanned = activeRows.filter((r) => num(r.qtyDispatched) > 0);
+    if (scanned.length === 0) { flash(false, "Scan an item (or enter Qty Dispatched) before closing the case."); return; }
+    const incomplete = scanned.filter((r) => rowMissingFields(r).length > 0);
+    if (incomplete.length) { flash(false, `${incomplete.length} item(s) missing required fields (Item Code, Description, L.MRP, Qty Dispatched) — fill the highlighted cells.`); return; }
     if (completed.some((c) => c.caseNo === activeCaseNo)) { flash(false, `Case ${activeCaseNo} already exists — can't duplicate. Use Edit instead.`); return; }
 
     // No real Sales Order linked (manual/legacy use) — keep this an Excel-only
     // document, exactly as before.
     if (!soId) {
-      setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
+      setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: scanned }].sort((a, b) => a.caseNo - b.caseNo));
       setActiveCaseNo(null); setActiveRows([]); touch();
       flash(true, `Case ${activeCaseNo} closed`);
       return;
@@ -286,7 +323,7 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
     // already typed an exact qty per row, so overpack is allowed without an
     // extra confirm step (unlike scan-by-scan packing).
     setPacking(true);
-    const toPack = activeRows.filter((r) => num(r.quantity) > 0);
+    const toPack = scanned;
     const failures: string[] = [];
     let skippedNoSku = 0;
     for (const r of toPack) {
@@ -311,7 +348,7 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
       return; // keep the case open so the user can fix and retry
     }
 
-    setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: activeRows }].sort((a, b) => a.caseNo - b.caseNo));
+    setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: scanned }].sort((a, b) => a.caseNo - b.caseNo));
     setActiveCaseNo(null); setActiveRows([]); touch();
     flash(true, `Case ${activeCaseNo} packed for real — now in Delivery Orders${skippedNoSku ? ` (${skippedNoSku} item(s) not in SKU master, Excel-only)` : ""}`);
   }
@@ -436,7 +473,10 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
             </select>
             {hdr.salesOrderNo && !soId && <div className="mt-1 text-xs text-[var(--muted)]">From saved slip: <b>{hdr.salesOrderNo}</b> (not in the live unpacked list)</div>}
           </Field>
-          <Field label="Customer / Party Name" req><input className="ctl" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="SAMY AUTO PARTS" /></Field>
+          <Field label="Customer / Party Name" req>
+            <input className="ctl" list="ps-party-list" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="Type to search a party…" autoComplete="off" />
+            <datalist id="ps-party-list">{parties.map((p) => <option key={p} value={p} />)}</datalist>
+          </Field>
           <Field label="Packing Slip Date" req><input type="date" className="ctl" value={hdr.date} onChange={(e) => setHeader("date", e.target.value)} /></Field>
           <Field label="Tr Type"><input className="ctl" value={hdr.trType} onChange={(e) => setHeader("trType", e.target.value)} /></Field>
           <Field label="Tr Sno"><input className="ctl" value={hdr.trSno} onChange={(e) => setHeader("trSno", e.target.value)} /></Field>
@@ -484,24 +524,47 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
               <div className="min-w-0">
                 <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
                   <table className="rtable" style={{ minWidth: "1100px" }}>
-                    <thead><tr><th>#</th>{COLS.map((c) => <th key={c.key}>{c.label}{REQUIRED_ROW_FIELDS.includes(c.key) && <span className="text-[var(--accent)]"> *</span>}</th>)}<th></th></tr></thead>
+                    <thead><tr><th>#</th>{VISIBLE_COLS.map((c) => <th key={c.key}>{c.label}{REQUIRED_ROW_FIELDS.includes(c.key) && <span className="text-[var(--accent)]"> *</span>}</th>)}<th></th></tr></thead>
                     <tbody>
-                      {activeRows.length === 0 && <tr><td colSpan={COLS.length + 2} className="!py-6 text-center text-[var(--muted)]">Scan an item or add a manual row.</td></tr>}
+                      {activeRows.length === 0 && <tr><td colSpan={VISIBLE_COLS.length + 2} className="!py-6 text-center text-[var(--muted)]">Scan an item or add a manual row.</td></tr>}
                       {activeRows.map((r, i) => (
                         <tr key={r.id}>
                           <td className="text-[var(--muted)]">{i + 1}</td>
-                          {COLS.map((c) => (
-                            <td key={c.key} style={{ minWidth: c.w }}>
-                              <input className={`${cellCls} ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : ""}`} style={{ minWidth: c.w }} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
-                            </td>
-                          ))}
+                          {VISIBLE_COLS.map((c) => {
+                            const cellStyle = { minWidth: c.w };
+                            // Ordered (from SO) and Gap (computed) are read-only.
+                            if (c.key === "qtyOrdered" || c.key === "pendingQty") {
+                              return <td key={c.key} style={cellStyle}><div className={`${cellCls} flex items-center bg-[var(--surface-2)]`} style={cellStyle}>{r[c.key] || "—"}</div></td>;
+                            }
+                            // Qty Dispatched is scan-driven — locked until double-clicked to edit.
+                            if (c.key === "qtyDispatched") {
+                              const editing = editCell === `${r.id}:qtyDispatched`;
+                              if (!editing) {
+                                return (
+                                  <td key={c.key} style={cellStyle} onDoubleClick={() => setEditCell(`${r.id}:qtyDispatched`)} title="Auto-filled by scanning · double-click to edit">
+                                    <div className={`${cellCls} flex cursor-pointer items-center font-bold ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : "bg-[var(--surface-2)]"}`} style={cellStyle}>{r[c.key] || "0"}</div>
+                                  </td>
+                                );
+                              }
+                              return (
+                                <td key={c.key} style={cellStyle}>
+                                  <input autoFocus onBlur={() => setEditCell(null)} className={`${cellCls} ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : ""}`} style={cellStyle} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
+                                </td>
+                              );
+                            }
+                            return (
+                              <td key={c.key} style={cellStyle}>
+                                <input className={`${cellCls} ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : ""}`} style={cellStyle} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
+                              </td>
+                            );
+                          })}
                           <td><button onClick={() => deleteRow(r.id)} className="rounded px-2 py-1 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger-bg)]">✕</button></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-1 text-xs text-[var(--muted)]">Required for every item (from the packing slip): <b>Item Code, Item Description, L.MRP, Quantity</b>. Highlighted cells must be filled before the case can be closed.</p>
+                <p className="mt-1 text-xs text-[var(--muted)]">Scan items to fill <b>Qty Dispatched</b> (single = 1, master = full carton) — double-click it to edit. Required per item: <b>Item Code, Item Description, L.MRP, Qty Dispatched</b>.</p>
                 <div className="mt-3 flex items-center gap-2">
                   <button onClick={doneCase} disabled={packing} className="rounded-lg bg-[var(--accent-2)] px-5 py-2.5 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60">{packing ? "Packing…" : `✓ Done Case ${activeCaseNo}`}</button>
                   <span className="text-xs text-[var(--muted)]">{activeRows.length} item(s) in this case · {activeRows.filter((r) => rowMissingFields(r).length === 0).length} ready</span>
@@ -528,8 +591,8 @@ export default function PackingSlip({ orders = [] }: { orders?: OrderOpt[] }) {
               </summary>
               <div className="overflow-x-auto border-t border-[var(--border)]">
                 <table className="rtable" style={{ minWidth: "1000px" }}>
-                  <thead><tr><th>#</th>{COLS.map((c2) => <th key={c2.key}>{c2.label}</th>)}</tr></thead>
-                  <tbody>{c.rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td>{COLS.map((c2) => <td key={c2.key} className="text-xs">{r[c2.key] || "—"}</td>)}</tr>)}</tbody>
+                  <thead><tr><th>#</th>{VISIBLE_COLS.map((c2) => <th key={c2.key}>{c2.label}</th>)}</tr></thead>
+                  <tbody>{c.rows.map((r, i) => <tr key={r.id}><td>{i + 1}</td>{VISIBLE_COLS.map((c2) => <td key={c2.key} className="text-xs">{r[c2.key] || "—"}</td>)}</tr>)}</tbody>
                 </table>
               </div>
             </details>
