@@ -226,11 +226,12 @@ body {
   body > *:not(.labels-print-portal) { display: none !important; }
   .labels-print-portal { display: block !important; }
 
-  /* Thermal roll: one physical die-cut label per page. */
+  /* Thermal roll: one physical die-cut label per page (the .label-rot box is
+     page-sized, so it breaks cleanly whether or not the label is rotated). */
   .print-area.roll { position: static !important; inset: auto !important; }
   .print-area.roll > div { display: block !important; }
-  .print-area.roll .barcode-label { break-after: page; page-break-after: always; break-inside: avoid; margin: 0 !important; }
-  .print-area.roll .barcode-label:last-child { break-after: auto; page-break-after: auto; }
+  .print-area.roll .label-rot { break-after: page; page-break-after: always; break-inside: avoid; margin: 0 !important; }
+  .print-area.roll .label-rot:last-child { break-after: auto; page-break-after: auto; }
 }
 
 .qr-label {
@@ -307,6 +308,13 @@ body {
 .barcode-label.thermal .bl-footer { font-size: 5px; margin-top: 0.4mm; padding-top: 0.4mm; line-height: 1.05; }
 /* Master keeps its green background but drops the big padding/font so it fits too. */
 .barcode-label.master.thermal { padding: 1mm 1.5mm; font-size: 6px; }
+
+/* Page-sized wrapper: the label is centred inside it and can be spun 90° so it
+   still reads correctly when a printer feeds the die-cut the other way round.
+   Because the wrapper is the exact page size, one label = one die-cut either way. */
+.label-rot { position: relative; overflow: hidden; box-sizing: border-box; }
+.label-rot > .barcode-label { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.label-rot > .barcode-label.rot { transform: translate(-50%, -50%) rotate(90deg); }
 
 ::-webkit-scrollbar {
   width: 10px;

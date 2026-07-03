@@ -41,6 +41,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [customW, setCustomW] = useState(65);
   const [customH, setCustomH] = useState(35);
   const [loading, setLoading] = useState(false);
+  const [rotate, setRotate] = useState(false);
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
@@ -49,6 +50,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     if (sizeId === "custom") return { w: Math.max(10, customW || 10), h: Math.max(10, customH || 10) };
     return LABEL_SIZES.find((s) => s.id === sizeId) ?? { w: 65, h: 35 };
   }, [sizeId, customW, customH]);
+  // The printed page matches the die-cut. If the roll feeds the label the other
+  // way, "Rotate 90°" swaps the page and spins the label so it still reads right.
+  const pageW = rotate ? dims.h : dims.w;
+  const pageH = rotate ? dims.w : dims.h;
 
   const toggle = (id: number) =>
     setSelected((s) => {
@@ -96,9 +101,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const renderSheet = () => (
     <div className={roll ? "flex flex-col items-start gap-3" : "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}>
       {loading && <p className="text-sm text-[var(--muted)]">Generating QR codes…</p>}
-      {!loading && printable.map((l) => (
-        <div key={l.key} style={labelStyle}
-          className={`barcode-label ${l.type === "master" ? "master" : ""} ${roll ? "thermal" : ""}`}>
+      {!loading && printable.map((l) => {
+        const label = (
+        <div style={labelStyle}
+          className={`barcode-label ${l.type === "master" ? "master" : ""} ${roll ? "thermal" : ""} ${rotate ? "rot" : ""}`}>
           <div className="bl-tier">{l.type === "master" ? "MASTER PACK" : "SINGLE PACK"}</div>
           <div className="bl-qr-main">
             <div dangerouslySetInnerHTML={{ __html: l.qrSvg }} />
@@ -121,7 +127,15 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             <div>CUS. CARE: Mail: silverup.ldh@gmail.com PH.NO. 0161-5196409</div>
           </div>
         </div>
-      ))}
+        );
+        // In roll mode every label sits in a page-sized box (so it's exactly one
+        // die-cut per page) and the label is centred + optionally rotated inside it.
+        return roll ? (
+          <div key={l.key} className="label-rot" style={{ width: `${pageW}mm`, height: `${pageH}mm` }}>{label}</div>
+        ) : (
+          <div key={l.key} className="contents">{label}</div>
+        );
+      })}
     </div>
   );
 
@@ -130,7 +144,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {/* On a roll, force the paper size to the die-cut label so ONE label lands on
           ONE die-cut. Injected here so it overrides the global @page. */}
       {roll && (
-        <style dangerouslySetInnerHTML={{ __html: `@media print { @page { size: ${dims.w}mm ${dims.h}mm; margin: 0; } }` }} />
+        <style dangerouslySetInnerHTML={{ __html: `@media print { @page { size: ${pageW}mm ${pageH}mm; margin: 0; } }` }} />
       )}
 
       {/* toolbar */}
@@ -162,6 +176,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             mm
           </span>
         )}
+        {roll && (
+          <label className="flex items-center gap-2 text-sm font-semibold" title="If your printer feeds the label the other way (prints sideways), turn this on.">
+            <input type="checkbox" checked={rotate} onChange={(e) => setRotate(e.target.checked)} />
+            Rotate 90°
+          </label>
+        )}
 
         <label className="flex items-center gap-2 text-sm font-semibold">
           Copies
@@ -186,9 +206,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       </div>
       {roll && (
         <p className="no-print -mt-2 text-xs text-[var(--muted)]">
-          One label per die-cut (<b>{dims.w} × {dims.h} mm</b>). Load the matching roll, then in the print dialog
-          set paper size to <b>{dims.w} × {dims.h} mm</b>, Margins <b>None</b>, Scale <b>100% / Actual size</b>.
-          Print the small size on the item roll, the Master 4″ size on the wide roll.
+          One label per die-cut. In the print dialog set <b>Paper size = {pageW} × {pageH} mm</b> (or Custom),
+          <b> Margins = None</b>, <b>Scale = 100% / Actual size</b>. If it prints sideways / on the wrong
+          orientation, tick <b>Rotate 90°</b> above.{rotate ? " (Rotated: page is now " + pageW + " × " + pageH + " mm.)" : ""}
         </p>
       )}
 
