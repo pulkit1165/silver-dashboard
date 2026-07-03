@@ -110,6 +110,53 @@ export async function stockLevels(search?: string): Promise<SkuLevel[]> {
   return rows.map((s) => ({ ...s, status: stockStatus(s, s.qty) }));
 }
 
+// Movement class over a recent window, based on outbound demand (units shipped/sold).
+export type Movement = "fast" | "medium" | "slow" | "dead" | "none";
+export type StockAnalyticsRow = Sku & {
+  qty: number; value: number; sold: number; last_out: string | null;
+  status: StockStatus; movement: Movement; low: boolean;
+};
+export async function stockAnalytics(windowDays = 90): Promise<StockAnalyticsRow[]> {
+  const sql = getSql();
+  const rows = (await sql`
+    SELECT s.*,
+      COALESCE(inv.qty,0)::float8 AS qty,
+      COALESCE(mv.sold,0)::float8 AS sold,
+      mv.last_out
+    FROM skus s
+    LEFT JOIN (SELECT sku_id, SUM(qty) qty FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
+    LEFT JOIN (
+      -- outbound demand only: goods that actually left for a customer
+      SELECT sku_id, SUM(qty) AS sold, MAX(created_at) AS last_out
+      FROM stock_moves
+      WHERE type IN ('out','dispatch','pack-dispatch')
+        AND created_at >= to_char(now() - make_interval(days => ${windowDays}), 'YYYY-MM-DD HH24:MI:SS')
+      GROUP BY sku_id
+    ) mv ON mv.sku_id=s.id
+    ORDER BY s.sku_code`) as unknown as Array<Sku & { qty: number; sold: number; last_out: string | null }>;
+
+  // fast/medium/slow are relative to this catalogue: split the items that moved into terciles.
+  const soldVals = rows.map((r) => Number(r.sold)).filter((v) => v > 0).sort((a, b) => a - b);
+  const quantile = (p: number) => {
+    if (!soldVals.length) return Infinity;
+    const i = (soldVals.length - 1) * p, lo = Math.floor(i), hi = Math.ceil(i);
+    return soldVals[lo] + (soldVals[hi] - soldVals[lo]) * (i - lo);
+  };
+  const t1 = quantile(1 / 3), t2 = quantile(2 / 3);
+
+  return rows.map((r) => {
+    const qty = Number(r.qty), sold = Number(r.sold);
+    const status = stockStatus(r, qty);
+    const low = qty <= r.reorder_level; // at or below the reorder point
+    let movement: Movement;
+    if (sold <= 0) movement = qty > 0 ? "dead" : "none";
+    else if (sold >= t2) movement = "fast";
+    else if (sold >= t1) movement = "medium";
+    else movement = "slow";
+    return { ...r, qty, sold, status, low, movement, value: qty * (r.price ?? 0) };
+  });
+}
+
 export async function getWarehouses(): Promise<Warehouse[]> {
   return (await getSql()`SELECT * FROM warehouses ORDER BY code`) as unknown as Warehouse[];
 }
