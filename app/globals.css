@@ -197,6 +197,10 @@ body {
   font-weight: 700;
 }
 
+/* the body-level print portal for labels is invisible on screen (the inline
+   preview is what's shown); it only renders when printing */
+.labels-print-portal { display: none; }
+
 /* print: show only the label/document area */
 @media print {
   body * { visibility: hidden !important; }
@@ -215,6 +219,18 @@ body {
   .inv-doc input::-webkit-outer-spin-button,
   .inv-doc input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
   @page { margin: 8mm; }
+
+  /* Label printing lifts the printable area into a <body>-level portal
+     (.labels-print-portal). Hide everything else in the body so ONLY the labels
+     are in the print flow — no app chrome, no blank pages between die-cuts. */
+  body > *:not(.labels-print-portal) { display: none !important; }
+  .labels-print-portal { display: block !important; }
+
+  /* Thermal roll: one physical die-cut label per page. */
+  .print-area.roll { position: static !important; inset: auto !important; }
+  .print-area.roll > div { display: block !important; }
+  .print-area.roll .barcode-label { break-after: page; page-break-after: always; break-inside: avoid; margin: 0 !important; }
+  .print-area.roll .barcode-label:last-child { break-after: auto; page-break-after: auto; }
 }
 
 .qr-label {
@@ -270,6 +286,27 @@ body {
 .barcode-label .bl-tax { font-size: 9px; opacity: 0.75; }
 .barcode-label .bl-meta { display: flex; justify-content: space-between; gap: 6px; font-size: 9px; }
 .barcode-label .bl-footer { margin-top: 2px; border-top: 1px solid #b00; padding-top: 2px; font-size: 8px; font-weight: 700; color: #b00; }
+/* ── Thermal die-cut labels ─────────────────────────────────────────────
+   The exact mm box comes from the inline width/height. Keep the same on-screen
+   layout — tier badge top-left, QR centred, item details, full 3-line SILVER
+   IND. address — but scale everything down so it all fits one small die-cut
+   (e.g. 65 × 35 mm). Content is clipped to the box so a label never spills. */
+.barcode-label.thermal {
+  overflow: hidden; box-sizing: border-box;
+  padding: 1mm 1.5mm; gap: 0; justify-content: flex-start;
+  font-size: 6px; line-height: 1.12;
+}
+.barcode-label.thermal .bl-tier { font-size: 6px; padding: 0 3px; border-radius: 2px; }
+.barcode-label.thermal .bl-qr-main { padding: 0.3mm 0; gap: 0.3mm; }
+.barcode-label.thermal .bl-qr-main svg { width: 14mm; height: 14mm; }
+.barcode-label.thermal .bl-qr-token { font-size: 5px; }
+.barcode-label.thermal .bl-name { font-size: 8px; }
+.barcode-label.thermal .bl-qty { font-size: 7px; }
+.barcode-label.thermal .bl-tax { font-size: 5.5px; }
+.barcode-label.thermal .bl-meta { font-size: 5.5px; gap: 2px; }
+.barcode-label.thermal .bl-footer { font-size: 5px; margin-top: 0.4mm; padding-top: 0.4mm; line-height: 1.05; }
+/* Master keeps its green background but drops the big padding/font so it fits too. */
+.barcode-label.master.thermal { padding: 1mm 1.5mm; font-size: 6px; }
 
 ::-webkit-scrollbar {
   width: 10px;
