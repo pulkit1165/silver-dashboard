@@ -1,6 +1,7 @@
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import EditableRate from "@/components/erp/EditableRate";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import { getSkus } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -23,6 +24,7 @@ export default async function ItemRateMasterPage({
       <PageHeader
         title="Item-wise Net Rate"
         subtitle="Each item's standard selling rate (net rate) — independent of MRP. This is what a Sales Order line defaults to before any party discount is applied."
+        right={editable ? <UploadMasterLink master="item-rates" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
       {!sp.q && all.length > PAGE_CAP && (

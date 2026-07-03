@@ -2,6 +2,7 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import AddSku from "@/components/erp/AddSku";
 import ListFilters from "@/components/erp/ListFilters";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import { stockLevels } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -22,7 +23,11 @@ export default async function SkuMasterPage({
   const rows = all.slice(0, PAGE_CAP);
   return (
     <>
-      <PageHeader title="SKU Master" subtitle="Item master — every SKU has a unique QR token for scanning and labels." />
+      <PageHeader
+        title="SKU Master"
+        subtitle="Item master — every SKU has a unique QR token for scanning and labels."
+        right={canWrite(user.role, "skus") ? <UploadMasterLink master="skus" /> : undefined}
+      />
       <div className="mb-3">
         <Link href="/erp/labels" className="text-sm font-semibold text-[var(--accent)]">Print barcode labels →</Link>
       </div>

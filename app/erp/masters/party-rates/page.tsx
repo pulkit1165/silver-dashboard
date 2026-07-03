@@ -1,6 +1,7 @@
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import EditableRate from "@/components/erp/EditableRate";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import { getCustomers } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -21,6 +22,7 @@ export default async function PartyRateMasterPage({
       <PageHeader
         title="Party-wise Net Rate"
         subtitle="Each customer's standing discount % off MRP — applied automatically when a Sales Order is created, unless an item has its own fixed net rate."
+        right={editable ? <UploadMasterLink master="party-rates" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">

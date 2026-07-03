@@ -1,6 +1,9 @@
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import { getCustomers } from "@/lib/erp/queries";
+import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 
@@ -10,10 +13,15 @@ export default async function CustomersPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
+  const user = await getCurrentUser();
   const rows = await getCustomers(sp.q);
   return (
     <>
-      <PageHeader title="Customers" subtitle="Customer master with GST, credit limit and payment terms." />
+      <PageHeader
+        title="Customers"
+        subtitle="Customer master with GST, credit limit and payment terms."
+        right={canWrite(user.role, "customers") ? <UploadMasterLink master="customers" /> : undefined}
+      />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">
         <div className="overflow-x-auto">
