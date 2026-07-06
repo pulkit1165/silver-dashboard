@@ -55,9 +55,10 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   const top = Math.round(Hd * 0.20);       // content starts ~20% down
   const bottom = Math.round(Hd * 0.62);    // ...ends ~62% (bottom 38% = pre-printed address)
   const ch = bottom - top;
-  const qrCell = Math.max(4, Math.min(8, Math.round((Hd * 0.38) / 25)));
+  const qrX = Math.round(4 * dp);          // 4mm left margin so the QR isn't clipped
+  const qrY = Math.round(Hd * 0.12);       // QR sits a touch higher so it can be bigger
+  const qrCell = Math.max(4, Math.min(8, Math.floor((bottom - qrY) / 25))); // biggest QR that fits the blank area
   const qrPx = qrCell * 25;
-  const qrX = pad, qrY = top;
   const textX = qrX + qrPx + Math.round(2 * dp);
   const textW = Wd - textX - pad;
   const mainF = h >= 55 ? "4" : "3";
