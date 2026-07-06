@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
@@ -74,6 +74,23 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const t = setInterval(loadPrinters, 15000);
     return () => clearInterval(t);
   }, [loadPrinters]);
+
+  // Each ERP PC keeps ONE label roll, so remember the size per PC and switch to
+  // it automatically when that printer is picked. Seeded with the known mapping.
+  const sizeByComputer = useRef<Record<string, string>>({ "DESKTOP-U8693H8": "big-95x70" });
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem("erp_label_size_by_computer") || "{}");
+      sizeByComputer.current = { "DESKTOP-U8693H8": "big-95x70", ...stored };
+    } catch { /* keep seed */ }
+  }, []);
+  // when the selected printer changes, switch to that PC's remembered label size
+  useEffect(() => {
+    const sel = pnPrinters.find((p) => p.id === pnPrinterId);
+    const mapped = sel && sizeByComputer.current[sel.computer];
+    if (mapped && LABEL_SIZES.some((s) => s.id === mapped)) setSizeId(mapped);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pnPrinterId]);
 
   const roll = mode === "roll";
   const dims = useMemo(() => {
@@ -245,7 +262,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         {roll && (
           <label className="flex items-center gap-2 text-sm font-semibold">
             Label size
-            <select value={sizeId} onChange={(e) => setSizeId(e.target.value)}
+            <select value={sizeId} onChange={(e) => {
+              const v = e.target.value;
+              setSizeId(v);
+              // remember this size for the selected printer's PC
+              const sel = pnPrinters.find((p) => p.id === pnPrinterId);
+              if (sel && v !== "custom") {
+                sizeByComputer.current[sel.computer] = v;
+                try { localStorage.setItem("erp_label_size_by_computer", JSON.stringify(sizeByComputer.current)); } catch { /* ignore */ }
+              }
+            }}
               className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm">
               {LABEL_SIZES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
