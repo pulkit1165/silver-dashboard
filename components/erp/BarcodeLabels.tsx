@@ -48,6 +48,26 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
 
+  // PrintNode: the TSC label printers on the ERP PCs, fetched via our server
+  // proxy (API key stays server-side). This is the reliable print path.
+  const [pnPrinters, setPnPrinters] = useState<{ id: number; name: string; state: string; computer: string }[]>([]);
+  const [pnPrinterId, setPnPrinterId] = useState<number | null>(null);
+  const [pnBusy, setPnBusy] = useState(false);
+  const [pnMsg, setPnMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/api/erp/labels/printnode/printers", { cache: "no-store" });
+        const d = await r.json();
+        if (d.ok && Array.isArray(d.printers)) {
+          setPnPrinters(d.printers);
+          const online = d.printers.find((p: { state: string }) => p.state === "online");
+          setPnPrinterId((prev) => prev ?? (online?.id ?? d.printers[0]?.id ?? null));
+        }
+      } catch { /* PrintNode not configured */ }
+    })();
+  }, []);
+
   const roll = mode === "roll";
   const dims = useMemo(() => {
     if (sizeId === "custom") return { w: Math.max(10, customW || 10), h: Math.max(10, customH || 10) };
@@ -100,6 +120,35 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   });
 
   const labelStyle = roll ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
+
+  // Print directly to a TSC label printer via PrintNode (raw TSPL, one job/label).
+  async function printToTsc() {
+    if (!pnPrinterId || printable.length === 0) return;
+    setPnBusy(true); setPnMsg(null);
+    try {
+      const r = await fetch("/api/erp/labels/printnode", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          printerId: pnPrinterId, w: dims.w, h: dims.h,
+          labels: printable.map((l) => ({
+            qrToken: l.qrToken, name: l.name, type: l.type,
+            masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
+            lot: l.lot, rack: l.rack, pkd: l.pkd,
+          })),
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setPnMsg({ ok: true, text: `Sent ${d.sent} label${d.sent === 1 ? "" : "s"} to the printer.` });
+        fetch("/api/erp/labels/log-print", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ skuCodes: [...new Set(printable.map((l) => l.sku_code))], labelCount: printable.length }),
+        }).catch(() => {});
+      } else setPnMsg({ ok: false, text: d.error || "Print failed." });
+    } catch (e) {
+      setPnMsg({ ok: false, text: String(e) });
+    } finally { setPnBusy(false); }
+  }
 
   // Exact-size PDF (one label per page, page = the die-cut). Printing this at
   // "Actual size" is far more reliable than the browser's HTML print.
@@ -264,12 +313,35 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           🖨 Print {printable.length} label{printable.length === 1 ? "" : "s"}
         </button>
       </div>
+
+      {/* Direct print to a TSC label printer via PrintNode — the reliable path */}
       {roll && (
-        <p className="no-print -mt-2 text-xs text-[var(--muted)]">
-          Set your <b>printer's label/paper size to {pageW} × {pageH} mm</b> in its driver (this is what stops the
-          sideways / shrunk / 3-labels problem), then in the print dialog use that paper, <b>Margins = None</b>,
-          <b> Scale = 100%</b>. Prints sideways → tick <b>Rotate 90°</b>. Content lands on the pre-printed address →
-          switch <b>Content</b> to Top/Bottom.
+        <div className="no-print flex flex-wrap items-center gap-3 rounded-xl border-2 border-[var(--accent)] bg-[var(--accent-bg)] p-3">
+          <span className="text-sm font-extrabold text-[var(--accent-strong)]">🏷️ Print to label printer</span>
+          <label className="flex items-center gap-2 text-sm font-semibold">
+            Printer
+            <select value={pnPrinterId ?? ""} onChange={(e) => setPnPrinterId(Number(e.target.value) || null)}
+              className="rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-sm">
+              {pnPrinters.length === 0 && <option value="">No printers found</option>}
+              {pnPrinters.map((p) => (
+                <option key={p.id} value={p.id} disabled={p.state !== "online"}>
+                  {p.computer} · {p.name}{p.state !== "online" ? " (offline)" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <span className="text-sm font-semibold text-[var(--muted)]">at {dims.w} × {dims.h} mm</span>
+          <button onClick={printToTsc} disabled={pnBusy || !pnPrinterId || printable.length === 0}
+            className="ml-auto rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">
+            {pnBusy ? "Printing…" : `Print ${printable.length} to printer`}
+          </button>
+          {pnMsg && <span className={`w-full text-sm font-bold ${pnMsg.ok ? "text-[var(--accent-2)]" : "text-[var(--danger)]"}`}>{pnMsg.ok ? "✓ " : "✕ "}{pnMsg.text}</span>}
+        </div>
+      )}
+      {roll && (
+        <p className="no-print -mt-1 text-xs text-[var(--muted)]">
+          Pick the <b>printer</b> (each ERP PC = one label size) + the matching <b>Label size</b>, tick your SKUs, and hit
+          <b> Print to printer</b> — it goes straight to the TSC. The <b>⤓ PDF</b> / <b>🖨 Print</b> buttons above are backups.
         </p>
       )}
 
