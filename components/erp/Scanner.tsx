@@ -78,15 +78,21 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       rafRef.current = requestAnimationFrame(tick);
       return;
     }
-    const w = video.videoWidth;
-    const h = video.videoHeight;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    // Cap the processing resolution so jsQR stays fast even on a 1080p feed,
+    // while still far sharper than the old default.
+    const scale = Math.min(1, 1280 / Math.max(vw, vh));
+    const w = Math.round(vw * scale);
+    const h = Math.round(vh * scale);
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
-    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "dontInvert" });
+    // attemptBoth also catches inverted QR (light-on-dark) for extra robustness.
+    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
     let detected = code?.data || null;
     if (!detected && decodeBarcodeRef.current) {
       // 1D decode is heavier than jsQR's QR finder-pattern search — sample
@@ -121,11 +127,25 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     }
     setState("starting");
     try {
+      // Back camera + request a high resolution so small QR codes carry enough
+      // detail for jsQR to lock on (default 640×480 is often too coarse).
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: "environment" } },
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
         audio: false,
       });
       streamRef.current = stream;
+      // Enable continuous autofocus where the device supports it.
+      try {
+        const track = stream.getVideoTracks()[0];
+        const caps = track.getCapabilities?.() as MediaTrackCapabilities & { focusMode?: string[] };
+        if (caps?.focusMode?.includes("continuous")) {
+          await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] });
+        }
+      } catch { /* focus control not supported */ }
       const video = videoRef.current!;
       video.srcObject = stream;
       video.setAttribute("playsinline", "true");

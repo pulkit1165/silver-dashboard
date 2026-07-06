@@ -12,9 +12,9 @@ export const dynamic = "force-dynamic";
 const MM = 72 / 25.4; // mm -> PDF points
 
 type PdfLabel = {
-  qrToken: string; name: string; type: "single" | "master";
+  sku_code: string; qrToken: string; name: string; type: "single" | "master";
   masterQty: number; singleQty: number; unit: string; price: number;
-  lot: string; rack: string; pkd: string;
+  lot?: string; rack?: string; pkd?: string; // kept for future Lot/Rack menus, not printed
 };
 
 export async function POST(req: Request) {
@@ -37,7 +37,8 @@ export async function POST(req: Request) {
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const pageW = w * MM, pageH = h * MM;
   const margin = 2 * MM;
-  const qrMM = w >= 70 ? 22 : w >= 55 ? 18 : 15;
+  // Bigger QR — fills much of the content height, capped so text still fits.
+  const qrMM = Math.min(h * 0.5, w * 0.42, 34);
   const qrPt = qrMM * MM;
 
   // wrap text to a max width in points
@@ -56,36 +57,32 @@ export async function POST(req: Request) {
 
   for (const l of labels) {
     const page = doc.addPage([pageW, pageH]);
-    const qrPng = await QRCode.toBuffer(l.qrToken, { type: "png", margin: 1, width: 320 });
+    // high-res PNG + quiet zone (margin 2) for a crisp, scannable QR
+    const qrPng = await QRCode.toBuffer(l.qrToken, { type: "png", margin: 2, width: 520, errorCorrectionLevel: "M" });
     const qr = await doc.embedPng(qrPng);
 
-    const textX = margin + qrPt + 2.5 * MM;
+    const textX = margin + qrPt + 3 * MM;
     const textW = pageW - textX - margin;
-    const tier = l.type === "master" ? "MASTER PACK" : "SINGLE PACK";
+    const skuSize = h >= 55 ? 11 : 9;
+    const nameSize = h >= 55 ? 12 : 9.5;
+    const qtySize = h >= 55 ? 9 : 7.5;
+    const gap = 2.5;
+    const nameLines = wrap(l.name, bold, nameSize, textW).slice(0, 2);
     const qtyLine = (l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`)
-      + ` · MRP.Rs.${Math.round(l.price)}/-` + (l.type === "master" ? " E" : "");
-    const metaLine = `Lot: ${l.lot || "—"}   Rack: ${l.rack || "—"}   PKD: ${l.pkd}`;
+      + ` · MRP.Rs.${Math.round(l.price)}/-`;
 
-    // measure the text block height so we can top- or bottom-anchor it
-    const nameSize = 9, tierSize = 6.5, qtySize = 8, metaSize = 6.5, gap = 2;
-    const nameLines = wrap(l.name, bold, nameSize, textW);
-    const blockH = tierSize + gap + nameLines.length * (nameSize + gap) + qtySize + gap + metaSize;
-    const contentH = Math.max(qrPt + (preprinted ? 0 : 0) + 6, blockH);
-    const topY = pos === "top" ? pageH - margin : margin + contentH;
-
-    // QR on the left, top of the content block
+    // top-anchored (bottom left blank for the pre-printed address)
+    const topY = pos === "top" ? pageH - margin : margin + qrPt + 6;
+    // QR on the left
     page.drawImage(qr, { x: margin, y: topY - qrPt, width: qrPt, height: qrPt });
-    page.drawText(l.qrToken, { x: margin, y: topY - qrPt - 6, size: 5, font, color: rgb(0.35, 0.35, 0.35) });
-
-    // details on the right, drawn downward from topY
+    // right column: SKU code, full name (≤2 lines), qty/MRP
     let cy = topY;
     const line = (text: string, f: typeof font, size: number) => {
       cy -= size; page.drawText(text, { x: textX, y: cy, size, font: f, color: rgb(0, 0, 0) }); cy -= gap;
     };
-    line(tier, bold, tierSize);
+    line(l.sku_code, bold, skuSize);
     for (const nl of nameLines) line(nl, bold, nameSize);
-    line(qtyLine, bold, qtySize);
-    line(metaLine, font, metaSize);
+    line(qtyLine, font, qtySize);
   }
 
   const bytes = await doc.save();

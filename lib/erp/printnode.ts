@@ -31,20 +31,41 @@ export async function listPrinters(): Promise<PnPrinter[]> {
 }
 
 export type LabelData = {
-  qrToken: string; name: string; type: "single" | "master";
+  sku_code: string; qrToken: string; name: string; type: "single" | "master";
   masterQty: number; singleQty: number; unit: string; price: number;
-  lot: string; rack: string; pkd: string;
+  // lot/rack are kept in the data model for the future Lot No / Rack No menus,
+  // but are deliberately NOT printed on the label for now.
+  lot?: string; rack?: string; pkd?: string;
 };
 
 // ── TSPL builder ─────────────────────────────────────────────────────────
-// 203 dpi = 8 dots/mm. Layout mirrors the tuned 70×40 label: QR on the left,
-// details on the right, all in the TOP area (bottom left blank for the label's
-// pre-printed address). DIRECTION 0 = right-side up on these rolls.
+// 203 dpi = 8 dots/mm. Layout: a big QR on the left; on the right the SKU code,
+// the full product name (up to 2 lines), and qty/MRP. No Single/Master tier
+// line, no lot/rack. Everything sits in the TOP area so the label's pre-printed
+// address (bottom ~38%) stays clear. DIRECTION 0 = right-side up on these rolls.
 const F_WIDTH: Record<string, number> = { "1": 8, "2": 12, "3": 16, "4": 24, "5": 32 };
+const F_HEIGHT: Record<string, number> = { "1": 12, "2": 20, "3": 24, "4": 32, "5": 48 };
 function fitText(s: string, font: string, maxDots: number): string {
   const w = F_WIDTH[font] || 16;
   const max = Math.max(3, Math.floor(maxDots / w));
-  return s.length > max ? s.slice(0, max) : s;
+  return s.length > max ? s.slice(0, Math.max(1, max - 1)) + "." : s;
+}
+// TSPL TEXT has no auto-wrap, so word-wrap the name to at most `maxLines` lines.
+function wrapText(s: string, font: string, maxDots: number, maxLines: number): string[] {
+  const cw = F_WIDTH[font] || 16;
+  const maxChars = Math.max(4, Math.floor(maxDots / cw));
+  const words = s.split(/\s+/).filter(Boolean);
+  const lines: string[] = [];
+  let cur = "";
+  for (const word of words) {
+    const test = cur ? cur + " " + word : word;
+    if (test.length > maxChars && cur) {
+      lines.push(cur); cur = word;
+      if (lines.length >= maxLines) break;
+    } else cur = test;
+  }
+  if (cur && lines.length < maxLines) lines.push(cur);
+  return lines.slice(0, maxLines).map((l) => (l.length > maxChars ? l.slice(0, maxChars) : l));
 }
 const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
@@ -52,27 +73,29 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   const dp = 8;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   const pad = Math.round(2 * dp);
-  const top = Math.round(Hd * 0.20);       // content starts ~20% down
-  const bottom = Math.round(Hd * 0.62);    // ...ends ~62% (bottom 38% = pre-printed address)
-  const ch = bottom - top;
-  const qrX = Math.round(4 * dp);          // 4mm left margin so the QR isn't clipped
-  const qrY = Math.round(Hd * 0.12);       // QR sits a touch higher so it can be bigger
-  const qrCell = Math.max(4, Math.min(8, Math.floor((bottom - qrY) / 25))); // biggest QR that fits the blank area
+  const top = Math.round(Hd * 0.14);
+  const bottom = Math.round(Hd * 0.62);    // bottom 38% left for the pre-printed address
+  const qrX = Math.round(4 * dp);          // 4mm in from the left so the QR never clips
+  const qrY = Math.round(Hd * 0.10);
+  const qrCell = Math.max(4, Math.min(9, Math.floor((bottom - qrY) / 25))); // biggest QR that fits
   const qrPx = qrCell * 25;
-  const textX = qrX + qrPx + Math.round(2 * dp);
+  const textX = qrX + qrPx + Math.round(2.5 * dp);
   const textW = Wd - textX - pad;
-  const mainF = h >= 55 ? "4" : "3";
-  const metaF = h >= 55 ? "3" : "2";
 
-  const tier = l.type === "master" ? "MASTER PACK" : "SINGLE PACK";
-  const qty = (l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`)
+  const skuF = h >= 55 ? "4" : "3";
+  const nameF = h >= 55 ? "4" : "3";
+  const qtyF = h >= 55 ? "3" : "2";
+  const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
+
+  const qty = (l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`)
     + `  MRP.Rs.${Math.round(l.price)}/-`;
-  const meta = `Lot:${l.lot || "--"}  Rk:${l.rack || "--"}  PKD:${l.pkd}`;
+  const nameLines = wrapText(esc(l.name), nameF, textW, 2);
 
-  const yTier = top;
-  const yName = top + Math.round(ch * 0.31);
-  const yQty = top + Math.round(ch * 0.61);
-  const yMeta = top + Math.round(ch * 0.88);
+  let cy = top;
+  const rows: string[] = [];
+  rows.push(`TEXT ${textX},${cy},"${skuF}",0,1,1,"${fitText(esc(l.sku_code), skuF, textW)}"`); cy += lh(skuF);
+  for (const nl of nameLines) { rows.push(`TEXT ${textX},${cy},"${nameF}",0,1,1,"${nl}"`); cy += lh(nameF); }
+  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qty), qtyF, textW)}"`);
 
   return [
     `SIZE ${w} mm, ${h} mm`,
@@ -83,10 +106,7 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
     `REFERENCE 0,0`,
     `CLS`,
     `QRCODE ${qrX},${qrY},M,${qrCell},A,0,"${esc(l.qrToken)}"`,
-    `TEXT ${textX},${yTier},"${metaF}",0,1,1,"${fitText(esc(tier), metaF, textW)}"`,
-    `TEXT ${textX},${yName},"${mainF}",0,1,1,"${fitText(esc(l.name), mainF, textW)}"`,
-    `TEXT ${textX},${yQty},"${mainF}",0,1,1,"${fitText(esc(qty), mainF, textW)}"`,
-    `TEXT ${textX},${yMeta},"${metaF}",0,1,1,"${fitText(esc(meta), metaF, textW)}"`,
+    ...rows,
     `PRINT 1,1`,
     ``,
   ].join("\r\n");

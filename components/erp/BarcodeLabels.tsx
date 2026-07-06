@@ -131,7 +131,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         body: JSON.stringify({
           printerId: pnPrinterId, w: dims.w, h: dims.h,
           labels: printable.map((l) => ({
-            qrToken: l.qrToken, name: l.name, type: l.type,
+            sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
             masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
             lot: l.lot, rack: l.rack, pkd: l.pkd,
           })),
@@ -156,7 +156,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     if (printable.length === 0) return;
     const payload = {
       labels: printable.map((l) => ({
-        qrToken: l.qrToken, name: l.name, type: l.type,
+        sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
         masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
         lot: l.lot, rack: l.rack, pkd: l.pkd,
       })),
@@ -187,16 +187,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               <span className="bl-qr-token">{l.qrToken}</span>
             </div>
             <div className="bl-body">
-              <div className="bl-tier">{l.type === "master" ? "MASTER PACK" : "SINGLE PACK"}</div>
+              <div className="bl-sku">{l.sku_code}</div>
               <div className="bl-name">{l.name}</div>
               <div className="bl-qty">
                 {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
-                {" · "}MRP.Rs.{l.price.toFixed(0)}/-{l.type === "master" ? " E" : ""}
-              </div>
-              <div className="bl-meta">
-                <span>Lot: {l.lot || "—"}</span>
-                <span>{l.type === "master" ? "Rack_No" : "RackNo"}: {l.rack || "—"}</span>
-                <span>PKD: {l.pkd}</span>
+                {" · "}MRP.Rs.{l.price.toFixed(0)}/-
               </div>
               {!preprinted && <div className="bl-tax">(Incl. of All Taxes)</div>}
             </div>

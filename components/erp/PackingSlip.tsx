@@ -55,6 +55,13 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
+  // A scan is previewed here first; it's only added to the case when the user
+  // clicks "Add scanned item" — this stops fast/repeat detections from inserting
+  // the same code multiple times.
+  const [pendingScan, setPendingScan] = useState<{
+    skuCode: string; name: string; unit: string; mrp: string;
+    tier: "single" | "master"; addQty: number; orderedStr: string; unknown: boolean;
+  } | null>(null);
   const [completed, setCompleted] = useState<Case[]>([]);
   const [pickCase, setPickCase] = useState<number>(1);
   const [slips, setSlips] = useState<SlipMeta[]>([]);
@@ -234,42 +241,64 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     }));
     setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
+  // A scan only PREVIEWS the item — it is not added to the case until the user
+  // clicks "Add scanned item" (confirmScan). This prevents the same QR being
+  // inserted multiple times from rapid/continuous detections.
   async function handleScan(code: string) {
     if (!activeCaseNo) return;
-    touch();
     try {
       const r = await fetch("/api/erp/scan/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
       const d = await r.json();
       if (d.ok && d.sku) {
         if (d.sku.qr_token) setQrByCode((m) => ({ ...m, [d.sku.sku_code]: d.sku.qr_token }));
-        // Single/master logic: a master QR adds a full carton (master_qty), a
-        // single QR adds one unit (single_qty). Qty Dispatched populates itself.
+        // A master QR adds a full carton (master_qty); a single QR adds single_qty.
         const tier = d.tier === "master" ? "master" : "single";
         const addQty = tier === "master" ? (Number(d.sku.master_qty) || 1) : (Number(d.sku.single_qty) || 1);
         const skuCode = d.sku.sku_code as string;
         const soLine = soLines.find((l) => l.sku_code === skuCode);
-        const orderedStr = soLine ? String(soLine.qty) : "";
-        setActiveRows((rows) => {
-          const idx = rows.findIndex((row) => row.itemCode === skuCode);
-          if (idx >= 0) {
-            return rows.map((row, i) => {
-              if (i !== idx) return row;
-              const disp = num(row.qtyDispatched) + addQty;
-              const ordered = row.qtyOrdered || orderedStr;
-              return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ordered, pendingQty: String(num(ordered) - disp) };
-            });
-          }
-          return [...rows, {
-            ...blankRow(activeCaseNo),
-            itemCode: skuCode, itemDesc: d.sku.name, unit: d.sku.unit || "",
-            mrp: d.sku.price != null ? String(d.sku.price) : "", mMrp: d.sku.price != null ? String(d.sku.price) : "",
-            qtyOrdered: orderedStr, qtyDispatched: String(addQty), quantity: String(addQty),
-            pendingQty: String(num(orderedStr) - addQty),
-          }];
+        setPendingScan({
+          skuCode, name: d.sku.name || "", unit: d.sku.unit || "",
+          mrp: d.sku.price != null ? String(d.sku.price) : "",
+          tier, addQty, orderedStr: soLine ? String(soLine.qty) : "", unknown: false,
         });
-        flash(true, `${skuCode}: +${addQty} dispatched (${tier})`);
-      } else { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); flash(false, `Not in master — added "${code}" to fill manually`); }
-    } catch { setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]); }
+      } else {
+        setPendingScan({ skuCode: code, name: "", unit: "", mrp: "", tier: "single", addQty: 1, orderedStr: "", unknown: true });
+      }
+    } catch {
+      setPendingScan({ skuCode: code, name: "", unit: "", mrp: "", tier: "single", addQty: 1, orderedStr: "", unknown: true });
+    }
+  }
+
+  // Insert the previewed scan into the active case.
+  function confirmScan() {
+    const p = pendingScan;
+    if (!p || !activeCaseNo) return;
+    touch();
+    if (p.unknown) {
+      setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: p.skuCode }]);
+      flash(false, `Not in master — added "${p.skuCode}" to fill manually`);
+    } else {
+      setActiveRows((rows) => {
+        const idx = rows.findIndex((row) => row.itemCode === p.skuCode);
+        if (idx >= 0) {
+          return rows.map((row, i) => {
+            if (i !== idx) return row;
+            const disp = num(row.qtyDispatched) + p.addQty;
+            const ordered = row.qtyOrdered || p.orderedStr;
+            return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ordered, pendingQty: String(num(ordered) - disp) };
+          });
+        }
+        return [...rows, {
+          ...blankRow(activeCaseNo),
+          itemCode: p.skuCode, itemDesc: p.name, unit: p.unit,
+          mrp: p.mrp, mMrp: p.mrp,
+          qtyOrdered: p.orderedStr, qtyDispatched: String(p.addQty), quantity: String(p.addQty),
+          pendingQty: String(num(p.orderedStr) - p.addQty),
+        }];
+      });
+      flash(true, `${p.skuCode}: +${p.addQty} dispatched (${p.tier})`);
+    }
+    setPendingScan(null);
   }
   const updateRow = (id: string, key: keyof Row, value: string) => {
     setActiveRows((rows) => rows.map((r) => {
@@ -516,6 +545,29 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
               <div>
                 <Scanner onDetect={handleScan} continuous />
+
+                {/* Scan preview — nothing is added until "Add scanned item" is clicked */}
+                {pendingScan ? (
+                  <div className={`mt-3 rounded-xl border-2 p-3 ${pendingScan.unknown ? "border-[var(--danger)] bg-[var(--danger-bg)]" : "border-[var(--accent-2)] bg-[var(--accent-2-bg)]"}`}>
+                    <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Scanned — review, then add</div>
+                    <div className="mt-1 text-sm font-extrabold">{pendingScan.skuCode}</div>
+                    {pendingScan.unknown ? (
+                      <div className="text-xs text-[var(--danger)]">Not in master — will be added as a manual row to fill in.</div>
+                    ) : (
+                      <div className="text-xs text-[var(--ink-2)]">
+                        {pendingScan.name}
+                        <div className="mt-0.5 font-semibold">+{pendingScan.addQty} to dispatch ({pendingScan.tier})</div>
+                      </div>
+                    )}
+                    <div className="mt-2 flex gap-2">
+                      <button onClick={confirmScan} className="rounded-lg bg-[var(--accent-2)] px-4 py-2 text-sm font-bold text-white hover:opacity-90">✓ Add scanned item</button>
+                      <button onClick={() => setPendingScan(null)} className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-bold text-[var(--muted)] hover:bg-[var(--surface-2)]">Clear</button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-[var(--muted)]">Scan a QR to preview it, then click <b>Add scanned item</b> to insert it below.</p>
+                )}
+
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => { setActiveRows((r) => [...r, blankRow(activeCaseNo)]); touch(); }} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ Manual row</button>
                   <button onClick={autoPending} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]" title="Gap = Ordered − Dispatched (auto-fills as you type; click to recalc all rows)">Recalc gap</button>
