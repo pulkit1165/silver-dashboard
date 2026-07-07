@@ -35,11 +35,24 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   // which is faster for that format.
   const decodeBarcodeRef = useRef<((img: ImageData) => string | null) | null>(null);
   const frameCount = useRef(0);
+  // Native BarcodeDetector (Android Chrome / newer browsers) — uses the OS
+  // decoder, as robust as the phone's own camera app. Preferred over jsQR.
+  const detectorRef = useRef<{ detect: (src: CanvasImageSource) => Promise<{ rawValue: string }[]> } | null>(null);
+  const detectingRef = useRef(false);
 
   const [state, setState] = useState<CamState>("idle");
   const [errMsg, setErrMsg] = useState("");
   const [manual, setManual] = useState("");
   const [flash, setFlash] = useState(false);
+
+  // Prefer the native BarcodeDetector when the browser has it.
+  useEffect(() => {
+    const BD = typeof window !== "undefined"
+      ? (window as unknown as { BarcodeDetector?: new (o: object) => { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> } }).BarcodeDetector
+      : undefined;
+    if (!BD) return;
+    try { detectorRef.current = new BD({ formats: ["qr_code", "code_128"] }); } catch { /* unsupported */ }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +60,8 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       if (cancelled) return;
       const reader = new Z.MultiFormatReader();
       const hints = new Map();
-      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.CODE_128]);
+      // QR + Code128 as the JS fallback where BarcodeDetector isn't available.
+      hints.set(Z.DecodeHintType.POSSIBLE_FORMATS, [Z.BarcodeFormat.QR_CODE, Z.BarcodeFormat.CODE_128]);
       reader.setHints(hints);
       decodeBarcodeRef.current = (img) => {
         try {
@@ -71,17 +85,41 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     streamRef.current = null;
   }, []);
 
+  // Shared hit handler (dedup + fire onDetect), used by both decoders.
+  const handleDetected = useCallback((detected: string | null | undefined) => {
+    if (!detected) return;
+    const now = Date.now();
+    if (detected === lastHit.current.code && now - lastHit.current.at < cooldownMs) return;
+    lastHit.current = { code: detected, at: now };
+    setFlash(true);
+    setTimeout(() => setFlash(false), 300);
+    onDetect(detected);
+    if (!continuous) { stop(); setState("idle"); }
+  }, [continuous, cooldownMs, onDetect, stop]);
+
   const tick = useCallback(() => {
+    if (!streamRef.current) return; // stopped
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
+    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
       rafRef.current = requestAnimationFrame(tick);
       return;
     }
+    // ── Best path: native BarcodeDetector, straight off the video frame ──
+    if (detectorRef.current) {
+      if (!detectingRef.current) {
+        detectingRef.current = true;
+        detectorRef.current.detect(video)
+          .then((codes) => { detectingRef.current = false; if (codes?.length) handleDetected(codes[0].rawValue); })
+          .catch(() => { detectingRef.current = false; });
+      }
+      rafRef.current = requestAnimationFrame(tick);
+      return;
+    }
+    // ── Fallback: jsQR (+ ZXing) on a downscaled canvas frame ──
+    if (!canvas) { rafRef.current = requestAnimationFrame(tick); return; }
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    // Cap the processing resolution so jsQR stays fast even on a 1080p feed,
-    // while still far sharper than the old default.
     const scale = Math.min(1, 1280 / Math.max(vw, vh));
     const w = Math.round(vw * scale);
     const h = Math.round(vh * scale);
@@ -91,32 +129,15 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     if (!ctx) return;
     ctx.drawImage(video, 0, 0, w, h);
     const img = ctx.getImageData(0, 0, w, h);
-    // attemptBoth also catches inverted QR (light-on-dark) for extra robustness.
     const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
     let detected = code?.data || null;
     if (!detected && decodeBarcodeRef.current) {
-      // 1D decode is heavier than jsQR's QR finder-pattern search — sample
-      // every 3rd frame instead of every animation frame.
       frameCount.current++;
       if (frameCount.current % 3 === 0) detected = decodeBarcodeRef.current(img);
     }
-    if (detected) {
-      const now = Date.now();
-      const dup = detected === lastHit.current.code && now - lastHit.current.at < cooldownMs;
-      if (!dup) {
-        lastHit.current = { code: detected, at: now };
-        setFlash(true);
-        setTimeout(() => setFlash(false), 300);
-        onDetect(detected);
-        if (!continuous) {
-          stop();
-          setState("idle");
-          return;
-        }
-      }
-    }
+    handleDetected(detected);
     rafRef.current = requestAnimationFrame(tick);
-  }, [continuous, cooldownMs, onDetect, stop]);
+  }, [handleDetected]);
 
   const start = useCallback(async () => {
     setErrMsg("");
