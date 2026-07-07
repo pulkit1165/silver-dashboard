@@ -27,6 +27,7 @@ function toGrayscale(img: ImageData): Uint8ClampedArray {
 export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500 }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const rafRef = useRef<number | null>(null);
   const lastHit = useRef<{ code: string; at: number }>({ code: "", at: 0 });
@@ -180,6 +181,48 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     } finally { setCapturing(false); }
   }, [handleDetected]);
 
+  // MOST RELIABLE on mobile: let the phone's NATIVE camera app take the photo
+  // (<input capture> launches it), then decode that full-res, properly-focused
+  // JPEG. This is the same camera pipeline that already reads these QRs, so it
+  // sidesteps the soft/low-res getUserMedia live feed entirely.
+  const scanFromFile = useCallback(async (file: File) => {
+    setCapturing(true);
+    setDbg("");
+    try {
+      const bmp = await createImageBitmap(file);
+      // show what was captured
+      try {
+        const pc = document.createElement("canvas");
+        const pw = Math.min(bmp.width, 480); const ph = Math.round(bmp.height * pw / bmp.width);
+        pc.width = pw; pc.height = ph;
+        pc.getContext("2d")!.drawImage(bmp, 0, 0, pw, ph);
+        setCapturedUrl(pc.toDataURL("image/jpeg", 0.85));
+      } catch { /* ignore */ }
+      // 1) native OS decoder on the full-res photo (best odds)
+      if (detectorRef.current) {
+        try {
+          const codes = await detectorRef.current.detect(bmp as unknown as CanvasImageSource);
+          if (codes?.length) { handleDetected(codes[0].rawValue); return; }
+        } catch { /* fall through */ }
+      }
+      // 2) jsQR / ZXing on a canvas (cap the long side so it stays fast)
+      const maxSide = 1600;
+      const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
+      const cw = Math.max(1, Math.round(bmp.width * scale)), ch = Math.max(1, Math.round(bmp.height * scale));
+      const c = document.createElement("canvas");
+      c.width = cw; c.height = ch;
+      const cx = c.getContext("2d", { willReadFrequently: true })!;
+      cx.drawImage(bmp, 0, 0, cw, ch);
+      const id = cx.getImageData(0, 0, cw, ch);
+      let code = jsQR(id.data, cw, ch, { inversionAttempts: "attemptBoth" })?.data || null;
+      if (!code && decodeBarcodeRef.current) code = decodeBarcodeRef.current(id);
+      if (code) { handleDetected(code); return; }
+      setDbg(`photo ${bmp.width}×${bmp.height} · no code — retake so the QR fills most of the frame`);
+    } catch (e) {
+      setDbg("photo read failed: " + String(e).slice(0, 40));
+    } finally { setCapturing(false); }
+  }, [handleDetected]);
+
   const tick = useCallback(() => {
     if (!streamRef.current) return; // stopped
     const video = videoRef.current;
@@ -324,6 +367,15 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           </div>
         )}
       </div>
+
+      {/* NATIVE-camera photo scan — the reliable mobile path. Always available,
+          works even without starting the live camera. */}
+      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) scanFromFile(f); e.target.value = ""; }} />
+      <button onClick={() => fileInputRef.current?.click()} disabled={capturing}
+        className="rounded-lg bg-[var(--accent-2)] px-4 py-3 text-sm font-extrabold text-white shadow-sm hover:brightness-95 disabled:opacity-60">
+        {capturing ? "Reading photo…" : "📸 Take a photo of the QR — most reliable"}
+      </button>
 
       {state === "running" && (
         <button onClick={captureAndScan} disabled={capturing}
