@@ -185,6 +185,21 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   // (<input capture> launches it), then decode that full-res, properly-focused
   // JPEG. This is the same camera pipeline that already reads these QRs, so it
   // sidesteps the soft/low-res getUserMedia live feed entirely.
+  // Draw the bitmap to a canvas at a target long-side and run jsQR + ZXing on it.
+  const decodeAtSize = useCallback((bmp: ImageBitmap, targetSide: number): string | null => {
+    const scale = Math.min(1, targetSide / Math.max(bmp.width, bmp.height));
+    const cw = Math.max(1, Math.round(bmp.width * scale)), ch = Math.max(1, Math.round(bmp.height * scale));
+    const c = document.createElement("canvas");
+    c.width = cw; c.height = ch;
+    const cx = c.getContext("2d", { willReadFrequently: true })!;
+    cx.drawImage(bmp, 0, 0, cw, ch);
+    const id = cx.getImageData(0, 0, cw, ch);
+    const q = jsQR(id.data, cw, ch, { inversionAttempts: "attemptBoth" })?.data;
+    if (q) return q;
+    if (decodeBarcodeRef.current) { const z = decodeBarcodeRef.current(id); if (z) return z; }
+    return null;
+  }, []);
+
   const scanFromFile = useCallback(async (file: File) => {
     setCapturing(true);
     setDbg("");
@@ -198,30 +213,26 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         pc.getContext("2d")!.drawImage(bmp, 0, 0, pw, ph);
         setCapturedUrl(pc.toDataURL("image/jpeg", 0.85));
       } catch { /* ignore */ }
-      // 1) native OS decoder on the full-res photo (best odds)
+      // 1) native OS decoder on the full-res photo (best when available: Android)
       if (detectorRef.current) {
         try {
           const codes = await detectorRef.current.detect(bmp as unknown as CanvasImageSource);
           if (codes?.length) { handleDetected(codes[0].rawValue); return; }
         } catch { /* fall through */ }
       }
-      // 2) jsQR / ZXing on a canvas (cap the long side so it stays fast)
-      const maxSide = 1600;
-      const scale = Math.min(1, maxSide / Math.max(bmp.width, bmp.height));
-      const cw = Math.max(1, Math.round(bmp.width * scale)), ch = Math.max(1, Math.round(bmp.height * scale));
-      const c = document.createElement("canvas");
-      c.width = cw; c.height = ch;
-      const cx = c.getContext("2d", { willReadFrequently: true })!;
-      cx.drawImage(bmp, 0, 0, cw, ch);
-      const id = cx.getImageData(0, 0, cw, ch);
-      let code = jsQR(id.data, cw, ch, { inversionAttempts: "attemptBoth" })?.data || null;
-      if (!code && decodeBarcodeRef.current) code = decodeBarcodeRef.current(id);
-      if (code) { handleDetected(code); return; }
-      setDbg(`photo ${bmp.width}×${bmp.height} · no code — retake so the QR fills most of the frame`);
+      // 2) jsQR / ZXing at several sizes — full-res FIRST (keeps module detail when
+      //    the QR is small in the frame), then downscales for speed/noise-tolerance.
+      const big = Math.max(bmp.width, bmp.height);
+      const sizes = [...new Set([Math.min(big, 2600), 1600, 1100, 800])].filter((s) => s <= big || s === big);
+      for (const s of sizes) {
+        const code = decodeAtSize(bmp, s);
+        if (code) { handleDetected(code); return; }
+      }
+      setDbg(`photo ${bmp.width}×${bmp.height} · no code — get closer so the QR fills the frame, tap to focus`);
     } catch (e) {
       setDbg("photo read failed: " + String(e).slice(0, 40));
     } finally { setCapturing(false); }
-  }, [handleDetected]);
+  }, [handleDetected, decodeAtSize]);
 
   const tick = useCallback(() => {
     if (!streamRef.current) return; // stopped
