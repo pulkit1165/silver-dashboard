@@ -41,6 +41,11 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   const detectorRef = useRef<{ detect: (src: CanvasImageSource) => Promise<{ rawValue: string }[]> } | null>(null);
   const detectingRef = useRef(false);
   const lastRawRef = useRef<string>("");
+  // zxing-wasm (ZXing C++ → WebAssembly): the strongest FREE decoder — robust to
+  // blur, low contrast, rotation and small codes. Fills the gap where the native
+  // BarcodeDetector is absent (desktop, iPhone) and strengthens every path.
+  const zxingReadRef = useRef<null | ((input: Blob | ImageData) => Promise<string | null>)>(null);
+  const zxingBusyRef = useRef(false);
 
   const [state, setState] = useState<CamState>("idle");
   const [errMsg, setErrMsg] = useState("");
@@ -110,6 +115,36 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     };
   }, []);
 
+  // Load zxing-wasm and point it at the locally-served wasm (so it works even if
+  // the CDN is blocked on a warehouse network). Warm it up so the first scan is fast.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const Z = await import("zxing-wasm/reader");
+        Z.setZXingModuleOverrides({
+          locateFile: (path: string, prefix: string) =>
+            path.endsWith(".wasm") ? "/zxing/zxing_reader.wasm" : prefix + path,
+        });
+        try { await Z.getZXingModule(); } catch { /* will lazy-init on first read */ }
+        if (cancelled) return;
+        zxingReadRef.current = async (input) => {
+          try {
+            const res = await Z.readBarcodes(input, {
+              formats: ["QRCode", "Code128"],
+              tryHarder: true,
+              tryInvert: true,
+              tryDenoise: true,
+              maxNumberOfSymbols: 1,
+            });
+            return res?.find((r) => r.text)?.text ?? null;
+          } catch { return null; }
+        };
+      } catch { /* zxing-wasm unavailable — jsQR/native still work */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const stop = useCallback(() => {
     if (rafRef.current) cancelAnimationFrame(rafRef.current);
     rafRef.current = null;
@@ -173,6 +208,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       const cx = c.getContext("2d", { willReadFrequently: true })!;
       cx.drawImage(bmp, 0, 0);
       const id = cx.getImageData(0, 0, c.width, c.height);
+      if (zxingReadRef.current) { const z = await zxingReadRef.current(id); if (z) { handleDetected(z); return; } }
       const code = jsQR(id.data, c.width, c.height, { inversionAttempts: "attemptBoth" });
       if (code?.data) { handleDetected(code.data); return; }
       setDbg(`captured ${bmp.width}×${bmp.height} · no code — hold steadier / closer`);
@@ -219,6 +255,11 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           const codes = await detectorRef.current.detect(bmp as unknown as CanvasImageSource);
           if (codes?.length) { handleDetected(codes[0].rawValue); return; }
         } catch { /* fall through */ }
+      }
+      // 1b) zxing-wasm — strongest engine — straight on the original file (full res)
+      if (zxingReadRef.current) {
+        const z = await zxingReadRef.current(file);
+        if (z) { handleDetected(z); return; }
       }
       // 2) jsQR / ZXing at several sizes — full-res FIRST (keeps module detail when
       //    the QR is small in the frame), then downscales for speed/noise-tolerance.
@@ -271,9 +312,19 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     }
     if (detected) { lastRawRef.current = detected; handleDetected(detected); }
 
+    // 3) zxing-wasm — only where there's no native detector (desktop/iOS), so it
+    //    doesn't jank the live feed on Android where BarcodeDetector already runs.
+    if (!detectorRef.current && zxingReadRef.current && !zxingBusyRef.current && frameCount.current % 3 === 0) {
+      zxingBusyRef.current = true;
+      zxingReadRef.current(img)
+        .then((z) => { zxingBusyRef.current = false; if (z) { lastRawRef.current = z; handleDetected(z); } })
+        .catch(() => { zxingBusyRef.current = false; });
+    }
+
     // live diagnostic (throttled): decoder · frames · has anything been read yet
     if (frameCount.current % 15 === 0) {
-      setDbg(`${detectorRef.current ? "native" : "jsQR"} · f${frameCount.current} · ${lastRawRef.current ? "seen ✓" : "no code seen"}`);
+      const eng = detectorRef.current ? "native" : zxingReadRef.current ? "zxing" : "jsQR";
+      setDbg(`${eng} · f${frameCount.current} · ${lastRawRef.current ? "seen ✓" : "no code seen"}`);
     }
     rafRef.current = requestAnimationFrame(tick);
   }, [handleDetected]);
