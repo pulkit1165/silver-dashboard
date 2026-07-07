@@ -50,6 +50,15 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   const [camInfo, setCamInfo] = useState("");
   const [dbg, setDbg] = useState("");
   const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
+  const [zoomCaps, setZoomCaps] = useState<{ min: number; max: number; step: number } | null>(null);
+  const [zoom, setZoom] = useState(1);
+
+  const applyZoom = useCallback(async (z: number) => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    setZoom(z);
+    try { await track.applyConstraints({ advanced: [{ zoom: z } as MediaTrackConstraintSet] }); } catch { /* ignore */ }
+  }, []);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -243,6 +252,12 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] });
         }
         setHasTorch(!!caps?.torch);
+        const zc = (caps as { zoom?: { min: number; max: number; step: number } })?.zoom;
+        if (zc && typeof zc.max === "number" && zc.max > (zc.min ?? 1)) {
+          setZoomCaps({ min: zc.min, max: zc.max, step: zc.step || 0.1 });
+          const target = Math.min(zc.max, 2.5); // start zoomed in so the QR is bigger
+          try { await track.applyConstraints({ advanced: [{ zoom: target } as MediaTrackConstraintSet] }); setZoom(target); } catch { /* ignore */ }
+        } else { setZoomCaps(null); setZoom(1); }
         const s = track.getSettings?.();
         setCamInfo(`${s?.width ?? "?"}×${s?.height ?? "?"}`);
       } catch { /* capability control not supported */ }
@@ -315,6 +330,15 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-[var(--accent-strong)] disabled:opacity-60">
           {capturing ? "Capturing…" : "📷 Capture & scan (if live scan won't catch it)"}
         </button>
+      )}
+
+      {state === "running" && zoomCaps && (
+        <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">
+          🔍 Zoom
+          <input type="range" min={zoomCaps.min} max={zoomCaps.max} step={zoomCaps.step || 0.1}
+            value={zoom} onChange={(e) => applyZoom(Number(e.target.value))} className="flex-1 accent-[var(--accent)]" />
+          <span className="tabular-nums">{zoom.toFixed(1)}×</span>
+        </label>
       )}
 
       {state === "running" && (
