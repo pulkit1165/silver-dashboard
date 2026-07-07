@@ -328,6 +328,21 @@ body {
 /* Rotated: centre it and spin 90° so a 65x35 label fills a 35x65 page. */
 .label-rot > .barcode-label.rot { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%) rotate(90deg); }
 
+/* ── A4 test sheet: tile exact-mm, black-on-white labels across a plain A4 ───
+   page so they can be laser/inkjet printed and scan-tested. inline-block tiles
+   wrap left→right and paginate cleanly (flex/grid break badly across pages). */
+.a4-grid { line-height: 0; }
+.a4-tile { display: inline-block; vertical-align: top; margin: 0 3mm 3mm 0; line-height: normal; break-inside: avoid; page-break-inside: avoid; }
+/* white background + a light dashed cut guide (these replace the pre-printed stock) */
+.barcode-label.thermal.a4label { background: #fff !important; border: 1px dashed #bbb; outline: none !important; }
+.barcode-label.thermal.a4label .bl-footer { color: #000; border-top-color: #000; }
+@media print {
+  /* the A4 portal must flow normally (not the absolute single-page box) so it
+     paginates across as many A4 pages as the labels need. */
+  .print-area.a4sheet { position: static !important; inset: auto !important; }
+  .barcode-label.thermal.a4label { border-color: #bbb; }
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
