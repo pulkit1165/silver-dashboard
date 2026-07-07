@@ -73,18 +73,24 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   const dp = 8;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   const pad = Math.round(2 * dp);
-  const top = Math.round(Hd * 0.14);
-  const bottom = Math.round(Hd * 0.62);    // bottom 38% left for the pre-printed address
+  const top = Math.round(Hd * 0.13);       // a little space at the top
+  const bottom = Math.round(Hd * 0.66);    // content area; below = pre-printed address
   const qrX = Math.round(4 * dp);          // 4mm in from the left so the QR never clips
-  const qrY = Math.round(Hd * 0.10);
-  const qrCell = Math.max(4, Math.min(9, Math.floor((bottom - qrY) / 25))); // biggest QR that fits
+  const qrY = top;
+  // Biggest QR that fits BOTH the content height and ~half the label width — so
+  // it scales right up on big labels instead of staying tiny.
+  const qrByH = Math.floor((bottom - qrY) / 25);
+  const qrByW = Math.floor((Wd * 0.5) / 25);
+  const qrCell = Math.max(5, Math.min(16, qrByH, qrByW));
   const qrPx = qrCell * 25;
-  const textX = qrX + qrPx + Math.round(2.5 * dp);
+  const textX = qrX + qrPx + Math.round(3 * dp);
   const textW = Wd - textX - pad;
 
-  const skuF = h >= 55 ? "4" : "3";
-  const nameF = h >= 55 ? "4" : "3";
-  const qtyF = h >= 55 ? "3" : "2";
+  // Fonts scale with label height so text is big on big labels.
+  const big = h >= 60, med = h >= 45;
+  const skuF = big ? "5" : med ? "4" : "3";
+  const nameF = big ? "5" : med ? "4" : "3";
+  const qtyF = big ? "4" : med ? "3" : "2";
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
   const qty = (l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`)
