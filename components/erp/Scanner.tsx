@@ -142,7 +142,8 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     // 1) native BarcodeDetector (async, OS decoder) on the cropped canvas
     if (detectorRef.current && !detectingRef.current) {
       detectingRef.current = true;
-      detectorRef.current.detect(canvas)
+      // detect on the full video frame (native OS decoder handles full res best)
+      detectorRef.current.detect(video)
         .then((codes) => { detectingRef.current = false; if (codes?.length) { lastRawRef.current = codes[0].rawValue; handleDetected(codes[0].rawValue); } })
         .catch(() => { detectingRef.current = false; });
     }
@@ -223,7 +224,8 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         }`}
       >
         <video ref={videoRef} className="h-full w-full object-cover" muted playsInline />
-        <canvas ref={canvasRef} className="hidden" />
+        {/* live preview of exactly what the decoder is processing (for diagnosing focus) */}
+        <canvas ref={canvasRef} className={`pointer-events-none absolute bottom-2 right-2 h-24 w-24 rounded-lg border-2 border-white/80 shadow-lg ${state === "running" ? "" : "hidden"}`} />
 
         {/* reticle */}
         {state === "running" && (
