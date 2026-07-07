@@ -39,6 +39,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   // decoder, as robust as the phone's own camera app. Preferred over jsQR.
   const detectorRef = useRef<{ detect: (src: CanvasImageSource) => Promise<{ rawValue: string }[]> } | null>(null);
   const detectingRef = useRef(false);
+  const lastRawRef = useRef<string>("");
 
   const [state, setState] = useState<CamState>("idle");
   const [errMsg, setErrMsg] = useState("");
@@ -47,6 +48,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [camInfo, setCamInfo] = useState("");
+  const [dbg, setDbg] = useState("");
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -58,13 +60,19 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     } catch { /* torch not controllable */ }
   }, [torchOn]);
 
-  // Prefer the native BarcodeDetector when the browser has it.
+  // Prefer the native BarcodeDetector — but only if it actually supports QR.
   useEffect(() => {
     const BD = typeof window !== "undefined"
-      ? (window as unknown as { BarcodeDetector?: new (o: object) => { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> } }).BarcodeDetector
+      ? (window as unknown as { BarcodeDetector?: (new (o: object) => { detect: (s: CanvasImageSource) => Promise<{ rawValue: string }[]> }) & { getSupportedFormats?: () => Promise<string[]> } }).BarcodeDetector
       : undefined;
     if (!BD) return;
-    try { detectorRef.current = new BD({ formats: ["qr_code", "code_128"] }); } catch { /* unsupported */ }
+    (async () => {
+      try {
+        const formats = await BD.getSupportedFormats?.();
+        if (formats && !formats.includes("qr_code")) return;
+        detectorRef.current = new BD({ formats: ["qr_code", "code_128"] });
+      } catch { /* unsupported */ }
+    })();
   }, []);
 
   useEffect(() => {
@@ -135,7 +143,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     if (detectorRef.current && !detectingRef.current) {
       detectingRef.current = true;
       detectorRef.current.detect(canvas)
-        .then((codes) => { detectingRef.current = false; if (codes?.length) handleDetected(codes[0].rawValue); })
+        .then((codes) => { detectingRef.current = false; if (codes?.length) { lastRawRef.current = codes[0].rawValue; handleDetected(codes[0].rawValue); } })
         .catch(() => { detectingRef.current = false; });
     }
     // 2) jsQR (+ ZXing every other frame) on the same crop
@@ -144,8 +152,12 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     if (!detected && decodeBarcodeRef.current && frameCount.current % 2 === 0) {
       detected = decodeBarcodeRef.current(img);
     }
-    if (detected) handleDetected(detected);
+    if (detected) { lastRawRef.current = detected; handleDetected(detected); }
 
+    // live diagnostic (throttled): decoder · frames · has anything been read yet
+    if (frameCount.current % 15 === 0) {
+      setDbg(`${detectorRef.current ? "native" : "jsQR"} · f${frameCount.current} · ${lastRawRef.current ? "seen ✓" : "no code seen"}`);
+    }
     rafRef.current = requestAnimationFrame(tick);
   }, [handleDetected]);
 
@@ -178,7 +190,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         }
         setHasTorch(!!caps?.torch);
         const s = track.getSettings?.();
-        setCamInfo(`${detectorRef.current ? "native" : "js"} · ${s?.width ?? "?"}×${s?.height ?? "?"}`);
+        setCamInfo(`${s?.width ?? "?"}×${s?.height ?? "?"}`);
       } catch { /* capability control not supported */ }
       const video = videoRef.current!;
       video.srcObject = stream;
@@ -248,7 +260,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           <span className="flex items-center gap-2 font-semibold text-[var(--accent-2)]">
             <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent-2)]" />
             Scanning{continuous ? " (continuous)" : ""}…
-            {camInfo && <span className="font-normal text-[var(--muted-2)]">· {camInfo}</span>}
+            {(dbg || camInfo) && <span className="font-normal text-[var(--muted-2)]">· {camInfo}{dbg ? ` · ${dbg}` : ""}</span>}
           </span>
           <span className="flex gap-2">
             {hasTorch && (
