@@ -107,7 +107,10 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   return [
     `SIZE ${w} mm, ${h} mm`,
     `GAP 3 mm, 0 mm`,
-    `DENSITY 15`,
+    // Lower density + slow speed = CRISP QR. At DENSITY 15 the fine QR modules
+    // over-ink and bleed into each other, which is why a printed QR won't scan
+    // even though the on-screen one does. ~9-10 keeps modules separated.
+    `DENSITY 9`,
     `SPEED 2`,
     `DIRECTION 0`,
     `REFERENCE 0,0`,
