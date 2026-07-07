@@ -118,6 +118,50 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     if (!continuous) { stop(); setState("idle"); }
   }, [continuous, cooldownMs, onDetect, stop]);
 
+  // Grab a FULL-RESOLUTION still (like pressing the camera shutter) and decode it.
+  // The live video feed is soft/low-res; a proper photo is what makes small QR
+  // codes readable — this is the reliable "it works like the camera app" path.
+  const [capturing, setCapturing] = useState(false);
+  const captureAndScan = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    const video = videoRef.current;
+    if (!track || !video) return;
+    setCapturing(true);
+    try {
+      let bmp: ImageBitmap | null = null;
+      const IC = (window as unknown as { ImageCapture?: new (t: MediaStreamTrack) => { takePhoto: () => Promise<Blob>; grabFrame: () => Promise<ImageBitmap> } }).ImageCapture;
+      if (IC) {
+        const ic = new IC(track);
+        try { bmp = await createImageBitmap(await ic.takePhoto()); }
+        catch { try { bmp = await ic.grabFrame(); } catch { /* fall through */ } }
+      }
+      if (!bmp) {
+        const c = document.createElement("canvas");
+        c.width = video.videoWidth; c.height = video.videoHeight;
+        c.getContext("2d")!.drawImage(video, 0, 0);
+        bmp = await createImageBitmap(c);
+      }
+      // native decode on the still
+      if (detectorRef.current) {
+        try {
+          const codes = await detectorRef.current.detect(bmp as unknown as CanvasImageSource);
+          if (codes?.length) { handleDetected(codes[0].rawValue); return; }
+        } catch { /* fall through to jsQR */ }
+      }
+      // jsQR on the still
+      const c = document.createElement("canvas");
+      c.width = bmp.width; c.height = bmp.height;
+      const cx = c.getContext("2d", { willReadFrequently: true })!;
+      cx.drawImage(bmp, 0, 0);
+      const id = cx.getImageData(0, 0, c.width, c.height);
+      const code = jsQR(id.data, c.width, c.height, { inversionAttempts: "attemptBoth" });
+      if (code?.data) { handleDetected(code.data); return; }
+      setDbg(`captured ${bmp.width}×${bmp.height} · no code — hold steadier / closer`);
+    } catch (e) {
+      setDbg("capture failed: " + String(e).slice(0, 40));
+    } finally { setCapturing(false); }
+  }, [handleDetected]);
+
   const tick = useCallback(() => {
     if (!streamRef.current) return; // stopped
     const video = videoRef.current;
@@ -256,6 +300,13 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           </div>
         )}
       </div>
+
+      {state === "running" && (
+        <button onClick={captureAndScan} disabled={capturing}
+          className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-[var(--accent-strong)] disabled:opacity-60">
+          {capturing ? "Capturing…" : "📷 Capture & scan (if live scan won't catch it)"}
+        </button>
+      )}
 
       {state === "running" && (
         <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
