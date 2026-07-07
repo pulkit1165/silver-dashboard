@@ -49,6 +49,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   const [torchOn, setTorchOn] = useState(false);
   const [camInfo, setCamInfo] = useState("");
   const [dbg, setDbg] = useState("");
+  const [capturedUrl, setCapturedUrl] = useState<string | null>(null);
 
   const toggleTorch = useCallback(async () => {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -141,6 +142,14 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         c.getContext("2d")!.drawImage(video, 0, 0);
         bmp = await createImageBitmap(c);
       }
+      // show what we actually captured (to diagnose sharpness / QR presence)
+      try {
+        const pc = document.createElement("canvas");
+        const pw = Math.min(bmp.width, 480); const ph = Math.round(bmp.height * pw / bmp.width);
+        pc.width = pw; pc.height = ph;
+        pc.getContext("2d")!.drawImage(bmp, 0, 0, pw, ph);
+        setCapturedUrl(pc.toDataURL("image/jpeg", 0.85));
+      } catch { /* ignore */ }
       // native decode on the still
       if (detectorRef.current) {
         try {
@@ -329,6 +338,17 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
               Stop
             </button>
           </span>
+        </div>
+      )}
+
+      {capturedUrl && (
+        <div className="rounded-lg border border-[var(--border)] p-2">
+          <div className="mb-1 flex items-center justify-between text-xs font-semibold text-[var(--muted)]">
+            <span>Captured photo (what the decoder saw){dbg ? ` — ${dbg}` : ""}</span>
+            <button onClick={() => setCapturedUrl(null)} className="text-[var(--accent)]">clear</button>
+          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={capturedUrl} alt="captured" className="w-full rounded" />
         </div>
       )}
 
