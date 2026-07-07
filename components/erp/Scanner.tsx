@@ -44,6 +44,19 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   const [errMsg, setErrMsg] = useState("");
   const [manual, setManual] = useState("");
   const [flash, setFlash] = useState(false);
+  const [hasTorch, setHasTorch] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
+  const [camInfo, setCamInfo] = useState("");
+
+  const toggleTorch = useCallback(async () => {
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    const next = !torchOn;
+    try {
+      await track.applyConstraints({ advanced: [{ torch: next } as MediaTrackConstraintSet] });
+      setTorchOn(next);
+    } catch { /* torch not controllable */ }
+  }, [torchOn]);
 
   // Prefer the native BarcodeDetector when the browser has it.
   useEffect(() => {
@@ -101,41 +114,38 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     if (!streamRef.current) return; // stopped
     const video = videoRef.current;
     const canvas = canvasRef.current;
-    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) {
+    if (!video || !canvas || video.readyState !== video.HAVE_ENOUGH_DATA) {
       rafRef.current = requestAnimationFrame(tick);
       return;
     }
-    // ── Best path: native BarcodeDetector, straight off the video frame ──
-    if (detectorRef.current) {
-      if (!detectingRef.current) {
-        detectingRef.current = true;
-        detectorRef.current.detect(video)
-          .then((codes) => { detectingRef.current = false; if (codes?.length) handleDetected(codes[0].rawValue); })
-          .catch(() => { detectingRef.current = false; });
-      }
-      rafRef.current = requestAnimationFrame(tick);
-      return;
-    }
-    // ── Fallback: jsQR (+ ZXing) on a downscaled canvas frame ──
-    if (!canvas) { rafRef.current = requestAnimationFrame(tick); return; }
-    const vw = video.videoWidth;
-    const vh = video.videoHeight;
-    const scale = Math.min(1, 1280 / Math.max(vw, vh));
-    const w = Math.round(vw * scale);
-    const h = Math.round(vh * scale);
-    canvas.width = w;
-    canvas.height = h;
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // Crop to a centred square (the reticle) and process it at good resolution —
+    // this focuses the decoders on the QR and drops background clutter/glare.
+    const side = Math.floor(Math.min(vw, vh) * 0.9);
+    const sx = Math.floor((vw - side) / 2), sy = Math.floor((vh - side) / 2);
+    const out = Math.min(side, 1000);
+    canvas.width = out; canvas.height = out;
     const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    if (!ctx) return;
-    ctx.drawImage(video, 0, 0, w, h);
-    const img = ctx.getImageData(0, 0, w, h);
-    const code = jsQR(img.data, img.width, img.height, { inversionAttempts: "attemptBoth" });
-    let detected = code?.data || null;
-    if (!detected && decodeBarcodeRef.current) {
-      frameCount.current++;
-      if (frameCount.current % 3 === 0) detected = decodeBarcodeRef.current(img);
+    if (!ctx) { rafRef.current = requestAnimationFrame(tick); return; }
+    ctx.drawImage(video, sx, sy, side, side, 0, 0, out, out);
+    frameCount.current++;
+
+    // Run BOTH decoders every frame for the best odds:
+    // 1) native BarcodeDetector (async, OS decoder) on the cropped canvas
+    if (detectorRef.current && !detectingRef.current) {
+      detectingRef.current = true;
+      detectorRef.current.detect(canvas)
+        .then((codes) => { detectingRef.current = false; if (codes?.length) handleDetected(codes[0].rawValue); })
+        .catch(() => { detectingRef.current = false; });
     }
-    handleDetected(detected);
+    // 2) jsQR (+ ZXing every other frame) on the same crop
+    const img = ctx.getImageData(0, 0, out, out);
+    let detected = jsQR(img.data, out, out, { inversionAttempts: "attemptBoth" })?.data || null;
+    if (!detected && decodeBarcodeRef.current && frameCount.current % 2 === 0) {
+      detected = decodeBarcodeRef.current(img);
+    }
+    if (detected) handleDetected(detected);
+
     rafRef.current = requestAnimationFrame(tick);
   }, [handleDetected]);
 
@@ -159,14 +169,17 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         audio: false,
       });
       streamRef.current = stream;
-      // Enable continuous autofocus where the device supports it.
+      setTorchOn(false);
       try {
         const track = stream.getVideoTracks()[0];
-        const caps = track.getCapabilities?.() as MediaTrackCapabilities & { focusMode?: string[] };
+        const caps = track.getCapabilities?.() as MediaTrackCapabilities & { focusMode?: string[]; torch?: boolean };
         if (caps?.focusMode?.includes("continuous")) {
           await track.applyConstraints({ advanced: [{ focusMode: "continuous" } as MediaTrackConstraintSet] });
         }
-      } catch { /* focus control not supported */ }
+        setHasTorch(!!caps?.torch);
+        const s = track.getSettings?.();
+        setCamInfo(`${detectorRef.current ? "native" : "js"} · ${s?.width ?? "?"}×${s?.height ?? "?"}`);
+      } catch { /* capability control not supported */ }
       const video = videoRef.current!;
       video.srcObject = stream;
       video.setAttribute("playsinline", "true");
@@ -231,20 +244,26 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       </div>
 
       {state === "running" && (
-        <div className="flex items-center justify-between text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
           <span className="flex items-center gap-2 font-semibold text-[var(--accent-2)]">
             <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--accent-2)]" />
             Scanning{continuous ? " (continuous)" : ""}…
+            {camInfo && <span className="font-normal text-[var(--muted-2)]">· {camInfo}</span>}
           </span>
-          <button
-            onClick={() => {
-              stop();
-              setState("idle");
-            }}
-            className="rounded-md border border-[var(--border)] px-3 py-1 font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)]"
-          >
-            Stop
-          </button>
+          <span className="flex gap-2">
+            {hasTorch && (
+              <button onClick={toggleTorch}
+                className={`rounded-md border px-3 py-1 font-semibold ${torchOn ? "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent-strong)]" : "border-[var(--border)] text-[var(--muted)] hover:bg-[var(--surface-2)]"}`}>
+                🔦 {torchOn ? "On" : "Flash"}
+              </button>
+            )}
+            <button
+              onClick={() => { stop(); setState("idle"); }}
+              className="rounded-md border border-[var(--border)] px-3 py-1 font-semibold text-[var(--muted)] hover:bg-[var(--surface-2)]"
+            >
+              Stop
+            </button>
+          </span>
         </div>
       )}
 
