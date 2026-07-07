@@ -78,10 +78,11 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   const qrX = Math.round(4 * dp);          // 4mm in from the left so the QR never clips
   const qrY = top;
   // Biggest QR that fits BOTH the content height and ~half the label width — so
-  // it scales right up on big labels instead of staying tiny.
+  // it scales up on big labels. NOTE: TSPL QRCODE cell width maxes at 10; going
+  // higher makes the printer silently drop the QR, so 10 is the hard cap.
   const qrByH = Math.floor((bottom - qrY) / 25);
   const qrByW = Math.floor((Wd * 0.5) / 25);
-  const qrCell = Math.max(5, Math.min(16, qrByH, qrByW));
+  const qrCell = Math.max(5, Math.min(10, qrByH, qrByW));
   const qrPx = qrCell * 25;
   const textX = qrX + qrPx + Math.round(3 * dp);
   const textW = Wd - textX - pad;
