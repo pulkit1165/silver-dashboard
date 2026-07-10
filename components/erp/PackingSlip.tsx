@@ -544,7 +544,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
               <div>
-                <Scanner onDetect={handleScan} continuous />
+                <Scanner onDetect={handleScan} continuous manual beep cooldownMs={800} />
 
                 {/* Scan preview — nothing is added until "Add scanned item" is clicked */}
                 {pendingScan ? (
@@ -565,7 +565,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
                     </div>
                   </div>
                 ) : (
-                  <p className="mt-2 text-xs text-[var(--muted)]">Scan a QR to preview it, then click <b>Add scanned item</b> to insert it below.</p>
+                  <p className="mt-2 text-xs text-[var(--muted)]">Line up the box in the frame, tap <b>🔍 Scan box</b> (you&apos;ll hear a beep), review it, then click <b>Add scanned item</b> to insert it below.</p>
                 )}
 
                 <div className="mt-3 flex flex-wrap gap-2">

@@ -183,7 +183,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
 
   // Exact-size PDF (one label per page, page = the die-cut). Printing this at
   // "Actual size" is far more reliable than the browser's HTML print.
-  async function downloadPdf() {
+  async function downloadPdf(sheet?: "a4") {
     if (printable.length === 0) return;
     const payload = {
       labels: printable.map((l) => ({
@@ -191,7 +191,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
         lot: l.lot, rack: l.rack, pkd: l.pkd,
       })),
-      w: dims.w, h: dims.h, preprinted, contentPos,
+      // The A4 die sheet is always a full white label (own address); the per-die
+      // PDF respects the pre-printed toggle.
+      w: dims.w, h: dims.h, preprinted: sheet === "a4" ? false : preprinted, contentPos, sheet,
     };
     const r = await fetch("/api/erp/labels/pdf", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
@@ -200,7 +202,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `labels-${dims.w}x${dims.h}.pdf`;
+    a.href = url; a.download = `${sheet === "a4" ? "labels-a4" : "labels"}-${dims.w}x${dims.h}.pdf`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -341,12 +343,22 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         <span className="text-sm text-[var(--muted)]">{chosen.length} selected</span>
         {roll && (
           <button
-            onClick={downloadPdf}
+            onClick={() => downloadPdf()}
             disabled={loading || printable.length === 0}
             title="Download an exact-size PDF (one label per page). Print it at Actual size — far more reliable than the browser print."
             className="ml-auto rounded-lg border border-[var(--accent)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)] disabled:opacity-50"
           >
             ⤓ PDF ({dims.w}×{dims.h})
+          </button>
+        )}
+        {a4 && (
+          <button
+            onClick={() => downloadPdf("a4")}
+            disabled={loading || printable.length === 0}
+            title="Exact-size A4 PDF die layout with cut lines. Open it and print at 100% / Actual size — guaranteed exact physical size, unlike the browser HTML print."
+            className="ml-auto rounded-lg border border-[var(--accent)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)] disabled:opacity-50"
+          >
+            ⤓ A4 PDF die ({dims.w}×{dims.h})
           </button>
         )}
         <button
@@ -423,9 +435,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       )}
       {a4 && (
         <p className="no-print -mt-1 text-xs text-[var(--muted)]">
-          <b>A4 test sheet:</b> tiles your <b>{dims.w}×{dims.h} mm</b> label across a plain A4 page
-          (<b>~{perPage} per page</b>), black-on-white for crisp scanning. Hit <b>🖨 Print</b>, choose a normal printer,
-          and set scale to <b>Actual size / 100%</b> (not “Fit to page”). Print on <b>matte white</b> sticker or paper, then test-scan.
+          <b>A4 die sheet:</b> tiles your <b>{dims.w}×{dims.h} mm</b> label across A4 (<b>~{perPage} per page</b>),
+          black-on-white with cut lines. For <b>exact physical size</b> use <b>⤓ A4 PDF die</b> (points-based — prints true size,
+          unlike the browser) → open it and print at <b>100% / Actual size</b> on <b>matte white</b> sticker/paper. The <b>🖨 Print</b> button is the quick preview.
         </p>
       )}
 

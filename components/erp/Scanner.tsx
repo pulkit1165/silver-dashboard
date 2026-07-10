@@ -9,6 +9,10 @@ type Props = {
   continuous?: boolean;
   /** ignore the same code within this many ms (continuous mode) */
   cooldownMs?: number;
+  /** only scan when the user taps "Scan box" — no automatic firing */
+  manual?: boolean;
+  /** audible beep + haptic buzz on a successful scan (default on) */
+  beep?: boolean;
 };
 
 type CamState = "idle" | "starting" | "running" | "denied" | "error" | "unsupported";
@@ -24,7 +28,7 @@ function toGrayscale(img: ImageData): Uint8ClampedArray {
   return gray;
 }
 
-export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500 }: Props) {
+export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500, manual = false, beep = true }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -46,10 +50,11 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
   // BarcodeDetector is absent (desktop, iPhone) and strengthens every path.
   const zxingReadRef = useRef<null | ((input: Blob | ImageData) => Promise<string | null>)>(null);
   const zxingBusyRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
 
   const [state, setState] = useState<CamState>("idle");
   const [errMsg, setErrMsg] = useState("");
-  const [manual, setManual] = useState("");
+  const [manualText, setManualText] = useState("");
   const [flash, setFlash] = useState(false);
   const [hasTorch, setHasTorch] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
@@ -75,6 +80,34 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       setTorchOn(next);
     } catch { /* torch not controllable */ }
   }, [torchOn]);
+
+  // Web-Audio beep + haptic buzz so a scan is unmistakable. The AudioContext must
+  // be created/resumed from a user gesture (Start camera / Scan tap).
+  const ensureAudio = useCallback(() => {
+    try {
+      if (!audioCtxRef.current) {
+        const AC = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (AC) audioCtxRef.current = new AC();
+      }
+      void audioCtxRef.current?.resume?.();
+    } catch { /* audio unavailable */ }
+  }, []);
+  const playBeep = useCallback(() => {
+    const ctx = audioCtxRef.current;
+    if (!ctx) return;
+    try {
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "square";
+      o.frequency.value = 880; // a clear, high "beep"
+      o.connect(g); g.connect(ctx.destination);
+      const t = ctx.currentTime;
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.35, t + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
+      o.start(t); o.stop(t + 0.2);
+    } catch { /* ignore */ }
+  }, []);
 
   // Prefer the native BarcodeDetector — but only if it actually supports QR.
   useEffect(() => {
@@ -158,11 +191,12 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     const now = Date.now();
     if (detected === lastHit.current.code && now - lastHit.current.at < cooldownMs) return;
     lastHit.current = { code: detected, at: now };
+    if (beep) { playBeep(); try { navigator.vibrate?.(120); } catch { /* no haptics */ } }
     setFlash(true);
-    setTimeout(() => setFlash(false), 300);
+    setTimeout(() => setFlash(false), 550); // hold the green flash long enough to notice
     onDetect(detected);
     if (!continuous) { stop(); setState("idle"); }
-  }, [continuous, cooldownMs, onDetect, stop]);
+  }, [continuous, cooldownMs, onDetect, stop, beep, playBeep]);
 
   // Grab a FULL-RESOLUTION still (like pressing the camera shutter) and decode it.
   // The live video feed is soft/low-res; a proper photo is what makes small QR
@@ -295,42 +329,72 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
     ctx.drawImage(video, sx, sy, side, side, 0, 0, out, out);
     frameCount.current++;
 
-    // Run BOTH decoders every frame for the best odds:
-    // 1) native BarcodeDetector (async, OS decoder) on the cropped canvas
-    if (detectorRef.current && !detectingRef.current) {
-      detectingRef.current = true;
-      // detect on the full video frame (native OS decoder handles full res best)
-      detectorRef.current.detect(video)
-        .then((codes) => { detectingRef.current = false; if (codes?.length) { lastRawRef.current = codes[0].rawValue; handleDetected(codes[0].rawValue); } })
-        .catch(() => { detectingRef.current = false; });
+    // In MANUAL mode we don't auto-decode or auto-fire — the user taps "Scan box"
+    // to capture one code deliberately (with a beep). The live view + corner
+    // preview still run so they can line the QR up first.
+    if (!manual) {
+      // Run BOTH decoders every frame for the best odds:
+      // 1) native BarcodeDetector (async, OS decoder) on the full video frame
+      if (detectorRef.current && !detectingRef.current) {
+        detectingRef.current = true;
+        detectorRef.current.detect(video)
+          .then((codes) => { detectingRef.current = false; if (codes?.length) { lastRawRef.current = codes[0].rawValue; handleDetected(codes[0].rawValue); } })
+          .catch(() => { detectingRef.current = false; });
+      }
+      // 2) jsQR (+ ZXing every other frame) on the same crop
+      const img = ctx.getImageData(0, 0, out, out);
+      let detected = jsQR(img.data, out, out, { inversionAttempts: "attemptBoth" })?.data || null;
+      if (!detected && decodeBarcodeRef.current && frameCount.current % 2 === 0) {
+        detected = decodeBarcodeRef.current(img);
+      }
+      if (detected) { lastRawRef.current = detected; handleDetected(detected); }
+      // 3) zxing-wasm — only where there's no native detector (desktop/iOS), so it
+      //    doesn't jank the live feed on Android where BarcodeDetector already runs.
+      if (!detectorRef.current && zxingReadRef.current && !zxingBusyRef.current && frameCount.current % 3 === 0) {
+        zxingBusyRef.current = true;
+        zxingReadRef.current(img)
+          .then((z) => { zxingBusyRef.current = false; if (z) { lastRawRef.current = z; handleDetected(z); } })
+          .catch(() => { zxingBusyRef.current = false; });
+      }
     }
-    // 2) jsQR (+ ZXing every other frame) on the same crop
-    const img = ctx.getImageData(0, 0, out, out);
-    let detected = jsQR(img.data, out, out, { inversionAttempts: "attemptBoth" })?.data || null;
-    if (!detected && decodeBarcodeRef.current && frameCount.current % 2 === 0) {
-      detected = decodeBarcodeRef.current(img);
-    }
-    if (detected) { lastRawRef.current = detected; handleDetected(detected); }
 
-    // 3) zxing-wasm — only where there's no native detector (desktop/iOS), so it
-    //    doesn't jank the live feed on Android where BarcodeDetector already runs.
-    if (!detectorRef.current && zxingReadRef.current && !zxingBusyRef.current && frameCount.current % 3 === 0) {
-      zxingBusyRef.current = true;
-      zxingReadRef.current(img)
-        .then((z) => { zxingBusyRef.current = false; if (z) { lastRawRef.current = z; handleDetected(z); } })
-        .catch(() => { zxingBusyRef.current = false; });
-    }
-
-    // live diagnostic (throttled): decoder · frames · has anything been read yet
+    // live diagnostic (throttled)
     if (frameCount.current % 15 === 0) {
       const eng = detectorRef.current ? "native" : zxingReadRef.current ? "zxing" : "jsQR";
-      setDbg(`${eng} · f${frameCount.current} · ${lastRawRef.current ? "seen ✓" : "no code seen"}`);
+      setDbg(manual ? `${eng} · ready — tap “Scan box”` : `${eng} · f${frameCount.current} · ${lastRawRef.current ? "seen ✓" : "no code seen"}`);
     }
     rafRef.current = requestAnimationFrame(tick);
-  }, [handleDetected]);
+  }, [handleDetected, manual]);
+
+  // Manual single-shot: decode the CURRENT frame once, on the user's tap. Beeps
+  // on a hit (via handleDetected). This is the deliberate, "feel it scanned" path.
+  const scanOnce = useCallback(async () => {
+    const video = videoRef.current;
+    if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+    ensureAudio();
+    // 1) native OS decoder on the full frame
+    if (detectorRef.current) {
+      try { const codes = await detectorRef.current.detect(video); if (codes?.length) { handleDetected(codes[0].rawValue); return; } } catch { /* fall through */ }
+    }
+    // 2) centre-crop → zxing-wasm → jsQR → ZXing-js
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const side = Math.floor(Math.min(vw, vh) * 0.9);
+    const sx = Math.floor((vw - side) / 2), sy = Math.floor((vh - side) / 2);
+    const out = Math.min(side, 1200);
+    const c = document.createElement("canvas"); c.width = out; c.height = out;
+    const cx = c.getContext("2d", { willReadFrequently: true })!;
+    cx.drawImage(video, sx, sy, side, side, 0, 0, out, out);
+    const img = cx.getImageData(0, 0, out, out);
+    if (zxingReadRef.current) { const z = await zxingReadRef.current(img); if (z) { handleDetected(z); return; } }
+    const q = jsQR(img.data, out, out, { inversionAttempts: "attemptBoth" })?.data;
+    if (q) { handleDetected(q); return; }
+    if (decodeBarcodeRef.current) { const b = decodeBarcodeRef.current(img); if (b) { handleDetected(b); return; } }
+    setDbg("No QR in the box — line it up and tap Scan again");
+  }, [handleDetected, ensureAudio]);
 
   const start = useCallback(async () => {
     setErrMsg("");
+    ensureAudio();
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setState("unsupported");
       setErrMsg("Camera API not available. Use HTTPS or type the code below.");
@@ -385,7 +449,7 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
         setErrMsg(err.message || "Could not start the camera.");
       }
     }
-  }, [tick]);
+  }, [tick, ensureAudio]);
 
   useEffect(() => () => stop(), [stop]);
 
@@ -429,6 +493,15 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           </div>
         )}
       </div>
+
+      {/* MANUAL tap-to-scan — the big deliberate button: line up the box, tap,
+          hear the beep. Only shows in manual mode. */}
+      {state === "running" && manual && (
+        <button onClick={scanOnce} disabled={capturing}
+          className="rounded-xl bg-[var(--accent)] px-4 py-4 text-lg font-extrabold text-white shadow-sm hover:bg-[var(--accent-strong)] disabled:opacity-60">
+          🔍 Scan box
+        </button>
+      )}
 
       {/* NATIVE-camera photo scan — the reliable mobile path. Always available,
           works even without starting the live camera. */}
@@ -494,16 +567,16 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
       <form
         onSubmit={(e) => {
           e.preventDefault();
-          if (manual.trim()) {
-            onDetect(manual.trim());
-            setManual("");
+          if (manualText.trim()) {
+            onDetect(manualText.trim());
+            setManualText("");
           }
         }}
         className="flex gap-2"
       >
         <input
-          value={manual}
-          onChange={(e) => setManual(e.target.value)}
+          value={manualText}
+          onChange={(e) => setManualText(e.target.value)}
           placeholder="Or type / paste a code (QR SQR-… or barcode HH74007-S)"
           className="min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
         />
