@@ -63,6 +63,7 @@ export const NAV: NavGroup[] = [
           { href: "/erp/customers", label: "Customer Master", icon: "☻", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/vendors", label: "Vendor Master", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
           { href: "/erp/skus", label: "Item (SKU) Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
+          { href: "/erp/masters/mrp", label: "MRP Master", icon: "💲", roles: ["admin", "sales", "accounts", "inventory"] },
           { href: "/erp/masters/party-rates", label: "Party-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/masters/item-rates", label: "Item-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts", "inventory"] },
           { href: "/erp/masters/import", label: "Upload / Overwrite (Excel)", icon: "⬆", roles: ["admin", "sales", "accounts", "purchase", "inventory"] },
@@ -72,6 +73,7 @@ export const NAV: NavGroup[] = [
         label: "Sales", icon: "↗",
         children: [
           { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
+          { href: "/erp/sales/decode", label: "Decode Order (AI)", icon: "✦", roles: ["admin", "sales"] },
           { href: "/erp/deliveries", label: "Delivery Orders", icon: "🚚", roles: ["admin", "sales", "dispatch", "warehouse", "accounts"] },
           { href: "/erp/invoices", label: "Invoices", icon: "🧾", roles: ["admin", "sales", "accounts", "dispatch"] },
           { href: "/erp/customers", label: "Customers", icon: "☻", roles: ["admin", "sales", "accounts"] },
