@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import type { MrpRow, MrpHistoryRow } from "@/lib/erp/mrp";
@@ -25,6 +25,11 @@ function parsePaste(text: string): ParsedRow[] {
     return { sku_code: parts[0] ?? "", mrp: numify(parts[1]) };
   }).filter((x) => x.sku_code && Number.isFinite(x.mrp) && x.mrp >= 0);
 }
+function todayStr(): string {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
 
 export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRow[]; editable: boolean }) {
   const router = useRouter();
@@ -33,14 +38,45 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
   const [openId, setOpenId] = useState<number | null>(null);
   const [history, setHistory] = useState<Record<number, MrpHistoryRow[]>>({});
 
+  // Shared "this change" stamp — applies to inline edits AND bulk. Date auto-sets
+  // to today on mount (so every change carries a date on its own); note optional.
+  const [effDate, setEffDate] = useState("");
+  const [note, setNote] = useState("");
+  useEffect(() => { setEffDate(todayStr()); }, []);
+
+  // filters (client-side, instant — the page's Search box is the server filter)
+  const [status, setStatus] = useState<"all" | "changed" | "never">("all");
+  const [cat, setCat] = useState("all");
+  const [sort, setSort] = useState<"code" | "mrp_desc" | "mrp_asc" | "recent">("code");
+  const [quick, setQuick] = useState("");
+
   // bulk
   const [showBulk, setShowBulk] = useState(false);
   const [parsed, setParsed] = useState<ParsedRow[]>([]);
   const [pasteText, setPasteText] = useState("");
-  const [effDate, setEffDate] = useState("");
-  const [note, setNote] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
   const [bulkMsg, setBulkMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+  const categories = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.category).filter(Boolean))).sort(),
+    [rows],
+  );
+  const view = useMemo(() => {
+    let v = rows;
+    if (status === "changed") v = v.filter((r) => r.change_count > 0 || r.last_mrp_at);
+    else if (status === "never") v = v.filter((r) => r.change_count === 0 && !r.last_mrp_at);
+    if (cat !== "all") v = v.filter((r) => r.category === cat);
+    if (quick.trim()) {
+      const q = quick.trim().toLowerCase();
+      v = v.filter((r) => r.sku_code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
+    }
+    const s = [...v];
+    if (sort === "mrp_desc") s.sort((a, b) => Number(b.price) - Number(a.price));
+    else if (sort === "mrp_asc") s.sort((a, b) => Number(a.price) - Number(b.price));
+    else if (sort === "recent") s.sort((a, b) => String(b.last_mrp_at ?? "").localeCompare(String(a.last_mrp_at ?? "")));
+    else s.sort((a, b) => a.sku_code.localeCompare(b.sku_code));
+    return s;
+  }, [rows, status, cat, quick, sort]);
 
   function startEdit(r: MrpRow) {
     setEdit((e) => ({ ...e, [r.id]: { value: String(Number(r.price).toFixed(2)), busy: false, err: null } }));
@@ -58,8 +94,9 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
       });
       const d = await r.json();
       if (d.ok) {
+        const when = effDate || todayStr();
         setRows((rs) => rs.map((row) => row.id === id
-          ? { ...row, price: d.sku.price, last_mrp: d.sku.price, prev_mrp: row.last_mrp ?? row.price, last_mrp_at: "just now", last_mrp_by: "you", change_count: row.change_count + 1 }
+          ? { ...row, price: d.sku.price, last_mrp: d.sku.price, prev_mrp: row.last_mrp ?? row.price, last_mrp_at: when, last_mrp_by: "you", change_count: row.change_count + 1 }
           : row));
         setEdit((e) => { const n = { ...e }; delete n[id]; return n; });
         setHistory((h) => { const n = { ...h }; delete n[id]; return n; });
@@ -107,9 +144,57 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
   }
 
   const inr = (n: number | null | undefined) => (n == null ? "—" : `₹${Number(n).toFixed(2)}`);
+  const selCls = "rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm";
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Shared change stamp + filters */}
+      <section className="panel p-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {editable && (
+            <>
+              <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]" title="Auto-set to today; change it to backdate a price.">
+                📅 Change date <span className="font-normal">(auto)</span>
+                <input type="date" value={effDate} onChange={(e) => setEffDate(e.target.value)} className={selCls} />
+              </label>
+              <label className="flex min-w-[180px] flex-1 flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+                Note <span className="font-normal">(optional)</span>
+                <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Jul-2026 price list" className={selCls} />
+              </label>
+              <div className="hidden h-8 w-px bg-[var(--border)] sm:block" />
+            </>
+          )}
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Filter
+            <select value={status} onChange={(e) => setStatus(e.target.value as typeof status)} className={selCls}>
+              <option value="all">All items</option>
+              <option value="changed">Changed</option>
+              <option value="never">Never changed</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Category
+            <select value={cat} onChange={(e) => setCat(e.target.value)} className={selCls}>
+              <option value="all">All categories</option>
+              {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Sort by
+            <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={selCls}>
+              <option value="code">Code</option>
+              <option value="recent">Recently changed</option>
+              <option value="mrp_desc">MRP high → low</option>
+              <option value="mrp_asc">MRP low → high</option>
+            </select>
+          </label>
+          <label className="flex min-w-[160px] flex-1 flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Quick filter
+            <input value={quick} onChange={(e) => setQuick(e.target.value)} placeholder="Filter loaded rows…" className={selCls} />
+          </label>
+        </div>
+      </section>
+
       {/* Bulk update — the "master MRP file" */}
       {editable && (
         <section className="panel">
@@ -131,28 +216,18 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
                   <textarea value={pasteText} onChange={(e) => onPaste(e.target.value)} rows={4}
                     placeholder={"BC02001, 120\nBC53000\t85\nBC54001, 60"}
                     className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 font-mono text-xs outline-none focus:border-[var(--accent)]" />
-                  <p className="mt-1 text-xs text-[var(--muted)]">One per line: <b>SKU code</b>, then <b>MRP</b> (comma or tab separated).</p>
+                  <p className="mt-1 text-xs text-[var(--muted)]">One per line: <b>SKU code</b>, then <b>MRP</b> (comma or tab separated). Uses the <b>date</b> + <b>note</b> above.</p>
                 </div>
               </div>
-              <div className="mt-3 flex flex-wrap items-end gap-3">
-                <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-                  Effective date (optional)
-                  <input type="date" value={effDate} onChange={(e) => setEffDate(e.target.value)}
-                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
-                </label>
-                <label className="flex flex-1 flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-                  Note (optional)
-                  <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Jul-2026 price list"
-                    className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1.5 text-sm" />
-                </label>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
                 <button onClick={applyBulk} disabled={bulkBusy || parsed.length === 0}
                   className="rounded-lg bg-[var(--accent-2)] px-5 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-50">
                   {bulkBusy ? "Applying…" : `Apply ${parsed.length || ""} update${parsed.length === 1 ? "" : "s"}`}
                 </button>
+                {parsed.length > 0 && (
+                  <span className="text-xs text-[var(--muted)]"><b>{parsed.length}</b> rows ready — e.g. {parsed.slice(0, 4).map((p) => `${p.sku_code}=₹${p.mrp}`).join(", ")}{parsed.length > 4 ? " …" : ""}</span>
+                )}
               </div>
-              {parsed.length > 0 && (
-                <p className="mt-2 text-xs text-[var(--muted)]"><b>{parsed.length}</b> rows ready — e.g. {parsed.slice(0, 4).map((p) => `${p.sku_code}=₹${p.mrp}`).join(", ")}{parsed.length > 4 ? " …" : ""}</p>
-              )}
               {bulkMsg && <p className={`mt-2 text-sm font-bold ${bulkMsg.ok ? "text-[var(--accent-2)]" : "text-[var(--danger)]"}`}>{bulkMsg.ok ? "✓ " : "✕ "}{bulkMsg.text}</p>}
             </div>
           )}
@@ -160,18 +235,21 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
       )}
 
       <section className="panel">
-        <div className="overflow-x-auto">
+        <div className="flex items-center justify-between px-4 py-2 text-xs font-semibold text-[var(--muted)]">
+          <span>Showing {view.length} of {rows.length} items</span>
+        </div>
+        <div className="overflow-x-auto border-t border-[var(--border)]">
           <table className="rtable">
             <thead>
               <tr>
                 <th>Code</th><th>Item</th><th>Category</th>
                 <th className="!text-right">Current MRP</th><th className="!text-right">Previous</th>
-                <th>Last changed</th><th></th>
+                <th>Date changed</th><th>By</th><th></th>
               </tr>
             </thead>
             <tbody>
-              {rows.length === 0 && <tr><td colSpan={7} className="!py-6 text-center text-[var(--muted)]">No items found.</td></tr>}
-              {rows.map((s) => {
+              {view.length === 0 && <tr><td colSpan={8} className="!py-6 text-center text-[var(--muted)]">No items match.</td></tr>}
+              {view.map((s) => {
                 const st = edit[s.id];
                 return (
                   <Fragment key={s.id}>
@@ -199,9 +277,8 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
                         )}
                       </td>
                       <td className="num-cell text-[var(--muted)]">{s.prev_mrp != null ? Number(s.prev_mrp).toFixed(2) : "—"}</td>
-                      <td className="text-xs text-[var(--muted)]">
-                        {s.last_mrp_at ? <>{s.last_mrp_at}{s.last_mrp_by ? <> · {s.last_mrp_by}</> : null}</> : <span className="italic">never changed</span>}
-                      </td>
+                      <td className="whitespace-nowrap text-xs text-[var(--muted)]">{s.last_mrp_at ? s.last_mrp_at : <span className="italic">never</span>}</td>
+                      <td className="text-xs text-[var(--muted)]">{s.last_mrp_by || "—"}</td>
                       <td className="text-right">
                         <button onClick={() => toggleHistory(s.id)} title="MRP history"
                           className="rounded px-2 py-1 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]">
@@ -211,19 +288,19 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
                     </tr>
                     {openId === s.id && (
                       <tr>
-                        <td colSpan={7} className="bg-[var(--surface-2)]">
+                        <td colSpan={8} className="bg-[var(--surface-2)]">
                           <div className="p-2 text-xs">
                             <div className="mb-1 font-bold text-[var(--muted)]">MRP history — {s.sku_code} (most recent first)</div>
                             {!history[s.id] ? <div className="text-[var(--muted)]">Loading…</div>
                               : history[s.id].length === 0 ? <div className="text-[var(--muted)]">No changes recorded yet — current MRP is {inr(s.price)}.</div>
                               : (
-                                <table className="w-full max-w-lg">
-                                  <thead><tr className="text-left text-[10px] uppercase text-[var(--muted)]"><th className="py-1">MRP</th><th>Effective</th><th>By</th><th>Note</th></tr></thead>
+                                <table className="w-full max-w-xl">
+                                  <thead><tr className="text-left text-[10px] uppercase text-[var(--muted)]"><th className="py-1">MRP</th><th>Date</th><th>By</th><th>Note</th></tr></thead>
                                   <tbody>
                                     {history[s.id].map((h, i) => (
                                       <tr key={h.id} className={i === 0 ? "font-bold text-[var(--accent-2)]" : ""}>
                                         <td className="py-0.5 tabular-nums">{inr(h.mrp)}{i === 0 ? " ← live" : ""}</td>
-                                        <td>{h.effective_at}</td><td>{h.created_by || "—"}</td><td className="text-[var(--muted)]">{h.note || "—"}</td>
+                                        <td className="whitespace-nowrap">{h.effective_at}</td><td>{h.created_by || "—"}</td><td className="text-[var(--muted)]">{h.note || "—"}</td>
                                       </tr>
                                     ))}
                                   </tbody>
@@ -239,7 +316,7 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
             </tbody>
           </table>
         </div>
-        {editable && <p className="border-t border-[var(--border)] p-3 text-xs text-[var(--muted)]">Click a <b>Current MRP</b> to set a new one — it becomes the live MRP everywhere (labels, QR, new sales orders, invoices, stock value). Existing orders/invoices keep the MRP they were booked at.</p>}
+        {editable && <p className="border-t border-[var(--border)] p-3 text-xs text-[var(--muted)]">Click a <b>Current MRP</b> to set a new one — it stamps the <b>date</b> above (today by default) and becomes the live MRP everywhere (labels, QR, new sales orders, invoices, stock value). Existing orders/invoices keep the MRP they were booked at.</p>}
       </section>
     </div>
   );
