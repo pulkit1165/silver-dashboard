@@ -42,6 +42,7 @@ export interface SkuCandidate {
   unit: string;
   price: number; // MRP
   selling_price: number;
+  purchase_price: number; // cost price, for GP calculation
 }
 
 export type MatchConfidence = "high" | "medium" | "low" | "none";
@@ -196,6 +197,7 @@ function trim(sku: Sku): SkuCandidate {
     unit: sku.unit,
     price: Number(sku.price) || 0,
     selling_price: Number(sku.selling_price) || Number(sku.price) || 0,
+    purchase_price: Number((sku as { purchase_price?: number }).purchase_price) || 0,
   };
 }
 
@@ -291,6 +293,92 @@ export async function decodeSalesImage(imageBase64: string, mediaType: string): 
 
 /** One parsed line from an uploaded Excel/CSV sales order (before matching). */
 export interface SalesFileLine { itemCode: string; raw_text: string; qty: number; rate: number; unit: string }
+
+const TEXT_SYSTEM =
+  "You extract sales order lines from a typed or dictated description of a wholesale " +
+  "Indian two-wheeler spare-parts order. The text may be in English, Hindi, or Hinglish " +
+  "with trade abbreviations and brand names (Bajaj, Chetak, Hero, TVS, HH=Hero Honda). " +
+  "Extract the PARTY/CUSTOMER name into customer_hint if mentioned. " +
+  "For each item, put the description into raw_text (expand abbreviations if you can, " +
+  "but never invent a catalogue code), quantity into qty (default 1 if unclear), " +
+  "rate/price into rate (0 if not mentioned), unit into unit (PCS/DOZ/BOX/SET or \"\"). " +
+  "Put a date into order_date as YYYY-MM-DD if legible, else \"\". " +
+  "Put any notes (transport, free items, delivery instructions) into notes. " +
+  "Return only genuine order items — ignore totals or signatures.";
+
+/** Parse a typed/dictated order description into a DraftOrder using Claude text model. */
+export async function decodeTextOrder(text: string, customerHint?: string): Promise<DraftOrder> {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const client = new Anthropic();
+
+  const params = {
+    model: "claude-opus-4-8",
+    max_tokens: 2000,
+    thinking: { type: "adaptive" },
+    output_config: {
+      effort: "low",
+      format: { type: "json_schema", schema: VISION_SCHEMA },
+    },
+    system: TEXT_SYSTEM,
+    messages: [
+      {
+        role: "user",
+        content: customerHint
+          ? `Customer: ${customerHint}\n\nOrder:\n${text}`
+          : text,
+      },
+    ],
+  };
+
+  const msg = (await client.messages.create(
+    params as unknown as Parameters<typeof client.messages.create>[0],
+  )) as { content: Array<{ type: string; text?: string }> };
+
+  const raw = msg.content
+    .filter((b) => b.type === "text" && b.text)
+    .map((b) => b.text as string)
+    .join("");
+  const parsed = JSON.parse(raw) as Partial<VisionResult>;
+  const vision: VisionResult = {
+    customer_hint: customerHint || String(parsed.customer_hint ?? ""),
+    order_date: String(parsed.order_date ?? ""),
+    notes: String(parsed.notes ?? ""),
+    lines: Array.isArray(parsed.lines)
+      ? parsed.lines
+          .map((l) => ({
+            raw_text: String(l.raw_text ?? "").trim(),
+            qty: Number(l.qty) > 0 ? Number(l.qty) : 1,
+            rate: Number(l.rate) > 0 ? Number(l.rate) : 0,
+            unit: String(l.unit ?? "").trim(),
+          }))
+          .filter((l) => l.raw_text.length > 0)
+      : [],
+  };
+
+  const [skus, customers] = await Promise.all([getSkus(), getCustomers()]);
+  const haystacks = skus.map((sku) => ({ sku, hay: normalise(`${sku.name} ${sku.sku_code}`) }));
+
+  const lines: DraftLine[] = vision.lines.map((l) => {
+    const m = matchLine(l.raw_text, haystacks);
+    const rate = l.rate > 0 ? l.rate : m.best?.selling_price ?? 0;
+    return {
+      raw_text: l.raw_text, qty: l.qty, rate,
+      unit: l.unit || m.best?.unit || "",
+      sku_id: m.best?.id ?? null,
+      suggested: m.best, candidates: m.candidates, confidence: m.confidence,
+    };
+  });
+
+  const cust = matchCustomer(vision.customer_hint, customers);
+  return {
+    customer_hint: vision.customer_hint,
+    customer_id: cust.id,
+    customer_candidates: cust.candidates,
+    order_date: vision.order_date,
+    notes: vision.notes,
+    lines,
+  };
+}
 
 /**
  * Structured-file equivalent of decodeSalesImage — no AI/vision. Each line is

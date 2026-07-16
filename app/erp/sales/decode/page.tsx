@@ -1,19 +1,23 @@
 import PageHeader from "@/components/PageHeader";
 import SalesDecoder from "@/components/erp/SalesDecoder";
-import { getCustomers } from "@/lib/erp/queries";
+import { getCustomers, getSalesmen } from "@/lib/erp/queries";
 import { aiAvailable } from "@/lib/erp/sales-decode";
 
 export const dynamic = "force-dynamic";
 
 export default async function SalesDecodePage() {
-  const customers = (await getCustomers()).map((c) => ({ id: c.id, code: c.code, name: c.name }));
+  const [customers, salesmen] = await Promise.all([getCustomers(), getSalesmen()]);
   return (
     <>
       <PageHeader
         title="Upload / Decode Order"
-        subtitle="Upload a Sales Order as Excel/CSV (reads instantly, no AI), or a photo of a handwritten slip (AI reads it). Verify the lines, then punch it into a real sales order — then pack it in the Packing Slip."
+        subtitle="Photo of a handwritten slip, type the order in text, or upload an Excel/CSV — AI reads it, you verify, then punch as a real sales order."
       />
-      <SalesDecoder customers={customers} aiReady={aiAvailable()} />
+      <SalesDecoder
+        customers={customers.map((c) => ({ id: c.id, code: c.code, name: c.name }))}
+        salesmen={salesmen}
+        aiReady={aiAvailable()}
+      />
     </>
   );
 }

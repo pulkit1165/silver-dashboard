@@ -172,8 +172,9 @@ export async function getSalesOrders(f: SoFilter = {}): Promise<SalesOrder[]> {
   const sql = getSql();
   const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
   return (await sql`
-    SELECT so.*, c.name AS customer_name FROM sales_orders so
+    SELECT so.*, c.name AS customer_name, u.name AS salesman_name FROM sales_orders so
     JOIN customers c ON c.id=so.customer_id
+    LEFT JOIN users u ON u.id=so.salesman_id
     WHERE (${party}::text IS NULL OR c.name ILIKE ${party})
       AND (${f.from ?? null}::text IS NULL OR so.order_date >= ${f.from ?? null})
       AND (${f.to ?? null}::text IS NULL OR so.order_date <= ${f.to ?? null})
@@ -209,7 +210,9 @@ async function ensureSalesOrderCols() {
     await sql.unsafe(`ALTER TABLE sales_orders
       ADD COLUMN IF NOT EXISTS bill_type text DEFAULT '',
       ADD COLUMN IF NOT EXISTS disc_pct double precision DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS remarks text DEFAULT ''`);
+      ADD COLUMN IF NOT EXISTS remarks text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS salesman_id integer,
+      ADD COLUMN IF NOT EXISTS source text DEFAULT 'manual'`);
     await sql.unsafe(`ALTER TABLE so_lines
       ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
@@ -218,6 +221,26 @@ async function ensureSalesOrderCols() {
       ADD COLUMN IF NOT EXISTS cancelled_qty double precision DEFAULT 0`);
     soColsEnsured = true;
   } catch { /* columns may already exist (drizzle push) — ignore */ }
+}
+
+let userColsEnsured = false;
+async function ensureUserCols() {
+  if (userColsEnsured) return;
+  try {
+    await getSql().unsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS territory text DEFAULT ''`);
+    userColsEnsured = true;
+  } catch { /* ignore */ }
+}
+
+let customerColsEnsured = false;
+async function ensureCustomerCols() {
+  if (customerColsEnsured) return;
+  try {
+    await getSql().unsafe(`ALTER TABLE customers
+      ADD COLUMN IF NOT EXISTS oracle_party_id integer,
+      ADD COLUMN IF NOT EXISTS special_notes text DEFAULT ''`);
+    customerColsEnsured = true;
+  } catch { /* ignore */ }
 }
 
 // Committed business for a customer — every non-draft, non-cancelled order's
@@ -243,9 +266,11 @@ export async function createSalesOrder(input: {
   customerId: number;
   orderDate: string;
   billType?: string;
-  discPct?: number; // party's locked discount % (from the party-rate master)
+  discPct?: number;
   remarks?: string;
-  allowOverCreditLimit?: boolean; // explicit override after the warning is shown
+  allowOverCreditLimit?: boolean;
+  salesmanId?: number;
+  source?: string;
   lines: Array<{
     skuId: number; qty: number; price: number;
     mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
@@ -275,9 +300,10 @@ export async function createSalesOrder(input: {
       FROM sales_orders WHERE so_no LIKE 'SO-%'`;
   const soNo = `SO-${next}`;
   const [so] = await sql`
-    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, remarks)
+    INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, bill_type, disc_pct, remarks, salesman_id, source)
     VALUES (${soNo}, ${input.customerId}, 'draft', ${input.orderDate}, ${total},
-      ${input.billType ?? ""}, ${input.discPct ?? 0}, ${input.remarks ?? ""})
+      ${input.billType ?? ""}, ${input.discPct ?? 0}, ${input.remarks ?? ""},
+      ${input.salesmanId ?? null}, ${input.source ?? "manual"})
     RETURNING id`;
   for (const l of input.lines) {
     await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
@@ -597,11 +623,19 @@ export async function getVendors(search?: string): Promise<Vendor[]> {
 }
 export async function getCustomers(search?: string): Promise<Customer[]> {
   const sql = getSql();
+  await ensureCustomerCols();
   if (search?.trim()) {
     const q = `%${search.trim()}%`;
     return (await sql`SELECT * FROM customers WHERE name ILIKE ${q} OR code ILIKE ${q} OR gst ILIKE ${q} ORDER BY code`) as unknown as Customer[];
   }
   return (await sql`SELECT * FROM customers ORDER BY code`) as unknown as Customer[];
+}
+
+export async function getSalesmen(): Promise<Array<{ id: number; name: string; territory: string }>> {
+  await ensureUserCols();
+  return (await getSql()`
+    SELECT id, name, COALESCE(territory,'') AS territory
+    FROM users WHERE active=true ORDER BY name`) as unknown as Array<{ id: number; name: string; territory: string }>;
 }
 export async function getPurchaseOrders(): Promise<PurchaseOrder[]> {
   return (await getSql()`

@@ -50,6 +50,8 @@ export async function POST(req: Request) {
     discPct: b.disc_pct != null ? Number(b.disc_pct) : undefined,
     remarks: typeof b.remarks === "string" ? b.remarks : undefined,
     allowOverCreditLimit: b.allow_over_credit_limit === true,
+    salesmanId: b.salesman_id != null ? Number(b.salesman_id) : undefined,
+    source: typeof b.source === "string" ? b.source : undefined,
     lines: lines.map((l) => ({
       skuId: Number(l.sku_id),
       qty: Number(l.qty),
