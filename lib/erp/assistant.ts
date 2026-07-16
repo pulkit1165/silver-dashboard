@@ -115,3 +115,88 @@ export async function buildSystemPrompt(): Promise<string> {
     schema,
   ].join("\n");
 }
+
+// ---- non-streaming runner (shared by web + WhatsApp) --------------------------
+// Runs the same tool-use loop as the streaming route, but blocks until the final
+// answer and returns plain text. `channel` tweaks the answer format (WhatsApp has
+// no markdown tables, so we ask for short plain-text answers there). `role` lets
+// the caller note who's asking so the model can tailor tone/scope.
+export interface AssistantTurn { role: "user" | "assistant"; content: string }
+
+export interface RunAssistantResult {
+  ok: boolean;
+  answer: string;
+  sqls: string[];
+  error?: string;
+}
+
+export async function runAssistant(
+  question: string,
+  opts: { history?: AssistantTurn[]; role?: string; channel?: "web" | "whatsapp"; maxRounds?: number } = {},
+): Promise<RunAssistantResult> {
+  const { default: Anthropic } = await import("@anthropic-ai/sdk");
+  const client = new Anthropic();
+
+  let system = await buildSystemPrompt();
+  if (opts.channel === "whatsapp") {
+    system +=
+      "\n\nChannel = WhatsApp. Reply in short, mobile-friendly plain text (no markdown tables, no headings). " +
+      "Lead with the headline number. Use simple hyphen lists at most. Keep it under ~700 characters. " +
+      "Reply in the same language the user wrote in (English, Hindi, or Hinglish).";
+  }
+  if (opts.role) system += `\n\nThe person asking is a Silver Industries "${opts.role}" team member.`;
+
+  const history = (opts.history ?? []).filter((m) => m.role === "user" || m.role === "assistant");
+  const messages: Array<{ role: string; content: unknown }> = [
+    ...history.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: question.slice(0, 1000) },
+  ];
+  const sqls: string[] = [];
+
+  try {
+    const maxRounds = opts.maxRounds ?? 8;
+    for (let round = 0; round < maxRounds; round++) {
+      const params = {
+        model: ASSISTANT_MODEL,
+        max_tokens: 4000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "high" },
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+        tools: [RUN_SQL_TOOL],
+        messages,
+      } as unknown as Parameters<typeof client.messages.create>[0];
+
+      const msg = (await client.messages.create(params)) as unknown as {
+        content: Array<Record<string, unknown>>;
+        stop_reason: string;
+      };
+      const toolUses = msg.content.filter((b) => b.type === "tool_use");
+
+      if (msg.stop_reason !== "tool_use" || toolUses.length === 0) {
+        const answer = msg.content
+          .filter((b) => b.type === "text")
+          .map((b) => String(b.text ?? ""))
+          .join("\n")
+          .trim();
+        return { ok: true, answer: answer || "Sorry, I couldn't find an answer to that.", sqls };
+      }
+
+      messages.push({ role: "assistant", content: msg.content });
+      const results: Array<Record<string, unknown>> = [];
+      for (const tu of toolUses) {
+        const sqlStr = String((tu.input as { sql?: string })?.sql ?? "");
+        sqls.push(sqlStr);
+        const res = await runReadOnlySql(sqlStr);
+        results.push(
+          res.ok
+            ? { type: "tool_result", tool_use_id: tu.id, content: JSON.stringify({ rowCount: res.rowCount, truncated: res.truncated, rows: res.rows }).slice(0, 60000) }
+            : { type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Error: ${res.error}` },
+        );
+      }
+      messages.push({ role: "user", content: results });
+    }
+    return { ok: true, answer: "That needed too many steps to answer — please narrow the question.", sqls };
+  } catch (e) {
+    return { ok: false, answer: "", sqls, error: String((e as Error)?.message || e).slice(0, 400) };
+  }
+}

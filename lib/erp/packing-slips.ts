@@ -32,6 +32,12 @@ export async function listPackingSlips(): Promise<PackingSlipListRow[]> {
   }));
 }
 
+/** Clear the entire Saved Packing Slips archive. Returns how many were removed. */
+export async function deleteAllPackingSlips(): Promise<number> {
+  const rows = await getSql()`DELETE FROM packing_slips RETURNING id`;
+  return (rows as unknown as unknown[]).length;
+}
+
 export async function getPackingSlip(idOrNo: string | number): Promise<PackingSlipRow | undefined> {
   const sql = getSql();
   const byId = typeof idOrNo === "number" || /^\d+$/.test(String(idOrNo));
@@ -85,5 +91,14 @@ export async function liveFingerprint(): Promise<string> {
     const [a] = await sql`SELECT COALESCE(MAX(id),0) z FROM activity_log`;
     z = (a as { z: string | number }).z;
   } catch { /* fall back to core only */ }
-  return `${z}-${core}`;
+
+  // Process checklist ticks/edits don't write to activity_log (to keep the feed
+  // clean), so fold its own stamp in separately — again guarded so a missing
+  // table can never break live sync.
+  let cl = "";
+  try {
+    const [c] = await sql`SELECT COALESCE((SELECT MAX(updated_at) FROM checklist_tasks),'') || COALESCE((SELECT MAX(updated_at) FROM checklist_stages),'') s`;
+    cl = (c as { s: string }).s;
+  } catch { /* ignore */ }
+  return `${z}-${core}-${cl}`;
 }

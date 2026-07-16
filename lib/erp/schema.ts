@@ -429,6 +429,37 @@ export const invoices = pgTable("invoices", {
   createdAt: createdAt(),
 });
 
+// WhatsApp identities. Maps a phone number to a staff user + role so inbound
+// messages can be authenticated and answers scoped. Unknown numbers are ignored.
+export const whatsappContacts = pgTable("whatsapp_contacts", {
+  id: serial("id").primaryKey(),
+  phone: text("phone").unique().notNull(), // E.164 digits, no '+', e.g. 9198xxxxxxx
+  userId: integer("user_id"),
+  name: text("name"),
+  role: text("role").default("viewer"), // mirrors rbac Role; scopes what they can ask
+  optIn: boolean("opt_in").default(true), // WhatsApp policy: user must consent
+  active: boolean("active").default(true),
+  createdAt: createdAt(),
+});
+
+// Audit + idempotency for every WhatsApp message in/out. waMessageId dedupes
+// webhook retries (Meta re-delivers if we don't 200 fast enough).
+export const whatsappMessages = pgTable(
+  "whatsapp_messages",
+  {
+    id: serial("id").primaryKey(),
+    direction: text("direction").notNull(), // in | out
+    waMessageId: text("wa_message_id"), // Meta's message id (inbound) — dedupe key
+    phone: text("phone"), // the staff/customer number (from on inbound, to on outbound)
+    contactId: integer("contact_id"),
+    body: text("body"),
+    status: text("status"), // received | answered | sent | failed | ignored
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byWaId: index("wa_msg_waid_idx").on(t.waMessageId), byCreated: index("wa_msg_created_idx").on(t.createdAt) }),
+);
+
 export const invoiceLines = pgTable(
   "invoice_lines",
   {
@@ -452,6 +483,37 @@ export const invoiceLines = pgTable(
     lineTotal: doublePrecision("line_total").default(0),
   },
   (t) => ({ byInvoice: index("invline_inv_idx").on(t.invoiceId) }),
+);
+
+// Shared, live process checklist (the module-wise SOP). A stage is one step of the
+// MRN → QC → FG → Sales → Billing → Procurement loop; tasks are its sub-steps.
+// Everyone (incl. the client) edits the SAME rows — updated_at feeds the live
+// fingerprint so ticks/edits push to every device without spamming the audit feed.
+export const checklistStages = pgTable("checklist_stages", {
+  id: serial("id").primaryKey(),
+  seq: integer("seq").notNull().default(0), // display order = stage number
+  title: text("title").notNull(),
+  owner: text("owner").default(""),
+  tint: text("tint").default("blue"), // colour key: blue|amber|teal|red|violet|green
+  description: text("description").default(""),
+  createdAt: createdAt(),
+  updatedAt: text("updated_at").default(sql`to_char(clock_timestamp(), 'YYYY-MM-DD HH24:MI:SS.MS')`),
+});
+
+export const checklistTasks = pgTable(
+  "checklist_tasks",
+  {
+    id: serial("id").primaryKey(),
+    stageId: integer("stage_id").notNull(),
+    seq: integer("seq").notNull().default(0),
+    label: text("label").notNull(),
+    done: boolean("done").default(false),
+    doneBy: text("done_by"), // who last ticked it (per-task audit, kept off the global feed)
+    doneAt: text("done_at"),
+    createdAt: createdAt(),
+    updatedAt: text("updated_at").default(sql`to_char(clock_timestamp(), 'YYYY-MM-DD HH24:MI:SS.MS')`),
+  },
+  (t) => ({ byStage: index("checklist_task_stage_idx").on(t.stageId) }),
 );
 
 // Org-wide activity / audit feed. Every meaningful write appends one row, and the

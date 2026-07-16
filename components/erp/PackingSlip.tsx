@@ -478,6 +478,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
         <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
         <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
         <a href="/erp/packing-slip/saved" title="Browse all saved packing slips, filter by customer or date" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">🗂 Saved slips</a>
+        <a href="/erp/sales/decode" title="Upload a Sales Order (Excel/CSV or photo) — it becomes an order you can pack here" className="rounded-lg border border-[var(--accent)] bg-[var(--accent-bg)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent)] hover:text-white">⬆ Upload Sales Order</a>
         <span className="ml-auto flex items-center gap-3 text-xs">
           {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
           <span className="font-semibold text-[var(--muted)]">
