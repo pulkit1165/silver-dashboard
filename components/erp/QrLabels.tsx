@@ -71,7 +71,7 @@ export default function QrLabels({ items }: { items: Item[] }) {
 
       {/* printable sheet */}
       <div className="print-area">
-        <div className={`grid gap-3 ${thermal ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}>
+        <div className={`grid gap-3 ${thermal ? "grid-cols-1" : "grid-cols-2 sm:grid-cols-3 lg:grid-cols-4"}`}>
           {loading && <p className="text-sm text-[var(--muted)]">Generating QR codes…</p>}
           {!loading && chosen.map((i) => (
             <div key={i.id} className={`qr-label ${thermal ? "thermal" : ""}`}>
