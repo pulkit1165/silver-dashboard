@@ -5,104 +5,117 @@ backed by an **Oracle 11g** database (`SILVER_2026`). This file is the handoff s
 a new Claude Code session — including on a different computer — continues exactly
 where we left off.
 
-## Current status
+## Current status — HOME SCREEN IS LIVE (as of 2026-07-17)
 - UI is complete. Premium **white + red** theme (Manrope font), modeled on
   the TransfersX dashboard.
 - The **Home** screen mirrors the client's legacy app: SALE, PURCHASE,
   RECEIVABLE, BANK BALANCE, TOTAL DR/CR, with a DATE/DAY header, Refresh button,
   Sale-Purchase / Stock tabs, and a KPI strip.
-- **Connected to live Oracle as of 2026-06-20** (`/api/health` confirms real
-  DB banner) — but the Home screen's actual figures are still
-  `lib/sample-data.ts` placeholders, because the real SQL hasn't been mapped
-  into `lib/queries.ts` yet. See "Oracle connection" below for the full
-  architecture and "Remaining work" for the one task left.
+- **All 6 home-screen KPIs wired to live Oracle** — `getOpsSummary()` now runs
+  real SQL via the connector. Confirmed figures (2026-07-17):
+  - SALE today ₹0 / MTD ₹57.9L / YTD ₹6.7 crore (DTC102, TRTYPE=SO26)
+  - PURCHASE today/MTD/YTD (DTC201, TRTYPE=MRN26)
+  - BANK BALANCE ₹1.19 crore (VW_BANK_D, includes March-31 opening balance row)
+  - RECEIVABLE ₹5.02 crore with aging buckets (VW_DR_PENDBILLS)
+  - DR/CR outstanding (VW_DR_PENDBILLS / VW_CR_PENDBILLS)
+  - Order in Hand = 130 pending SOs (VW_PEND_SO)
 
-## Oracle connection — LIVE as of 2026-06-20 (read this carefully)
-- DB: **Oracle 11g** (11.2.0.4.0 Enterprise Edition), schema `SILVER_2026`,
-  TNS alias/service name `DISH`. Real server is at `73.149.135.125:8152`
-  (TCPS) — but we do **not** connect that way; see below.
-- **Root cause found:** Oracle 19c/21c Instant Client cannot connect to this
-  Oracle 11g server over TCPS — the server sends a TLS `internal_error` fatal
-  alert right after the client's TNS CONNECT packet (protocol-version
-  mismatch: client sends v318, 11g doesn't handle it over TCPS). Confirmed
-  with node-oracledb thin, thick (19c), JDBC, SQL Developer — all rejected the
-  same way. Oracle 11g/12c-era clients work fine; nothing 18c+ does over TCPS.
-- **The working setup (current architecture):** the Oracle 11g **database
-  itself runs on a Windows Server 2012 R2 machine** (the client's server,
-  reachable via RDP at `73.149.135.125`, account `pulkit`, **non-admin**).
-  `tnsnames.ora` there resolves `DISH` to `localhost:1521` over **plain TCP**
-  (no TLS at all) — so the version-mismatch problem disappears entirely for a
-  *local* connection. We run the read-only `connector/` **on that server**,
-  pointed at a freshly-downloaded Oracle 19c Instant Client (also on that
-  server, since node-oracledb 7/5/4/3 all refuse to talk to the 11.2 client
-  libraries — they require Oracle Client 18.1+ minimum), talking to Oracle
-  over localhost TCP. The dashboard (anywhere) reaches that connector through
-  an HTTPS tunnel (`REMOTE_DATA_URL`), since the server's router only forwards
-  port 8152 (Oracle) — not whatever port the connector uses.
+## Oracle connection — LIVE via sqlplus connector (read this carefully)
+- DB: **Oracle 11g** (11.2.0.1.0 Enterprise Edition 64-bit), schema `SILVER_2026`,
+  service name `DISH`. Actual DB machine: **192.168.100.60:1521** on the LAN.
+- **The working architecture:** The connector runs on **192.168.100.17** (the
+  Windows Server 2012 R2 RDP box at `73.149.135.125`, account `pulkit`, non-admin).
+  It uses **sqlplus.exe as a child process** (spawned via Node's `child_process`)
+  rather than node-oracledb, because:
+  - node-oracledb thin mode requires Oracle 12.1+ (our DB is 11g) → NJS-138
+  - node-oracledb thick mode needs the OCI client; the only available client on
+    that server (`D:\oracle\product\10.2.0\client_1\bin\oci.dll`) is 32-bit
+    (Oracle 10g client), while Node.js 16 is 64-bit → DPI-1047 mismatch
+  - sqlplus.exe from the same 32-bit Oracle 10g client connects fine over plain
+    TCP to the 11g DB at 192.168.100.60:1521 — architecture irrelevant for sqlplus
+  - The connector uses `SET MARKUP HTML ON` for reliable table output parsing
 - Login: SILVER_2026 / SILVER_2026.
 
 ### Exact paths on the server (Windows Server 2012 R2, `73.149.135.125`)
-- Oracle DB home: `D:\app\product\11.2.0\dbhome_1` (listener binary, tnsnames,
-  `lsnrctl`). Also an old Oracle 10g client at `D:\oracle\product\10.2.0\client_1`
-  (unused by us).
-- Our connector: `D:\connector2\` (oracle.mjs, serve.mjs, package.json —
-  plain copies of `connector/`, not a git checkout). `node_modules` here has
-  **oracledb@5** installed (has `initOracleClient()`; oracledb 4/3 also work
-  but lack ESM niceties — 5 is what's currently installed).
-- Oracle 19c Instant Client (downloaded fresh, not the same as this repo's
-  `C:\oracle\instantclient_19_31` which is on the Windows 11 dev PC, not the
-  server): `D:\instantclient_19_31\instantclient_19_31\` (note the **doubled**
-  folder — the zip extracts a nested `instantclient_19_31` subfolder; the
-  actual `oci.dll` is one level deeper than you'd expect).
-- Node.js **16.20.2** is installed on the server — Node 18+ throws a hard
-  compatibility warning on Windows Server 2012 R2 and is unreliable there.
-- `lsnrctl status` lives at `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl.exe`.
+- Oracle 10g client (used for sqlplus): `D:\oracle\product\10.2.0\client_1\`
+  - sqlplus.exe: `D:\oracle\product\10.2.0\client_1\BIN\sqlplus.exe`
+  - tnsnames.ora: `D:\oracle\product\10.2.0\client_1\NETWORK\ADMIN\tnsnames.ora`
+    (resolves DISH → 192.168.100.60:1521)
+- Our connector: `C:\Users\pulkit\connector2\`
+  - `oracle.mjs` — the sqlplus-based connector (copy of `connector/oracle-sqlplus.mjs`)
+  - `serve.mjs` — HTTP server on port 8151
+  - `package.json`, `node_modules/` (oracledb installed but unused)
+- Node.js **16.20.2** (portable, no admin install):
+  `C:\Users\pulkit\node16\node-v16.20.2-win-x64\node.exe`
+- `lsnrctl status` lives at `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl`.
   **If the ERP on the 10 client PCs ever shows "TNS not listening,"** RDP in
-  and run `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl start`. This happened
-  once during testing (cause unclear, possibly unrelated) — always check
-  `lsnrctl status` (look for service "DISH" status READY) before AND after
-  touching anything on that server.
+  and run `D:\app\product\11.2.0\dbhome_1\bin\lsnrctl start`. Always check
+  `lsnrctl status` (look for service "DISH" status READY) before touching anything.
+
+### How to start the connector manually (on the server via RDP)
+```powershell
+# Window 1 — start the connector (port 8151)
+$nd = "C:\Users\pulkit\node16\node-v16.20.2-win-x64"
+$env:PATH = "$nd;" + $env:PATH
+$env:ORACLE_SQLPLUS_PATH = "D:\oracle\product\10.2.0\client_1\BIN\sqlplus.exe"
+$env:ORACLE_CONFIG_DIR  = "D:\oracle\product\10.2.0\client_1\NETWORK\ADMIN"
+$env:ORACLE_USER        = "SILVER_2026"
+$env:ORACLE_PASSWORD    = "SILVER_2026"
+$env:ORACLE_CONNECT_STRING = "DISH"
+node C:\Users\pulkit\connector2\serve.mjs
+
+# Window 2 — start localtunnel (keep this window open!)
+$nd = "C:\Users\pulkit\node16\node-v16.20.2-win-x64"
+$env:PATH = "$nd;" + $env:PATH
+node "$nd\node_modules\localtunnel\bin\lt.js" --port 8151
+# Copy the URL it prints, update REMOTE_DATA_URL in .env.local and Vercel
+```
 
 ### Persistence (fragile — read before assuming it "just works")
-- `D:\connector2\run-persistent.bat` starts the connector (port 8151) +
-  `npx localtunnel --port 8151`, logging output to `connector.log` /
-  `tunnel.log` in the same folder (both run minimized/hidden).
-- Auto-start is wired via a **per-user registry Run key** (`HKCU\Software\
-  Microsoft\Windows\CurrentVersion\Run\SilverConnector`) — **not** a Windows
-  Service or Scheduled Task, because the `pulkit` account has no admin rights
-  and Task Scheduler itself denied every attempt (even `/sc onlogon` with no
-  stored credentials). This means:
-  - ✅ Survives RDP **disconnect** (closing the RDP window without logging off)
-    — the Windows session and its processes keep running in the background.
-  - ❌ Does **not** survive a full **log off** or **server reboot** — the Run
-    key only fires the next time `pulkit` actually logs back in.
-  - ❌ **The tunnel URL changes every time it restarts** (free localtunnel
-    gives a new random subdomain each run). When that happens, `REMOTE_DATA_URL`
-    in both `.env.local` (dev) and Vercel's env vars (prod) goes stale and the
-    site silently falls back to sample data until someone RDPs in, reads the
-    new URL from `D:\connector2\tunnel.log`, and updates both places.
-  - To make this properly durable later, we need either admin rights on that
-    server (to install a real Windows Service + a *named* Cloudflare Tunnel
-    with a fixed hostname), or the client's router admin to forward a port
-    (e.g. 8088) so we can drop the tunnel entirely.
-- Current live tunnel URL (**will go stale on next restart** — check
-  `D:\connector2\tunnel.log` if the site stops showing live data):
-  `https://stale-emus-flash.loca.lt`
+- **No auto-start configured yet** (registry Run key attempted but connector2
+  was rebuilt; needs to be re-wired). This means:
+  - ✅ Survives RDP **disconnect** (session stays alive if you just close the window)
+  - ❌ Does **not** survive a full **log off** or **server reboot**
+  - ❌ **The tunnel URL changes every restart** (free localtunnel random subdomain).
+    When that happens, `REMOTE_DATA_URL` in both `.env.local` (dev) and Vercel's
+    env vars goes stale → site silently falls back to sample data.
+- To re-wire auto-start (registry Run key, no admin needed):
+  ```powershell
+  $cmd = 'powershell -WindowStyle Hidden -Command "& C:\Users\pulkit\connector2\start-all.ps1"'
+  Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "SilverConnector" -Value $cmd
+  ```
+- For a stable URL: need admin rights (Cloudflare Tunnel with fixed domain) or
+  router port forward so localtunnel can be dropped.
 
-## How to go live (all strictly read-only) — DONE, see above. Remaining work:
-1. **Map real SQL.** Connection is live (`/api/health` confirms real Oracle
-   11g banner; Vercel home screen shows "Connected to Oracle ✓" but still
-   "sample figures" banner). Use the **Data Explorer** page to browse real
-   table names (the `listTables`/`describeTable` queries were already fixed
-   for 11g — see below), then fill `lib/queries.ts` (`QUERIES` +
-   `OPS_QUERIES`) with real SQL against those tables. This is the one
-   concrete task left to make the dashboards show real numbers instead of
-   sample data.
-2. Oracle 11g doesn't support `FETCH FIRST n ROWS ONLY` (12c+ only) — already
-   fixed in both `lib/oracle.ts` and `connector/oracle.mjs` to use a
-   `rownum <=` subquery instead. Keep this in mind for any *new* SQL written
-   against this database — 11g syntax only (no `FETCH FIRST`, no `LISTAGG`
-   improvements from 12c, etc).
+## Key Oracle tables (SILVER_2026 schema — all year-specific, all FY26 data)
+| Table/View | Content | Key columns |
+|---|---|---|
+| DTC102 | Sales Orders (SO26) | TRDATE, AMOUNT, YEARENDBALANCE |
+| DTC201 | Purchase/MRN (MRN26) | TRDATE, BILLAMOUNT |
+| DTC106 | Delivery Orders (DO26) | TRDATE |
+| DTC110 | Bank Book transactions | TRDATE, DR_AMOUNT, CR_AMOUNT, CANCEL |
+| DTC400 | Cash/Bank Receipts (GC26) | TRDATE, BILLAMOUNT |
+| DTD101 | Cash Book journal | TRDATE, DR_AMOUNT, CR_AMOUNT, A_CODE, B_CODE |
+| VW_DR_PENDBILLS | Outstanding debtor invoices | PARTYID, INVDATE, BILLAMOUNT, BALAMOUNT |
+| VW_CR_PENDBILLS | Outstanding creditor invoices | PARTYID, BALAMOUNT |
+| VW_BANK_D | Bank book by account (incl. Mar-31 opening) | SERIES, TRDATE, DR_AMOUNT, CR_AMOUNT |
+| VW_PEND_SO | Pending (undelivered) Sales Orders | COUNT(*) = 130 |
+| VW_OPTRIALPOST | Opening trial balance (31-Mar-26) | PARTYID, DR_AMOUNT, CR_AMOUNT |
+| VW_BANKBOOKPOST | Bank book double-entry ledger | PARTYID, DR_AMOUNT, CR_AMOUNT |
+
+**Oracle 11g syntax only:** no `FETCH FIRST n ROWS ONLY` (use `rownum <=`),
+no `LISTAGG` with overflow, no 12c+ features.
+
+## Remaining work
+1. **Auto-start on server**: Wire registry Run key so connector + localtunnel
+   restart automatically when `pulkit` logs in (see commands above).
+2. **Stable tunnel URL**: Either get admin rights for Cloudflare Tunnel (fixed
+   hostname), or have the router admin forward a port so localtunnel can be dropped.
+3. **Update Vercel env var**: After each localtunnel restart, update
+   `REMOTE_DATA_URL` on Vercel dashboard (Settings → Environment Variables) to
+   match the new tunnel URL printed in the localtunnel window.
+4. **Domain dashboards**: `QUERIES` (salesTrend, byCategory, topParts etc.) in
+   `lib/queries.ts` are still empty. Fill them for the `/erp` domain dashboard.
 
 ## ERP modules (added on top of the read-only dashboard)
 The Home screen (`/`) is unchanged. A full ERP lives under `/erp/*` on a
@@ -152,12 +165,12 @@ never enabled, statement timeout + row cap. Never add a write path.
 
 ## Architecture map
 - `lib/oracle.ts` — read-only Oracle access (thin / thick / remote) + write guards.
-- `lib/data.ts` — chooses live Oracle vs sample data.
-- `lib/queries.ts` — **map real SQL here** (`QUERIES` + `OPS_QUERIES`).
-- `lib/sample-data.ts` — built-in demo figures (matches the client screenshot).
+- `lib/data.ts` — chooses live Oracle vs sample data; `getOpsSummary()` runs live OPS_QUERIES.
+- `lib/queries.ts` — `OPS_QUERIES` (home screen, fully mapped) + `QUERIES` (domain dashboards, still empty).
+- `lib/sample-data.ts` — built-in demo figures (used as fallback).
 - `components/OpsDashboard.tsx` — the Home report screen.
+- `connector/oracle-sqlplus.mjs` — sqlplus-based connector (authoritative source for server).
 - `app/` — Home, Inventory, Sales, Data Explorer, Connection + read-only API routes.
 - `connector/` — standalone read-only data service for the trusted host.
-- `docs/handoff/` — copies of the project memory notes (full diagnosis & history).
 
 @AGENTS.md
