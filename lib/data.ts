@@ -1,8 +1,8 @@
 import "server-only";
-import type { DashboardData, OpsSummary, Part } from "./types";
+import type { DashboardData, OpsSummary, Part, PeriodFigures, ReceivableRow, BankBalance } from "./types";
 import { buildOpsSummary, buildSampleData, sampleParts } from "./sample-data";
 import { isConfigured, ping, runQuery } from "./oracle";
-import { QUERIES, queriesConfigured } from "./queries";
+import { QUERIES, OPS_QUERIES, queriesConfigured } from "./queries";
 
 type Source = "mock" | "oracle" | "auto";
 
@@ -46,7 +46,8 @@ export async function getDashboardData(): Promise<DashboardData> {
 
 /**
  * Operations summary for the home screen (sale/purchase/receivables/banks/DR-CR).
- * Returns sample figures until the live SQL in lib/queries.ts is mapped.
+ * Runs live Oracle queries when the connector is reachable; falls back to
+ * sample figures (clearly flagged) on any connectivity or query failure.
  */
 export async function getOpsSummary(): Promise<OpsSummary> {
   const source = configuredSource();
@@ -56,12 +57,64 @@ export async function getOpsSummary(): Promise<OpsSummary> {
       "Sample figures — no Oracle credentials configured yet. Add them to .env.local to go live.",
     );
   }
-  // Live ops queries are not mapped yet; report connectivity and show sample.
-  const status = await ping();
-  const note = status.ok
-    ? "Connected to Oracle ✓ — home-screen queries not mapped yet (see lib/queries.ts). Showing sample figures."
-    : `Sample figures — could not reach Oracle: ${status.error}`;
-  return buildOpsSummary(note);
+  try {
+    return await getOracleOpsSummary();
+  } catch (e) {
+    if (source === "oracle") throw e;
+    return buildOpsSummary(`Sample figures — live query failed: ${(e as Error).message}`);
+  }
+}
+
+async function getOracleOpsSummary(): Promise<OpsSummary> {
+  const [saleR, purchaseR, orderR, recR, banksR, drcrR] = await Promise.all([
+    runQuery(OPS_QUERIES.sale),
+    runQuery(OPS_QUERIES.purchase),
+    runQuery(OPS_QUERIES.orderInHand),
+    runQuery(OPS_QUERIES.receivables),
+    runQuery(OPS_QUERIES.banks),
+    runQuery(OPS_QUERIES.drcr),
+  ]);
+
+  const toPeriod = (row: Record<string, unknown>): PeriodFigures => ({
+    today: num(row.TODAY),
+    mtd: num(row.MTD),
+    pmtd: num(row.PMTD),
+    ytd: num(row.YTD),
+    pytd: num(row.PYTD),
+    srtExc: num(row.SRT_EXC),
+  });
+
+  const receivables: ReceivableRow[] = recR.rows.map((r) => ({
+    firm: String(r.FIRM ?? "SILVER"),
+    lt60: num(r.LT60),
+    d60_90: num(r.D60_90),
+    d90_120: num(r.D90_120),
+    gt120: num(r.GT120),
+  }));
+
+  const banks: BankBalance[] = banksR.rows.map((r) => ({
+    group: String(r.GRP ?? "SILVER"),
+    bank: String(r.BANK ?? ""),
+    balance: num(r.BALANCE),
+  }));
+  const bankTotal = banks.reduce((s, b) => s + b.balance, 0);
+
+  const drcrRow = drcrR.rows[0] ?? {};
+  const dr = num(drcrRow.DR);
+  const cr = num(drcrRow.CR);
+
+  return {
+    mode: "oracle",
+    asOf: new Date().toISOString(),
+    sale: toPeriod(saleR.rows[0] ?? {}),
+    purchase: toPeriod(purchaseR.rows[0] ?? {}),
+    orderInHand: num(orderR.rows[0]?.VALUE),
+    orderDispatchRatio: null,
+    receivables,
+    banks,
+    bankTotal,
+    drcr: { dr, cr, total: dr - cr },
+  };
 }
 
 /** Inventory accessor used by the Inventory page. */
