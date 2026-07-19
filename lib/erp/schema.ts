@@ -269,6 +269,11 @@ export const salesOrders = pgTable("sales_orders", {
   billType: text("bill_type").default(""),
   discPct: doublePrecision("disc_pct").default(0),
   remarks: text("remarks").default(""),
+  // Who booked the order (users.id) and how it was captured (manual | decode |
+  // import). Both are also created idempotently by ensureSalesOrderCols() in
+  // lib/erp/queries.ts so production self-migrates without a db:push.
+  salesmanId: integer("salesman_id"),
+  source: text("source").default("manual"),
   createdAt: createdAt(),
 });
 

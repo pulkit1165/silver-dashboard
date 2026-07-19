@@ -169,6 +169,11 @@ export async function getBins(warehouseId?: number): Promise<Bin[]> {
 
 export interface SoFilter { party?: string; from?: string; to?: string; status?: string }
 export async function getSalesOrders(f: SoFilter = {}): Promise<SalesOrder[]> {
+  // The list joins users on so.salesman_id, which only exists after the
+  // self-migration below — a cold serverless instance that lists orders before
+  // ever creating one would otherwise crash with "column so.salesman_id does
+  // not exist". Cheap: no-ops after the first call in the process.
+  await ensureSalesOrderCols();
   const sql = getSql();
   const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
   return (await sql`
