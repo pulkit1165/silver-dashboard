@@ -64,6 +64,7 @@ export const NAV: NavGroup[] = [
           { href: "/erp/customers", label: "Customer Master", icon: "☻", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/vendors", label: "Vendor Master", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
           { href: "/erp/skus", label: "Item (SKU) Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
+          { href: "/erp/cost-price", label: "Cost Price Sheet", icon: "₹", roles: ["admin", "purchase", "accounts", "inventory"] },
           { href: "/erp/masters/mrp", label: "MRP Master", icon: "💲", roles: ["admin", "sales", "accounts", "inventory"] },
           { href: "/erp/masters/party-rates", label: "Party-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/masters/item-rates", label: "Item-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts", "inventory"] },
