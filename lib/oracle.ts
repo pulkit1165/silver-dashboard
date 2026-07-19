@@ -116,7 +116,16 @@ const FORBIDDEN =
   /\b(insert|update|delete|merge|drop|create|alter|truncate|grant|revoke|begin|declare|call|exec(?:ute)?|comment|rename|lock|flashback|purge|savepoint|into)\b/i;
 
 export function assertSelectOnly(sql: string): string {
-  const trimmed = sql.trim().replace(/;\s*$/, "");
+  // Drop whitespace-only lines FIRST. The connector drives SQL*Plus, which
+  // treats a blank line as end-of-statement (SQLBLANKLINES is off by default),
+  // so any SQL built with optional filters — `${from ? "AND ..." : ""}` leaves
+  // an empty line when the filter is unused — gets silently truncated and
+  // returns zero rows instead of an error. Blank lines carry no meaning in SQL.
+  const compacted = sql
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .join("\n");
+  const trimmed = compacted.trim().replace(/;\s*$/, "");
   if (!trimmed) throw new Error("Empty query");
   if (trimmed.includes(";")) throw new Error("Only a single statement is allowed");
   if (!/^(select|with)\b/i.test(trimmed))
