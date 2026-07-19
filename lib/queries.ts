@@ -1,36 +1,128 @@
 /**
- * Live SQL mapping for the domain dashboards.
+ * Live SQL mapping for the domain dashboards (Overview / Inventory / Sales).
  *
- * These are intentionally EMPTY until we can introspect the real SILVER_2026
- * schema (use the Explorer page / /api/schema once connected). Each query must
- * be a single read-only SELECT returning the documented columns. When filled
- * in, the Overview/Inventory/Sales pages automatically switch to live data.
+ * Mapped 2026-07-19 against the real SILVER_2026 schema; all 9 statements were
+ * executed against live Oracle before being committed. Single read-only SELECTs
+ * only (lib/oracle.ts blocks the rest), 11g syntax: no FETCH FIRST, no
+ * trailing semicolons.
  *
- * Example (adjust table/column names to the real schema):
- *   salesTrend:
- *     `select to_char(order_date,'YYYY-MM') period,
- *             sum(net_amount) revenue, count(distinct order_no) orders
- *        from sales_orders
- *       where order_date >= add_months(trunc(sysdate,'MM'), -11)
- *       group by to_char(order_date,'YYYY-MM')
- *       order by 1`
+ * NOTE: these are the SALE-BILL views, which is a different (and smaller)
+ * measure than the home screen's OPS_QUERIES below — the home screen reports
+ * Sales ORDERS (DTC102) to mirror the client's legacy app, whereas these
+ * report what was actually billed (VW_SALE_D). Expect the two to differ.
+ *
+ * Objects used (the legacy app's own views):
+ *   VW_SALE_D        sale bill HEADER — SALEAMOUNT (net of trade discount),
+ *                    BILLAMOUNT (gross), TRDATE, TRMID, ACNTDESC.
+ *                    ~1.6k bills, Apr-2025 → today.
+ *   VW_SALE_GST_D    sale LINE items — ITEMCODE/ITEMID, QUANTITY, AMOUNT, DISCAMT.
+ *   VW_GST_PURC_ITEM purchase lines (current financial year only).
+ *   VW_STOCK_REQ     on-hand + MIN_STOCK + REORDER (the app's own stock engine).
+ *   A_LABELPRINT     item master (category / vehicle model / MRP).
+ *
+ * TRAPS (do not "simplify" these away):
+ *  - Line revenue MUST be `AMOUNT - DISCAMT`; raw AMOUNT is gross and overstates
+ *    revenue ~2.2x (verified on bill GC26/000312).
+ *  - A_LABELPRINT is NOT unique on ITEMID (9,068 rows / 4,680 items) — collapse
+ *    it with a GROUP BY before joining or the sale rows fan out.
+ *  - `add_months(x,-365)` is 365 MONTHS. For "last 12 months" use `trunc(sysdate)-365`.
+ *  - The driver truncates a column's NAME to its data width, so literal/date
+ *    columns are CAST wide enough (else ORDER_DATE arrives as ORDER_DAT).
  */
 export const QUERIES = {
-  // returns: PERIOD (YYYY-MM), REVENUE (number), ORDERS (number)
-  salesTrend: "",
+  // returns: PERIOD (YYYY-MM), REVENUE (number), ORDERS (number) — ~18 months.
+  salesTrend: `select to_char(trdate,'YYYY-MM') period,
+                      round(sum(saleamount)) revenue,
+                      count(*) orders
+                 from VW_SALE_D
+                where trdate >= add_months(trunc(sysdate,'MM'),-17)
+                group by to_char(trdate,'YYYY-MM')
+                order by 1`,
+
   // returns: CATEGORY (string), REVENUE (number), UNITS (number)
-  byCategory: "",
+  byCategory: `select * from (
+                 select cast(nvl(l.itemcateg,'UNCATEGORIZED') as varchar2(60)) category,
+                        round(sum(s.amount - nvl(s.discamt,0))) revenue,
+                        sum(s.quantity) units
+                   from VW_SALE_GST_D s
+                   left join (select itemid, max(itemcateg) itemcateg
+                                from A_LABELPRINT group by itemid) l
+                     on s.itemid = l.itemid
+                  where s.trdate >= trunc(sysdate)-365
+                  group by nvl(l.itemcateg,'UNCATEGORIZED')
+                  order by 2 desc)
+               where rownum <= 20`,
+
   // returns: PART_NO, NAME, UNITS, REVENUE
-  topParts: "",
+  topParts: `select * from (
+               select itemcode part_no,
+                      max(itemdescription) name,
+                      sum(quantity) units,
+                      round(sum(amount - nvl(discamt,0))) revenue
+                 from VW_SALE_GST_D
+                where trdate >= trunc(sysdate)-365
+                group by itemcode
+                order by 4 desc)
+             where rownum <= 15`,
+
   // returns: PART_NO, NAME, CATEGORY, BRAND, WAREHOUSE, QTY_ON_HAND, REORDER_LEVEL, UNIT_COST, UNIT_PRICE
-  lowStock: "",
+  // Unit cost = latest purchase rate, falling back to the stock-ledger rate.
+  // VW_STOCK_REQ has no store dimension, so WAREHOUSE is a constant.
+  lowStock: `select * from (
+               select s.itemcode part_no,
+                      s.itemdesc name,
+                      cast(nvl(l.itemcateg,'UNCATEGORIZED') as varchar2(60)) category,
+                      cast(nvl(l.vehiclemodel,'NA') as varchar2(60)) brand,
+                      cast('MAIN' as varchar2(30)) warehouse,
+                      s.stock qty_on_hand,
+                      s.min_stock reorder_level,
+                      round(coalesce(p.rate, m.rate, 0),2) unit_cost,
+                      nvl(l.mrp,0) unit_price
+                 from VW_STOCK_REQ s
+                 left join (select itemid, max(itemcateg) itemcateg,
+                                   max(vehiclemodel) vehiclemodel, max(mrp) mrp
+                              from A_LABELPRINT group by itemid) l
+                   on s.itemid = l.itemid
+                 left join (select itemcode,
+                                   max(rate) keep (dense_rank last order by trdate) rate
+                              from VW_GST_PURC_ITEM where rate > 0 group by itemcode) p
+                   on s.itemcode = p.itemcode
+                 left join (select itemid, max(rate) rate
+                              from VW_STOCK_MAIN where rate > 0 group by itemid) m
+                   on s.itemid = m.itemid
+                where s.reorder > 0
+                order by s.reorder desc)
+             where rownum <= 50`,
+
   // returns: ORDER_NO, ORDER_DATE, CUSTOMER, ITEMS, AMOUNT, STATUS
-  recentOrders: "",
+  // Billed sales carry no status column, so STATUS is a literal.
+  recentOrders: `select * from (
+                   select d.trmid order_no,
+                          cast(to_char(d.trdate,'YYYY-MM-DD') as varchar2(30)) order_date,
+                          d.acntdesc customer,
+                          (select count(*) from VW_SALE_GST_D g where g.trmid = d.trmid) items,
+                          d.billamount amount,
+                          cast('Paid' as varchar2(30)) status
+                     from VW_SALE_D d
+                    order by d.trdate desc, d.trsno desc)
+                 where rownum <= 20`,
+
   // each returns a single column VALUE (number)
-  kpiRevenue12mo: "",
-  kpiActiveSkus: "",
-  kpiStockValue: "",
-  kpiLowStockCount: "",
+  kpiRevenue12mo: `select round(sum(saleamount)) value from VW_SALE_D where trdate >= trunc(sysdate)-365`,
+  kpiActiveSkus: `select count(distinct itemid) value from VW_SALE_GST_D where trdate >= trunc(sysdate)-365`,
+  // Approximation: no working valuation view exists (VW_STOCKVALUATION is invalid),
+  // so on-hand is priced at latest purchase rate with a stock-ledger fallback (~97% coverage).
+  kpiStockValue: `select round(sum(s.stock * coalesce(p.rate, m.rate, 0))) value
+                    from VW_STOCK_REQ s
+                    left join (select itemcode,
+                                      max(rate) keep (dense_rank last order by trdate) rate
+                                 from VW_GST_PURC_ITEM where rate > 0 group by itemcode) p
+                      on s.itemcode = p.itemcode
+                    left join (select itemid, max(rate) rate
+                                 from VW_STOCK_MAIN where rate > 0 group by itemid) m
+                      on s.itemid = m.itemid
+                   where s.stock > 0`,
+  kpiLowStockCount: `select count(*) value from VW_STOCK_REQ where reorder > 0`,
 } as const;
 
 export function queriesConfigured(): boolean {
