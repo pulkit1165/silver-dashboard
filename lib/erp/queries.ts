@@ -283,6 +283,15 @@ export async function createSalesOrder(input: {
 }): Promise<(SalesOrder & { lines: SoLine[] }) | CreditLimitExceeded> {
   const sql = getSql();
   await ensureSalesOrderCols();
+
+  // No duplicate items in one order (last-resort enforcement of the punch rule;
+  // the route validates this first with a friendly message).
+  const seenSku = new Set<number>();
+  for (const l of input.lines) {
+    if (seenSku.has(l.skuId)) throw new Error("DUPLICATE_ITEM: one line per item is allowed.");
+    seenSku.add(l.skuId);
+  }
+
   const total = input.lines.reduce((s, l) => s + l.qty * l.price, 0);
 
   const [customer] = (await sql`SELECT credit_limit, name FROM customers WHERE id=${input.customerId}`) as unknown as

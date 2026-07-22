@@ -25,6 +25,7 @@ export const NAV: NavGroup[] = [
       { href: "/erp", label: "ERP Dashboard", icon: "▥", roles: ALL },
       { href: "/erp/activity", label: "Activity Feed", icon: "⚡", roles: ALL },
       { href: "/erp/checklist", label: "Process Checklist", icon: "✔", roles: ALL },
+      { href: "/erp/rulebook", label: "Rule Book", icon: "✅", roles: ALL },
     ],
   },
   {
@@ -66,6 +67,7 @@ export const NAV: NavGroup[] = [
           { href: "/erp/skus", label: "Item (SKU) Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
           { href: "/erp/cost-price", label: "Cost Price Sheet", icon: "₹", roles: ["admin", "sales", "purchase", "accounts", "inventory", "viewer"] },
           { href: "/erp/masters/mrp", label: "MRP Master", icon: "💲", roles: ["admin", "sales", "accounts", "inventory"] },
+          { href: "/erp/masters/item-net-rate", label: "Item Net Rate", icon: "₹", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/masters/party-rates", label: "Party-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/masters/item-rates", label: "Item-wise Net Rate", icon: "₹", roles: ["admin", "sales", "accounts", "inventory"] },
           { href: "/erp/masters/import", label: "Upload / Overwrite (Excel)", icon: "⬆", roles: ["admin", "sales", "accounts", "purchase", "inventory"] },

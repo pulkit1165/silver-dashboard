@@ -50,6 +50,8 @@ export const skus = pgTable("skus", {
   masterQty: doublePrecision("master_qty").default(0), // 0 = no master carton pack defined for this SKU
   singleQty: doublePrecision("single_qty").default(1), // smallest sellable/labelable unit — not always 1 (Oracle STDPACK2)
   barcodeCode: text("barcode_code").default(""), // base code for printed/scanned barcodes (base + "-S"/"-M"); falls back to sku_code
+  itemNetRate: doublePrecision("item_net_rate").default(0), // live mirror of item_net_rates (0 = none); overrides party disc% in the SO waterfall
+  focPct: doublePrecision("foc_pct").default(0), // live mirror of foc_rates (0 = none); applied last in the SO waterfall
   batchTracked: boolean("batch_tracked").default(false),
   serialTracked: boolean("serial_tracked").default(false),
   status: text("status").default("active"),
@@ -488,6 +490,60 @@ export const invoiceLines = pgTable(
     lineTotal: doublePrecision("line_total").default(0),
   },
   (t) => ({ byInvoice: index("invline_inv_idx").on(t.invoiceId) }),
+);
+
+// Global per-SKU net rate (the "item-wise net rate" master). Append-only ledger
+// like mrp_history: the SKU's LIVE net rate is the most-recent row (mirrored to
+// skus.item_net_rate). A line where this exists ignores the party discount %.
+export const itemNetRates = pgTable(
+  "item_net_rates",
+  {
+    id: serial("id").primaryKey(),
+    skuId: integer("sku_id").notNull(),
+    skuCode: text("sku_code"),
+    netRate: doublePrecision("net_rate").notNull(),
+    effectiveAt: text("effective_at").default(sql`to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`),
+    note: text("note").default(""),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ bySku: index("inr_sku_idx").on(t.skuId) }),
+);
+
+// Per-SKU FOC discount % (the "FOC" master). Same recency ledger; applied LAST,
+// after party discount and item net rate. Not yet loaded — reserved for the FOC
+// file upload. Mirrored live to skus.foc_pct.
+export const focRates = pgTable(
+  "foc_rates",
+  {
+    id: serial("id").primaryKey(),
+    skuId: integer("sku_id").notNull(),
+    skuCode: text("sku_code"),
+    focPct: doublePrecision("foc_pct").notNull(),
+    effectiveAt: text("effective_at").default(sql`to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`),
+    note: text("note").default(""),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ bySku: index("foc_sku_idx").on(t.skuId) }),
+);
+
+// Party discount % history (the whole-order % off MRP per customer). The live
+// value stays on customers.discount_pct; this ledger keeps every prior value so
+// the master can show a "previous value" column and never loses history.
+export const partyDiscHistory = pgTable(
+  "party_disc_history",
+  {
+    id: serial("id").primaryKey(),
+    customerId: integer("customer_id").notNull(),
+    code: text("code"),
+    discPct: doublePrecision("disc_pct").notNull(),
+    effectiveAt: text("effective_at").default(sql`to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`),
+    note: text("note").default(""),
+    createdBy: text("created_by"),
+    createdAt: createdAt(),
+  },
+  (t) => ({ byCustomer: index("pdh_cust_idx").on(t.customerId) }),
 );
 
 // Shared, live process checklist (the module-wise SOP). A stage is one step of the

@@ -34,6 +34,7 @@ export async function POST(req: Request) {
   if (lines.length === 0) {
     return NextResponse.json({ ok: false, error: "At least one line item is required." }, { status: 400 });
   }
+  const seenSku = new Set<number>();
   for (const l of lines) {
     if (!Number(l.sku_id) || !Number(l.qty) || Number(l.qty) <= 0) {
       return NextResponse.json({ ok: false, error: "Each line needs a SKU and a positive quantity." }, { status: 400 });
@@ -41,6 +42,11 @@ export async function POST(req: Request) {
     if (Number(l.price) < 0) {
       return NextResponse.json({ ok: false, error: "Rate cannot be negative." }, { status: 400 });
     }
+    // No duplicate items in one order.
+    if (seenSku.has(Number(l.sku_id))) {
+      return NextResponse.json({ ok: false, error: "The same item appears more than once — one line per item is allowed." }, { status: 400 });
+    }
+    seenSku.add(Number(l.sku_id));
   }
 
   const result = await createSalesOrder({

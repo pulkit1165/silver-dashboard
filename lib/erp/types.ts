@@ -19,6 +19,8 @@ export interface Sku {
   serial_tracked: boolean;
   status: string;
   qr_token: string;
+  item_net_rate?: number; // global per-SKU net rate (0/absent = none); overrides party disc%
+  foc_pct?: number;       // per-SKU FOC % (0/absent = none); applied last
 }
 
 export interface Warehouse { id: number; code: string; name: string; address: string; active: number }

@@ -3,10 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import SearchSelect from "./SearchSelect";
+import { computeLineRate } from "@/lib/erp/pricing";
 
 interface SkuOption {
   id: number; sku_code: string; name: string; price: number; unit: string;
-  gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number;
+  gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number; foc_pct: number;
 }
 interface CustomerOption { id: number; code: string; name: string; discount_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
@@ -16,6 +17,7 @@ interface Line {
   qty: number;
   price: number;
   rateType: string;
+  netApplied: boolean; // did a global item net rate override the party disc%?
   focQty: number;
   itemRates: RateRow[];
   partyRates: RateRow[];
@@ -23,7 +25,7 @@ interface Line {
 }
 
 const emptyLine = (): Line => ({
-  skuId: null, qty: 1, price: 0, rateType: "MRP", focQty: 0,
+  skuId: null, qty: 1, price: 0, rateType: "MRP", netApplied: false, focQty: 0,
   itemRates: [], partyRates: [], loadingRates: false,
 });
 
@@ -96,9 +98,18 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
   }
 
+  const [dupError, setDupError] = useState<string | null>(null);
+
   async function onSkuChange(idx: number, skuId: number) {
     const sku = skuById.get(skuId);
-    if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", loadingRates: false, itemRates: [], partyRates: [] }); return; }
+    // No duplicate items in one order — reject if this SKU is already on another line.
+    if (skuId && lines.some((l, i) => i !== idx && l.skuId === skuId)) {
+      setDupError(`${sku?.name ?? "That item"} is already on this order — one line per item. Edit its quantity instead.`);
+      setTimeout(() => setDupError(null), 4000);
+      return;
+    }
+    setDupError(null);
+    if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", netApplied: false, loadingRates: false, itemRates: [], partyRates: [] }); return; }
     // optimistic default while we fetch the party-wise rate for this item
     updateLine(idx, { skuId, ...deriveRate(sku, [], discPct), loadingRates: true, itemRates: [], partyRates: [] });
     const { partyRates, itemRates } = await loadRates(sku.name, customer?.name ?? null);
@@ -114,6 +125,15 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     if (!customerId) { setErr("Select a customer."); return; }
     const validLines = lines.filter((l) => l.skuId && l.qty > 0);
     if (validLines.length === 0) { setErr("Add at least one item."); return; }
+    // Final duplicate guard (belt-and-braces with the block on add).
+    const seen = new Set<number>();
+    for (const l of validLines) {
+      if (seen.has(l.skuId as number)) {
+        setErr(`Duplicate item: ${skuById.get(l.skuId as number)?.name ?? "an item"} appears more than once. One line per item.`);
+        return;
+      }
+      seen.add(l.skuId as number);
+    }
     setBusy(true);
     try {
       const r = await fetch("/api/erp/sales-orders", {
@@ -218,8 +238,8 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                   <div className={`${inp} bg-[var(--surface-2)]`}>{sku ? `${sku.gst_rate}%` : "—"}</div>
                 </F>
                 <F label="Disc %">
-                  <div className={`${inp} bg-[var(--surface-2)]`} title={hasItemNetRate ? "Not applied — this item has its own fixed net rate" : "Party discount % (from the Party master)"}>
-                    {hasItemNetRate ? "—" : (discPct ? `${discPct.toFixed(2)}%` : "—")}
+                  <div className={`${inp} bg-[var(--surface-2)]`} title={line.netApplied ? "Not applied — this item has its own global net rate" : "Party discount % (from the Party master)"}>
+                    {line.netApplied ? "—" : (discPct ? `${discPct.toFixed(2)}%` : "—")}
                   </div>
                 </F>
                 <F label="Net rate (locked)">
@@ -235,12 +255,14 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     className={inp}
                   />
                 </F>
-                <F label="Rate Type">
+                <F label="Item Net?">
                   <div
-                    className={`${inp} bg-[var(--surface-2)] font-bold ${line.rateType === "NET" ? "text-[var(--accent)]" : ""}`}
-                    title="Auto: NET if the item/party has a net rate set, else MRP minus the party discount"
+                    className={`${inp} bg-[var(--surface-2)] font-bold ${line.netApplied ? "text-[var(--accent)]" : "text-[var(--muted-2)]"}`}
+                    title={line.netApplied
+                      ? "Y — a global item net rate is set for this SKU, so it OVERRIDES the party discount %"
+                      : "N — no item net rate for this SKU; the party discount % applies"}
                   >
-                    {line.loadingRates ? "…" : (line.rateType || "—")}
+                    {line.loadingRates ? "…" : (line.netApplied ? "Y" : "N")}
                   </div>
                 </F>
                 <F label="FOC Qty">
@@ -323,6 +345,12 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         })}
       </div>
 
+      {dupError && (
+        <div className="rounded-lg border border-[var(--warning)] bg-[var(--warning-bg)] px-3 py-2 text-sm font-semibold text-[var(--warning)]">
+          ⚠ {dupError}
+        </div>
+      )}
+
       <button
         type="button"
         onClick={() => setLines((ls) => [...ls, emptyLine()])}
@@ -389,15 +417,14 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// Decide Rate Type + net rate, in priority order:
-// 1. The item's own fixed net rate (item_net_rate), if set — party discount
-//    is NOT applied on top of it.
-// 2. This party's net-rate history for this item, if any.
-// 3. MRP minus the party's locked discount %.
-function deriveRate(sku: SkuOption, partyRates: RateRow[], discPct: number): { price: number; rateType: string } {
-  if (sku.item_net_rate > 0 && sku.item_net_rate !== sku.price) return { price: sku.item_net_rate, rateType: "NET" };
-  if (partyRates.length > 0) return { price: round2(partyRates[0].rate), rateType: "NET" };
-  return { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" };
+// The auto-locked rate follows the shared 3-step waterfall (lib/erp/pricing):
+//   1. party disc% off MRP  →  2. global item net rate supersedes it (Y/N)  →
+//   3. FOC % applied last. Oracle party/market history stays as optional
+// suggestion chips below; it never silently overrides the waterfall.
+// `_partyRates` is accepted for call-site symmetry but no longer auto-applied.
+function deriveRate(sku: SkuOption, _partyRates: RateRow[], discPct: number): { price: number; rateType: string; netApplied: boolean } {
+  const r = computeLineRate({ mrp: sku.price, partyDiscPct: discPct, itemNetRate: sku.item_net_rate, focPct: sku.foc_pct });
+  return { price: r.final, rateType: r.netRateApplied ? "NET" : "MRP", netApplied: r.netRateApplied };
 }
 
 const inp =
