@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export interface SearchOption {
   value: number;
@@ -8,9 +8,12 @@ export interface SearchOption {
   sublabel?: string;
 }
 
-// A type-to-filter combobox. Plain <select> dropdowns don't scale past a
-// handful of options — this is used anywhere a list can run into the
-// hundreds or thousands (customers, items).
+// A type-to-filter combobox with full keyboard control. Plain <select>
+// dropdowns don't scale past a handful of options — this is used anywhere a
+// list can run into the hundreds or thousands (customers/parties, items).
+// Keyboard: ↑/↓ move (wrap), Enter selects, Esc closes, Home/End jump, PgUp/PgDn page.
+const CAP = 100; // rendered rows (keeps the menu snappy on huge lists)
+
 export default function SearchSelect({
   options,
   value,
@@ -26,7 +29,9 @@ export default function SearchSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const selected = options.find((o) => o.value === value);
 
   useEffect(() => {
@@ -38,11 +43,67 @@ export default function SearchSelect({
   }, []);
 
   const q = query.trim().toLowerCase();
-  const filtered = (q
-    ? options.filter((o) => `${o.label} ${o.sublabel ?? ""}`.toLowerCase().includes(q))
-    : options
-  ).slice(0, 50);
+  const filtered = useMemo(
+    () =>
+      (q
+        ? options.filter((o) => `${o.label} ${o.sublabel ?? ""}`.toLowerCase().includes(q))
+        : options
+      ).slice(0, CAP),
+    [q, options],
+  );
 
+  // First match highlighted whenever the query changes or the menu (re)opens.
+  useEffect(() => { setActive(0); }, [q, open]);
+
+  // Keep the highlighted row scrolled into view as it moves.
+  useEffect(() => {
+    if (open) itemRefs.current[active]?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
+  function choose(o: SearchOption) {
+    onChange(o.value);
+    setQuery("");
+    setOpen(false);
+  }
+
+  function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    const last = filtered.length - 1;
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        if (!open) { setOpen(true); return; }
+        setActive((a) => (a >= last ? 0 : a + 1)); // wrap to top
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        if (!open) { setOpen(true); return; }
+        setActive((a) => (a <= 0 ? last : a - 1)); // wrap to bottom
+        break;
+      case "Enter":
+        if (open && filtered[active]) { e.preventDefault(); choose(filtered[active]); }
+        break;
+      case "Escape":
+        if (open) { e.preventDefault(); e.stopPropagation(); setOpen(false); }
+        break;
+      case "Home":
+        if (open) { e.preventDefault(); setActive(0); }
+        break;
+      case "End":
+        if (open) { e.preventDefault(); setActive(last < 0 ? 0 : last); }
+        break;
+      case "PageDown":
+        if (open) { e.preventDefault(); setActive((a) => Math.min(a + 8, last)); }
+        break;
+      case "PageUp":
+        if (open) { e.preventDefault(); setActive((a) => Math.max(a - 8, 0)); }
+        break;
+      case "Tab":
+        setOpen(false); // let focus move on naturally
+        break;
+    }
+  }
+
+  itemRefs.current = [];
   return (
     <div ref={ref} className="relative">
       <input
@@ -50,25 +111,42 @@ export default function SearchSelect({
         value={open ? query : selected ? `${selected.label}${selected.sublabel ? ` (${selected.sublabel})` : ""}` : ""}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
         onFocus={() => { setQuery(""); setOpen(true); }}
+        onKeyDown={onKeyDown}
         placeholder={placeholder}
+        role="combobox"
+        aria-expanded={open}
+        aria-autocomplete="list"
+        aria-activedescendant={open && filtered[active] ? `ss-opt-${filtered[active].value}` : undefined}
+        autoComplete="off"
       />
       {open && (
-        <div className="absolute z-20 mt-1 max-h-64 w-full min-w-[260px] overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] shadow-lg">
+        <div
+          role="listbox"
+          className="absolute z-30 mt-1 max-h-[70vh] w-full min-w-[340px] overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 shadow-2xl"
+        >
           {filtered.length === 0 && <div className="px-3 py-2 text-sm text-[var(--muted)]">No matches</div>}
-          {filtered.map((o) => (
+          {filtered.map((o, i) => (
             <button
               key={o.value}
+              id={`ss-opt-${o.value}`}
+              ref={(el) => { itemRefs.current[i] = el; }}
               type="button"
-              onClick={() => { onChange(o.value); setQuery(""); setOpen(false); }}
-              className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--surface-2)]"
+              role="option"
+              aria-selected={i === active}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => e.preventDefault()} // keep the input focused so keyboard stays live
+              onClick={() => choose(o)}
+              className={`flex w-full items-baseline gap-2 px-3 py-2.5 text-left text-sm ${
+                i === active ? "bg-[var(--accent-bg)] text-[var(--accent-strong)]" : "hover:bg-[var(--surface-2)]"
+              } ${o.value === value ? "font-bold" : ""}`}
             >
-              {o.label}
-              {o.sublabel && <span className="ml-1 text-xs text-[var(--muted)]">({o.sublabel})</span>}
+              <span className="min-w-0 flex-1 truncate">{o.label}</span>
+              {o.sublabel && <span className="shrink-0 text-xs text-[var(--muted)]">{o.sublabel}</span>}
             </button>
           ))}
-          {!q && options.length > 50 && (
+          {!q && options.length > CAP && (
             <div className="border-t border-[var(--border)] px-3 py-1.5 text-xs text-[var(--muted-2)]">
-              Showing first 50 of {options.length} — type to search
+              Showing first {CAP} of {options.length} — type to search
             </div>
           )}
         </div>
