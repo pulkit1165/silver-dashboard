@@ -8,7 +8,7 @@ import { runQuery, isConfigured } from "@/lib/oracle";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = {
-  draft: "n", confirmed: "n", picked: "n", packed: "n",
+  draft: "n", open: "r", confirmed: "n", picked: "n", packed: "n",
   "partially dispatched": "r", dispatched: "g", delivered: "g", cancelled: "r",
 };
 

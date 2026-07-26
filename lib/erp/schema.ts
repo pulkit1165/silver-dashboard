@@ -284,6 +284,11 @@ export const salesOrders = pgTable("sales_orders", {
   // import). Both are also created idempotently by ensureSalesOrderCols() in
   // lib/erp/queries.ts so production self-migrates without a db:push.
   salesmanId: integer("salesman_id"),
+  // Free-text salesman name captured on the manual decode form (the writer may
+  // not be a system user). requiredBy = optional "deliver by / order required
+  // till" date. Both self-migrate via ensureSalesOrderCols().
+  salesmanName: text("salesman_name").default(""),
+  requiredBy: text("required_by").default(""),
   source: text("source").default("manual"),
   createdAt: createdAt(),
 });

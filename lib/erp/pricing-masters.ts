@@ -42,8 +42,39 @@ export function ensurePricingTables(): Promise<void> {
         note text DEFAULT '', created_by text,
         created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
       await sql`CREATE INDEX IF NOT EXISTS pdh_cust_idx ON party_disc_history (customer_id)`;
+      // Party-wise OGL % (an extra party discount) and party-wise FOC % (applied
+      // last, on top of everything) — same recency-ledger + live-mirror pattern.
+      await sql`CREATE TABLE IF NOT EXISTS party_ogl_history (
+        id serial PRIMARY KEY, customer_id integer NOT NULL, code text,
+        ogl_pct double precision NOT NULL,
+        effective_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+        note text DEFAULT '', created_by text,
+        created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
+      await sql`CREATE INDEX IF NOT EXISTS pogl_cust_idx ON party_ogl_history (customer_id)`;
+      await sql`CREATE TABLE IF NOT EXISTS party_foc_history (
+        id serial PRIMARY KEY, customer_id integer NOT NULL, code text,
+        foc_pct double precision NOT NULL,
+        effective_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+        note text DEFAULT '', created_by text,
+        created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
+      await sql`CREATE INDEX IF NOT EXISTS pfoc_cust_idx ON party_foc_history (customer_id)`;
+      // Party × item net rate matrix (most specific — supersedes the global item
+      // net rate for that party). Append-only; the SO reads the latest per pair.
+      await sql`CREATE TABLE IF NOT EXISTS party_item_net_rates (
+        id serial PRIMARY KEY, customer_id integer NOT NULL, code text,
+        sku_id integer NOT NULL, sku_code text,
+        net_rate double precision NOT NULL,
+        effective_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+        note text DEFAULT '', created_by text,
+        created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
+      await sql`CREATE INDEX IF NOT EXISTS pinr_pair_idx ON party_item_net_rates (customer_id, sku_id, effective_at)`;
       await sql.unsafe(`ALTER TABLE skus
         ADD COLUMN IF NOT EXISTS item_net_rate double precision DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS foc_pct double precision DEFAULT 0`);
+      // Party-level live mirrors: ogl_pct and party FOC (foc_pct). discount_pct
+      // already exists on customers (party Disc%).
+      await sql.unsafe(`ALTER TABLE customers
+        ADD COLUMN IF NOT EXISTS ogl_pct double precision DEFAULT 0,
         ADD COLUMN IF NOT EXISTS foc_pct double precision DEFAULT 0`);
     })().catch((e) => { ensured = null; throw e; });
   }

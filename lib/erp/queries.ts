@@ -199,6 +199,9 @@ export async function getSalesOrders(f: SoFilter = {}): Promise<SalesOrder[]> {
       AND (${f.from ?? null}::text IS NULL OR so.order_date >= ${f.from ?? null})
       AND (${f.to ?? null}::text IS NULL OR so.order_date <= ${f.to ?? null})
       AND (${f.status ?? null}::text IS NULL OR so.status = ${f.status ?? null})
+      -- decoded slips are staging docs; they live in the Decode Orders screen,
+      -- not the main Sales Orders list (unless the caller asks for them by status).
+      AND (${f.status ?? null}::text IS NOT NULL OR so.status <> 'decoded')
     ORDER BY so.id DESC`) as unknown as SalesOrder[];
 }
 export async function getSalesOrder(id: number): Promise<(SalesOrder & { lines: SoLine[] }) | undefined> {
@@ -220,6 +223,112 @@ export async function getSalesOrderByNo(soNo: string) {
   return r ? getSalesOrder((r as { id: number }).id) : undefined;
 }
 
+// ─── Sales Order Decode (manual staging) ────────────────────────────────────
+// A salesman writes an order, self-reviews, and submits it as a "decoded order"
+// (status='decoded', numbered DEC-n). It is NOT a live sales order yet — it sits
+// in the Decode Orders screen. A second person then PROMOTES it to an "open"
+// sales order (fresh SO-n), reviews it in the Sales module, and PUNCHES it
+// (confirm → packing). Prices default to the SKU MRP; the reviewer adjusts.
+
+export interface DecodedOrderInput {
+  customerId: number;
+  salesmanName: string;
+  orderDate: string;
+  requiredBy?: string;
+  remarks?: string;
+  createdById?: number;
+  lines: Array<{ skuId: number; qty: number }>;
+}
+
+export async function createDecodedOrder(
+  input: DecodedOrderInput,
+): Promise<{ id: number; so_no: string } | { error: string }> {
+  await ensureSalesOrderCols();
+  const sql = getSql();
+
+  if (!input.customerId) return { error: "Party is required." };
+  const clean = input.lines.filter((l) => Number(l.skuId) && Number(l.qty) > 0);
+  if (clean.length === 0) return { error: "Add at least one item with a quantity." };
+
+  // One line per item.
+  const seen = new Set<number>();
+  for (const l of clean) {
+    if (seen.has(l.skuId)) return { error: "The same item appears more than once — one line per item." };
+    seen.add(l.skuId);
+  }
+
+  // Price each line at the current SKU MRP (skus.price).
+  const skuIds = clean.map((l) => l.skuId);
+  const priceRows = (await sql`SELECT id, price FROM skus WHERE id = ANY(${skuIds})`) as unknown as Array<{ id: number; price: number | null }>;
+  const priceById = new Map(priceRows.map((r) => [r.id, Number(r.price) || 0]));
+  const total = clean.reduce((s, l) => s + l.qty * (priceById.get(l.skuId) ?? 0), 0);
+
+  return await sql.begin(async (tx) => {
+    const [{ next }] = await tx`
+      SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 5) AS INT)), 1000) + 1 AS next
+        FROM sales_orders WHERE so_no LIKE 'DEC-%'`;
+    const soNo = `DEC-${next}`;
+    const [so] = await tx`
+      INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, remarks,
+        salesman_id, salesman_name, required_by, source)
+      VALUES (${soNo}, ${input.customerId}, 'decoded', ${input.orderDate}, ${total},
+        ${input.remarks ?? ""}, ${input.createdById ?? null}, ${input.salesmanName ?? ""},
+        ${input.requiredBy ?? ""}, 'decode-manual')
+      RETURNING id`;
+    for (const l of clean) {
+      const mrp = priceById.get(l.skuId) ?? 0;
+      await tx`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
+        VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${mrp}, ${mrp}, 0, 'MRP', 0)`;
+    }
+    return { id: so.id as number, so_no: soNo };
+  });
+}
+
+export async function listDecodedOrders(): Promise<Array<{
+  id: number; so_no: string; customer_name: string; salesman_name: string;
+  order_date: string; required_by: string; total: number; lines: number; created_at: string;
+}>> {
+  await ensureSalesOrderCols();
+  return (await getSql()`
+    SELECT so.id, so.so_no, c.name AS customer_name, so.salesman_name, so.order_date,
+           so.required_by, so.total, so.created_at,
+           (SELECT COUNT(*)::int FROM so_lines l WHERE l.so_id = so.id) AS lines
+    FROM sales_orders so JOIN customers c ON c.id = so.customer_id
+    WHERE so.status = 'decoded' ORDER BY so.id DESC`) as unknown as Array<{
+    id: number; so_no: string; customer_name: string; salesman_name: string;
+    order_date: string; required_by: string; total: number; lines: number; created_at: string;
+  }>;
+}
+
+/** Promote a decoded slip to an OPEN sales order (fresh SO-n) for review + punch. */
+export async function promoteDecodedOrder(
+  id: number,
+): Promise<{ ok: true; soId: number; soNo: string } | { error: string }> {
+  const sql = getSql();
+  return await sql.begin(async (tx) => {
+    const [so] = (await tx`SELECT status FROM sales_orders WHERE id=${id} FOR UPDATE`) as unknown as Array<{ status: string }>;
+    if (!so) return { error: "Decoded order not found." };
+    if (so.status !== "decoded") return { error: `This order is '${so.status}', not a decoded slip — nothing to promote.` };
+    const [{ next }] = await tx`
+      SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 4) AS INT)), 1000) + 1 AS next
+        FROM sales_orders WHERE so_no LIKE 'SO-%'`;
+    const soNo = `SO-${next}`;
+    await tx`UPDATE sales_orders SET so_no=${soNo}, status='open' WHERE id=${id}`;
+    return { ok: true as const, soId: id, soNo };
+  });
+}
+
+/** Delete a decoded slip that hasn't been promoted. */
+export async function discardDecodedOrder(id: number): Promise<{ ok: true } | { error: string }> {
+  const sql = getSql();
+  const [so] = (await sql`SELECT status FROM sales_orders WHERE id=${id}`) as unknown as Array<{ status: string }>;
+  if (!so) return { error: "Decoded order not found." };
+  if (so.status !== "decoded") return { error: "Only un-promoted decoded slips can be discarded." };
+  await sql`DELETE FROM so_lines WHERE so_id=${id}`;
+  await sql`DELETE FROM sales_orders WHERE id=${id}`;
+  return { ok: true };
+}
+
 // Self-migrate the sales-order header/line columns the form needs (idempotent),
 // so prod (Neon) works without a manual migration. Runs once per process.
 let soColsEnsured = false;
@@ -232,6 +341,8 @@ async function ensureSalesOrderCols() {
       ADD COLUMN IF NOT EXISTS disc_pct double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS remarks text DEFAULT '',
       ADD COLUMN IF NOT EXISTS salesman_id integer,
+      ADD COLUMN IF NOT EXISTS salesman_name text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS required_by text DEFAULT '',
       ADD COLUMN IF NOT EXISTS source text DEFAULT 'manual'`);
     await sql.unsafe(`ALTER TABLE so_lines
       ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
@@ -348,7 +459,11 @@ export async function confirmSalesOrder(id: number): Promise<{ ok: true } | { er
   const sql = getSql();
   const [so] = (await sql`SELECT status FROM sales_orders WHERE id=${id}`) as unknown as Array<{ status: string }>;
   if (!so) return { error: "Sales order not found." };
-  if (so.status !== "draft") return { error: `Order is already ${so.status} — nothing to confirm.` };
+  // 'draft' = direct-entry orders; 'open' = orders promoted from a decoded slip
+  // and awaiting the reviewer's punch. Both move to 'confirmed' (→ packing).
+  if (so.status !== "draft" && so.status !== "open") {
+    return { error: `Order is already ${so.status} — nothing to confirm.` };
+  }
   await sql`UPDATE sales_orders SET status='confirmed' WHERE id=${id}`;
   return { ok: true };
 }
@@ -796,17 +911,30 @@ export async function skuMovement(limit = 50) {
   }>;
 }
 
+export type LowStockItem = { id: number; sku_code: string; name: string; qty: number; status: StockStatus };
 export async function erpStats() {
   const sql = getSql();
-  // Run every count concurrently (was ~11 serial round-trips to the DB).
+  // All counts run concurrently. Previously this fetched the entire catalogue
+  // (stockLevels → 2,185 full rows) and shipped every low-stock item as a full
+  // object (~900), ballooning the dashboard to ~3.75 MB. Now: aggregate counts
+  // + one SUM + a capped 12-row alert list with only the fields the panel shows.
   const c = (q: ReturnType<typeof sql>) =>
     (q as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c);
   const [
-    levels, skus, warehouses, openSales, openPurchases,
+    skus, stockUnits, lowStock, lowStockItemsRaw, warehouses, openSales, openPurchases,
     vendors, customers, scansToday, scansTotal, pendingDispatch, pendingVerifyDo,
   ] = await Promise.all([
-    stockLevels(),
     c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    (sql`SELECT COALESCE(SUM(qty),0)::float8 AS c FROM inventory` as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c),
+    c(sql`SELECT COUNT(*)::int AS c FROM skus s
+            LEFT JOIN (SELECT sku_id, SUM(qty) q FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
+           WHERE COALESCE(inv.q,0) <= s.min_stock`),
+    sql`SELECT s.id, s.sku_code, s.name, s.min_stock, s.reorder_level, COALESCE(inv.q,0)::float8 AS qty
+          FROM skus s
+          LEFT JOIN (SELECT sku_id, SUM(qty) q FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
+         WHERE COALESCE(inv.q,0) <= s.min_stock
+         ORDER BY COALESCE(inv.q,0) ASC, s.sku_code
+         LIMIT 12` as unknown as Promise<Array<{ id: number; sku_code: string; name: string; min_stock: number; reorder_level: number; qty: number }>>,
     c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),
     c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed','draft')`),
     c(sql`SELECT COUNT(*)::int AS c FROM purchase_orders WHERE status IN ('draft','approved','sent','partially received')`),
@@ -817,11 +945,11 @@ export async function erpStats() {
     c(sql`SELECT COUNT(*)::int AS c FROM sales_orders WHERE status IN ('confirmed','picked','packed')`),
     c(sql`SELECT COUNT(*)::int AS c FROM packages WHERE status='packed'`),
   ]);
-  const lowStockItems = levels.filter((s) => s.status === "low" || s.status === "out");
+  const lowStockItems: LowStockItem[] = lowStockItemsRaw.map((s) => ({
+    id: s.id, sku_code: s.sku_code, name: s.name, qty: s.qty, status: stockStatus(s, s.qty),
+  }));
   return {
-    skus,
-    stockUnits: levels.reduce((a, s) => a + s.qty, 0),
-    lowStock: lowStockItems.length,
+    skus, stockUnits, lowStock,
     warehouses, openSales, openPurchases, vendors, customers,
     scansToday, scansTotal, pendingDispatch, pendingVerifyDo, lowStockItems,
   };

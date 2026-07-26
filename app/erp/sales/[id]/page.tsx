@@ -27,6 +27,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
         <Link href="/erp/sales" className="text-sm font-semibold text-[var(--accent)]">← Sales Orders</Link>
         <Link href="/erp/scan/dispatch" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">🚚 Dispatch scan</Link>
         {so.status === "draft" && <ConfirmOrderButton soId={so.id} />}
+        {so.status === "open" && <ConfirmOrderButton soId={so.id} label="✓ Punch order — review & send to packing" />}
         {billable > 0
           ? <GenerateInvoiceButton soId={so.id} />
           : <span className="text-xs font-semibold text-[var(--muted)]">Nothing to invoice yet — dispatch items first.</span>}
