@@ -8,6 +8,25 @@ export interface SearchOption {
   sublabel?: string;
 }
 
+// Move focus to the next data-entry field (input/select/textarea) after `current`,
+// scoped to the nearest [data-keyflow] container. Read-only fields are rendered as
+// <div>, so they're skipped naturally. Powers "press Enter → next entry".
+export function focusNextField(current: HTMLElement | null | undefined) {
+  if (!current) return;
+  const root = (current.closest("[data-keyflow]") as HTMLElement) ?? document.body;
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>("input, select, textarea")).filter((el) => {
+    const e = el as HTMLInputElement;
+    return !e.disabled && !e.readOnly && e.type !== "hidden" && el.tabIndex !== -1 && el.offsetParent !== null;
+  });
+  const i = nodes.indexOf(current);
+  if (i < 0) return;
+  const next = nodes[i + 1] as HTMLInputElement | undefined;
+  if (next) {
+    next.focus();
+    if (typeof next.select === "function" && ["text", "search", "number"].includes(next.type)) next.select();
+  }
+}
+
 // A type-to-filter combobox with full keyboard control. Plain <select>
 // dropdowns don't scale past a handful of options — this is used anywhere a
 // list can run into the hundreds or thousands (customers/parties, items).
@@ -20,17 +39,21 @@ export default function SearchSelect({
   onChange,
   placeholder,
   className,
+  advance = false,
 }: {
   options: SearchOption[];
   value: number | null;
   onChange: (value: number) => void;
   placeholder?: string;
   className?: string;
+  /** after a selection, move focus to the next data-entry field (Enter → next entry) */
+  advance?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const selected = options.find((o) => o.value === value);
 
@@ -64,6 +87,7 @@ export default function SearchSelect({
     onChange(o.value);
     setQuery("");
     setOpen(false);
+    if (advance) requestAnimationFrame(() => focusNextField(inputRef.current));
   }
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -107,6 +131,7 @@ export default function SearchSelect({
   return (
     <div ref={ref} className="relative">
       <input
+        ref={inputRef}
         className={className}
         value={open ? query : selected ? `${selected.label}${selected.sublabel ? ` (${selected.sublabel})` : ""}` : ""}
         onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
@@ -122,7 +147,7 @@ export default function SearchSelect({
       {open && (
         <div
           role="listbox"
-          className="absolute z-30 mt-1 max-h-[70vh] w-full min-w-[340px] overflow-auto rounded-lg border border-[var(--border)] bg-[var(--surface)] py-1 shadow-2xl"
+          className="absolute z-30 mt-1 max-h-[80vh] w-full min-w-[440px] overflow-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] py-1.5 text-[15px] shadow-2xl"
         >
           {filtered.length === 0 && <div className="px-3 py-2 text-sm text-[var(--muted)]">No matches</div>}
           {filtered.map((o, i) => (
@@ -136,7 +161,7 @@ export default function SearchSelect({
               onMouseEnter={() => setActive(i)}
               onMouseDown={(e) => e.preventDefault()} // keep the input focused so keyboard stays live
               onClick={() => choose(o)}
-              className={`flex w-full items-baseline gap-2 px-3 py-2.5 text-left text-sm ${
+              className={`flex w-full items-baseline gap-2 px-4 py-3 text-left ${
                 i === active ? "bg-[var(--accent-bg)] text-[var(--accent-strong)]" : "hover:bg-[var(--surface-2)]"
               } ${o.value === value ? "font-bold" : ""}`}
             >

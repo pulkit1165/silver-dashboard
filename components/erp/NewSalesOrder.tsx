@@ -64,6 +64,20 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const linesRef = useRef(lines);
   useEffect(() => { linesRef.current = lines; }, [lines]);
 
+  // Keyboard flow: Enter on a line's Qty/FOC opens the next line's item search
+  // (adds a fresh line if we're on the last one). The item search itself advances
+  // to Qty on select (see `advance` on SearchSelect).
+  const linesBoxRef = useRef<HTMLDivElement>(null);
+  function focusLineItem(targetIdx: number) {
+    setTimeout(() => {
+      linesBoxRef.current?.querySelector<HTMLInputElement>(`[data-line="${targetIdx}"] input`)?.focus();
+    }, 0);
+  }
+  function gotoNextLine(idx: number) {
+    if (idx >= lines.length - 1) setLines((ls) => [...ls, emptyLine()]);
+    focusLineItem(idx + 1);
+  }
+
   // Pull an item's party-wise net-rate history from Oracle (read-only).
   async function loadRates(itemName: string, party: string | null): Promise<{ partyRates: RateRow[]; itemRates: RateRow[] }> {
     try {
@@ -187,7 +201,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   }
 
   return (
-    <div className="panel space-y-4">
+    <div className="panel space-y-4" data-keyflow>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <F label="Customer *">
           <SearchSelect
@@ -196,6 +210,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
             onChange={setCustomerId}
             placeholder="Search customer…"
             className={inp}
+            advance
           />
         </F>
         <F label="Order date">
@@ -232,12 +247,12 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         </div>
       )}
 
-      <div className="space-y-3">
+      <div className="space-y-3" ref={linesBoxRef}>
         {lines.map((line, idx) => {
           const sku = line.skuId ? skuById.get(line.skuId) : undefined;
           const hasItemNetRate = !!sku && sku.item_net_rate > 0 && sku.item_net_rate !== sku.price;
           return (
-            <div key={idx} className="rounded-xl border border-[var(--border)] p-3">
+            <div key={idx} data-line={idx} className="rounded-xl border border-[var(--border)] p-3">
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-9 sm:items-end">
                 <div className="sm:col-span-2">
                   <F label="Item">
@@ -247,6 +262,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                       onChange={(id) => onSkuChange(idx, id)}
                       placeholder="Search item…"
                       className={inp}
+                      advance
                     />
                   </F>
                 </div>
@@ -271,6 +287,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                   <input
                     type="number" min={1} value={line.qty}
                     onChange={(e) => updateLine(idx, { qty: Number(e.target.value) || 0 })}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); gotoNextLine(idx); } }}
                     className={inp}
                   />
                 </F>
@@ -288,6 +305,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                   <input
                     type="number" min={0} value={line.focQty}
                     onChange={(e) => updateLine(idx, { focQty: Number(e.target.value) || 0 })}
+                    onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); gotoNextLine(idx); } }}
                     className={inp}
                     title="Free of cost / promotional quantity"
                   />
