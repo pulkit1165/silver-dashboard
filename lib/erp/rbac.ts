@@ -77,7 +77,7 @@ export const NAV: NavGroup[] = [
         label: "Sales", icon: "↗",
         children: [
           { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
-          { href: "/erp/sales/decode", label: "Decode Order (AI)", icon: "✦", roles: ["admin", "sales"] },
+          { href: "/erp/sales/decode", label: "Upload / Decode Order", icon: "⬆", roles: ["admin", "sales"] },
           { href: "/erp/deliveries", label: "Delivery Orders", icon: "🚚", roles: ["admin", "sales", "dispatch", "warehouse", "accounts"] },
           { href: "/erp/invoices", label: "Invoices", icon: "🧾", roles: ["admin", "sales", "accounts", "dispatch"] },
           { href: "/erp/customers", label: "Customers", icon: "☻", roles: ["admin", "sales", "accounts"] },

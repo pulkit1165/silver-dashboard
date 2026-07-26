@@ -1,6 +1,7 @@
 import "server-only";
 import { getSql } from "./db";
 import { ensureActivityTable } from "./activity";
+import { ensureChecklistTables } from "./checklist";
 
 export interface PackingSlipRow {
   id: number; slip_no: string; so_no: string | null; party: string | null;
@@ -70,35 +71,41 @@ export async function upsertPackingSlip(input: {
  */
 export async function liveFingerprint(): Promise<string> {
   const sql = getSql();
-  const [r] = await sql`
-    SELECT
-      (SELECT COALESCE(MAX(id),0) FROM scan_events) a,
-      (SELECT COALESCE(MAX(id),0) FROM stock_moves) b,
-      (SELECT COALESCE(MAX(id),0) FROM sales_orders) c,
-      (SELECT COALESCE(MAX(id),0) FROM purchase_orders) d,
-      (SELECT COALESCE(MAX(id),0) FROM package_lines) e,
-      (SELECT COALESCE(MAX(id),0) FROM skus) f,
-      (SELECT COALESCE(MAX(id),0) FROM qr_codes) g,
-      (SELECT COALESCE(MAX(updated_at),'') FROM packing_slips) h`;
-  const x = r as Record<string, string | number>;
-  const core = [x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.h].join("-");
-
-  // activity_log is the primary signal (every instrumented write bumps it). Query
-  // it separately so a missing table can never break the core live fingerprint.
-  let z: string | number = 0;
+  // This runs on every client's ~5s poll, so it must be ONE DB round-trip.
+  // activity_log + checklist tables are optional (self-create), so we ensure
+  // they exist first (cached no-ops) and then read everything in a single query.
+  // If ensuring/reading the optional tables ever fails, fall back to a core-only
+  // single query so live sync can never break.
   try {
     await ensureActivityTable();
-    const [a] = await sql`SELECT COALESCE(MAX(id),0) z FROM activity_log`;
-    z = (a as { z: string | number }).z;
-  } catch { /* fall back to core only */ }
-
-  // Process checklist ticks/edits don't write to activity_log (to keep the feed
-  // clean), so fold its own stamp in separately — again guarded so a missing
-  // table can never break live sync.
-  let cl = "";
-  try {
-    const [c] = await sql`SELECT COALESCE((SELECT MAX(updated_at) FROM checklist_tasks),'') || COALESCE((SELECT MAX(updated_at) FROM checklist_stages),'') s`;
-    cl = (c as { s: string }).s;
-  } catch { /* ignore */ }
-  return `${z}-${core}-${cl}`;
+    await ensureChecklistTables();
+    const [r] = await sql`
+      SELECT
+        (SELECT COALESCE(MAX(id),0) FROM scan_events) a,
+        (SELECT COALESCE(MAX(id),0) FROM stock_moves) b,
+        (SELECT COALESCE(MAX(id),0) FROM sales_orders) c,
+        (SELECT COALESCE(MAX(id),0) FROM purchase_orders) d,
+        (SELECT COALESCE(MAX(id),0) FROM package_lines) e,
+        (SELECT COALESCE(MAX(id),0) FROM skus) f,
+        (SELECT COALESCE(MAX(id),0) FROM qr_codes) g,
+        (SELECT COALESCE(MAX(updated_at),'') FROM packing_slips) h,
+        (SELECT COALESCE(MAX(id),0) FROM activity_log) z,
+        (SELECT COALESCE(MAX(updated_at),'') FROM checklist_tasks) i,
+        (SELECT COALESCE(MAX(updated_at),'') FROM checklist_stages) j`;
+    const x = r as Record<string, string | number>;
+    return `${x.z}-${x.a}-${x.b}-${x.c}-${x.d}-${x.e}-${x.f}-${x.g}-${x.h}-${x.i}${x.j}`;
+  } catch {
+    const [r] = await sql`
+      SELECT
+        (SELECT COALESCE(MAX(id),0) FROM scan_events) a,
+        (SELECT COALESCE(MAX(id),0) FROM stock_moves) b,
+        (SELECT COALESCE(MAX(id),0) FROM sales_orders) c,
+        (SELECT COALESCE(MAX(id),0) FROM purchase_orders) d,
+        (SELECT COALESCE(MAX(id),0) FROM package_lines) e,
+        (SELECT COALESCE(MAX(id),0) FROM skus) f,
+        (SELECT COALESCE(MAX(id),0) FROM qr_codes) g,
+        (SELECT COALESCE(MAX(updated_at),'') FROM packing_slips) h`;
+    const x = r as Record<string, string | number>;
+    return `${x.a}-${x.b}-${x.c}-${x.d}-${x.e}-${x.f}-${x.g}-${x.h}`;
+  }
 }

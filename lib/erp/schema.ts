@@ -92,18 +92,27 @@ export const inventory = pgTable(
   }),
 );
 
-export const stockMoves = pgTable("stock_moves", {
-  id: serial("id").primaryKey(),
-  skuId: integer("sku_id").notNull(),
-  warehouseId: integer("warehouse_id"),
-  binId: integer("bin_id"),
-  type: text("type"),
-  qty: doublePrecision("qty"),
-  refDoc: text("ref_doc"),
-  note: text("note"),
-  userId: integer("user_id"),
-  createdAt: createdAt(),
-});
+export const stockMoves = pgTable(
+  "stock_moves",
+  {
+    id: serial("id").primaryKey(),
+    skuId: integer("sku_id").notNull(),
+    warehouseId: integer("warehouse_id"),
+    binId: integer("bin_id"),
+    type: text("type"),
+    qty: doublePrecision("qty"),
+    refDoc: text("ref_doc"),
+    note: text("note"),
+    userId: integer("user_id"),
+    createdAt: createdAt(),
+  },
+  // Stock analytics aggregates by sku_id and filters by (type, created_at); the
+  // table had only its primary key, forcing a full scan on every Stock page load.
+  (t) => ({
+    bySku: index("stock_moves_sku_idx").on(t.skuId),
+    byTypeCreated: index("stock_moves_type_created_idx").on(t.type, t.createdAt),
+  }),
+);
 
 export const vendors = pgTable("vendors", {
   id: serial("id").primaryKey(),

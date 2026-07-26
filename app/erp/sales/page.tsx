@@ -65,9 +65,14 @@ export default async function SalesOrdersPage({
         subtitle="Order lifecycle: draft → confirmed → picked → packed → dispatched."
         right={
           canWrite(user.role, "sales") ? (
-            <Link href="/erp/sales/new" className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">
-              + New Sales Order
-            </Link>
+            <div className="flex flex-wrap items-center gap-2">
+              <Link href="/erp/sales/decode" className="rounded-lg border border-[var(--accent)] bg-[var(--accent-bg)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent)] hover:text-white">
+                ⬆ Upload Sales Order
+              </Link>
+              <Link href="/erp/sales/new" className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">
+                + New Sales Order
+              </Link>
+            </div>
           ) : undefined
         }
       />

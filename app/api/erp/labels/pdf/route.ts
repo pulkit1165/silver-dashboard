@@ -72,9 +72,13 @@ export async function POST(req: Request) {
 
   // ── A4 DIE SHEET: exact-size labels tiled on A4, with cut lines ─────────────
   if (sheet === "a4") {
-    const A4W = 210 * MM, A4H = 297 * MM;
-    const pageMargin = 8 * MM;
-    const gutter = 3 * MM;
+    // Landscape swaps the A4 page to 297×210 so more die-cuts tile per sheet.
+    const landscape = body.landscape === true;
+    const A4W = (landscape ? 297 : 210) * MM, A4H = (landscape ? 210 : 297) * MM;
+    // Page margin + gap between labels drive how many tile per sheet; the client
+    // exposes them so a tighter sheet fits noticeably more (defaults unchanged).
+    const pageMargin = (Number(body.margin) >= 0 ? Number(body.margin) : 8) * MM;
+    const gutter = (Number(body.gap) >= 0 ? Number(body.gap) : 3) * MM;
     const cellW = w * MM, cellH = h * MM;
     const usableW = A4W - 2 * pageMargin, usableH = A4H - 2 * pageMargin;
     const cols = Math.max(1, Math.floor((usableW + gutter) / (cellW + gutter)));

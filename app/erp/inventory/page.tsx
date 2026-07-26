@@ -7,7 +7,15 @@ export const dynamic = "force-dynamic";
 
 export default async function StockPage() {
   await getCurrentUser(); // gate to signed-in users
-  const rows = await stockAnalytics(90);
+  const full = await stockAnalytics(90);
+  // Ship ONLY the columns the table renders. stockAnalytics returns the full SKU
+  // row (~24 cols) which ballooned the page to 4.5 MB for 2,185 items; this keeps
+  // the analytics server-side and sends ~13 fields instead.
+  const rows = full.map((r) => ({
+    id: r.id, sku_code: r.sku_code, name: r.name, category: r.category, unit: r.unit,
+    price: r.price, qty: r.qty, value: r.value, sold: r.sold, last_out: r.last_out,
+    status: r.status, movement: r.movement, low: r.low,
+  }));
   return (
     <>
       <PageHeader

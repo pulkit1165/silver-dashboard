@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
-import PrintButton from "@/components/erp/PrintButton";
+import DownloadOrderExcel from "@/components/erp/DownloadOrderExcel";
 import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
 import ConfirmOrderButton from "@/components/erp/ConfirmOrderButton";
 import CancelLineButton from "@/components/erp/CancelLineButton";
@@ -31,7 +31,16 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
           ? <GenerateInvoiceButton soId={so.id} />
           : <span className="text-xs font-semibold text-[var(--muted)]">Nothing to invoice yet — dispatch items first.</span>}
         {so.invoice_no && <Link href={`/erp/invoices`} className="text-xs font-semibold text-[var(--accent)]">Invoice {so.invoice_no} →</Link>}
-        <PrintButton label="🖨 Print order" />
+        <DownloadOrderExcel order={{
+          so_no: so.so_no, customer_name: so.customer_name ?? "", order_date: so.order_date,
+          status: so.status, bill_type: so.bill_type ?? "", disc_pct: so.disc_pct ?? 0, remarks: so.remarks ?? "",
+          lines: so.lines.map((l) => ({
+            sku_code: l.sku_code ?? "", sku_name: l.sku_name ?? "", gst_rate: l.gst_rate ?? null, mrp: l.mrp ?? null,
+            price: l.price, discount_pct: l.discount_pct ?? null, rate_type: l.rate_type ?? null,
+            std_pack: l.std_pack ?? null, bal_qty: l.bal_qty ?? null, qty: l.qty, foc_qty: l.foc_qty ?? null,
+            picked_qty: l.picked_qty, packed_qty: l.packed_qty, dispatched_qty: l.dispatched_qty, cancelled_qty: l.cancelled_qty ?? null,
+          })),
+        }} />
       </div>
 
       <section className="panel mb-4 print-area">

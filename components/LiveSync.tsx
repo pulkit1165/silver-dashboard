@@ -30,7 +30,7 @@ export default function LiveSync() {
       } catch {
         setOnline(false);
       }
-      if (!stopped) timer = setTimeout(poll, document.hidden ? 8000 : 2500);
+      if (!stopped) timer = setTimeout(poll, document.hidden ? 15000 : 5000);
     };
     poll();
 

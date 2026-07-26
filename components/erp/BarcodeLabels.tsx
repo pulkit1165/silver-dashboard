@@ -33,7 +33,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [type, setType] = useState<Record<number, LabelType>>({});
   const [copies, setCopies] = useState(1);
-  const [mode, setMode] = useState<"sheet" | "roll" | "a4tiled">("roll");
+  const [mode, setMode] = useState<"sheet" | "roll" | "a4tiled" | "a4land">("roll");
+  // A4 sheet packing: page margin + gap between labels. Defaults match the
+  // original layout; dropping them fits noticeably more per sheet.
+  const [sheetMargin, setSheetMargin] = useState(8);
+  const [sheetGap, setSheetGap] = useState(3);
   const [sizeId, setSizeId] = useState("med-70x40");
   const [customW, setCustomW] = useState(70);
   const [customH, setCustomH] = useState(40);
@@ -93,17 +97,25 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   }, [pnPrinterId]);
 
   const roll = mode === "roll";
-  const a4 = mode === "a4tiled";
+  // Both A4-tiled modes share the same tiling/layout; only the page orientation
+  // (and therefore how many fit) differs. Landscape is a separate option so the
+  // existing portrait sheet keeps behaving exactly as before.
+  const landscape = mode === "a4land";
+  const a4 = mode === "a4tiled" || landscape;
   const dims = useMemo(() => {
     if (sizeId === "custom") return { w: Math.max(10, customW || 10), h: Math.max(10, customH || 10) };
     return LABEL_SIZES.find((s) => s.id === sizeId) ?? { w: 70, h: 40 };
   }, [sizeId, customW, customH]);
-  // How many of the chosen die-cut fit on one A4 page (210×297, 8mm margins, 3mm gap).
+  // How many of the chosen die-cut fit on one A4 page (8mm margins, 3mm gap).
+  // Portrait = 210×297; landscape swaps to 297×210.
   const perPage = useMemo(() => {
-    const cols = Math.max(1, Math.floor((210 - 16 + 3) / (dims.w + 3)));
-    const rows = Math.max(1, Math.floor((297 - 16 + 3) / (dims.h + 3)));
+    const pw = landscape ? 297 : 210;
+    const ph = landscape ? 210 : 297;
+    const m = Math.max(0, sheetMargin), g = Math.max(0, sheetGap);
+    const cols = Math.max(1, Math.floor((pw - 2 * m + g) / (dims.w + g)));
+    const rows = Math.max(1, Math.floor((ph - 2 * m + g) / (dims.h + g)));
     return cols * rows;
-  }, [dims]);
+  }, [dims, landscape, sheetMargin, sheetGap]);
   // The printed page matches the die-cut. If the roll feeds the label the other
   // way, "Rotate 90°" swaps the page and spins the label so it still reads right.
   const pageW = rotate ? dims.h : dims.w;
@@ -194,6 +206,8 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       // The A4 die sheet is always a full white label (own address); the per-die
       // PDF respects the pre-printed toggle.
       w: dims.w, h: dims.h, preprinted: sheet === "a4" ? false : preprinted, contentPos, sheet,
+      landscape: sheet === "a4" ? landscape : false,
+      margin: sheetMargin, gap: sheetGap,
     };
     const r = await fetch("/api/erp/labels/pdf", {
       method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
@@ -202,7 +216,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const blob = await r.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url; a.download = `${sheet === "a4" ? "labels-a4" : "labels"}-${dims.w}x${dims.h}.pdf`;
+    a.href = url; a.download = `${sheet === "a4" ? (landscape ? "labels-a4-landscape" : "labels-a4") : "labels"}-${dims.w}x${dims.h}.pdf`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
@@ -270,7 +284,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       )}
       {/* A4-tiled test sheet: force a normal A4 page so many labels tile per page. */}
       {a4 && (
-        <style dangerouslySetInnerHTML={{ __html: `@media print { @page { size: A4; margin: 8mm; } }` }} />
+        <style dangerouslySetInnerHTML={{ __html: `.a4-tile { margin: 0 ${sheetGap}mm ${sheetGap}mm 0 !important; } @media print { @page { size: A4 ${landscape ? "landscape" : "portrait"}; margin: ${sheetMargin}mm; } }` }} />
       )}
 
       {/* toolbar */}
@@ -281,8 +295,28 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-0.5">
           <button onClick={() => setMode("roll")} className={`rounded-md px-2.5 py-1 text-sm font-semibold ${roll ? "bg-[var(--accent)] text-white" : ""}`}>Thermal roll</button>
           <button onClick={() => setMode("sheet")} className={`rounded-md px-2.5 py-1 text-sm font-semibold ${mode === "sheet" ? "bg-[var(--accent)] text-white" : ""}`}>A4 sheet</button>
-          <button onClick={() => setMode("a4tiled")} className={`rounded-md px-2.5 py-1 text-sm font-semibold ${a4 ? "bg-[var(--accent)] text-white" : ""}`}>A4 × label size</button>
+          <button onClick={() => setMode("a4tiled")} className={`rounded-md px-2.5 py-1 text-sm font-semibold ${mode === "a4tiled" ? "bg-[var(--accent)] text-white" : ""}`}>A4 × label size</button>
+          <button onClick={() => setMode("a4land")} title="Same A4 tiling, but the sheet prints sideways (297×210) — often fits more labels per page" className={`rounded-md px-2.5 py-1 text-sm font-semibold ${landscape ? "bg-[var(--accent)] text-white" : ""}`}>A4 landscape</button>
         </div>
+
+        {a4 && (
+          <div className="flex items-center gap-2 rounded-lg border border-[var(--border)] px-2 py-1" title="Smaller page margin and gap fit more labels per sheet. 5mm margin + 0mm gap is usually the tightest most printers manage.">
+            <label className="flex items-center gap-1 text-xs font-semibold text-[var(--muted)]">
+              Margin
+              <input type="number" min={0} max={20} step={1} value={sheetMargin}
+                onChange={(e) => setSheetMargin(Math.max(0, Number(e.target.value) || 0))}
+                className="w-14 rounded border border-[var(--border)] px-1.5 py-0.5 text-sm" />mm
+            </label>
+            <label className="flex items-center gap-1 text-xs font-semibold text-[var(--muted)]">
+              Gap
+              <input type="number" min={0} max={20} step={1} value={sheetGap}
+                onChange={(e) => setSheetGap(Math.max(0, Number(e.target.value) || 0))}
+                className="w-14 rounded border border-[var(--border)] px-1.5 py-0.5 text-sm" />mm
+            </label>
+            <button onClick={() => { setSheetMargin(5); setSheetGap(0); }} className="rounded-md border border-[var(--accent)] px-2 py-0.5 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]" title="Tightest practical packing — 5mm margin, no gap">Pack tight</button>
+            <span className="text-xs font-bold tabular-nums text-[var(--accent)]">{perPage}/page</span>
+          </div>
+        )}
 
         {(roll || a4) && (
           <label className="flex items-center gap-2 text-sm font-semibold">
@@ -358,7 +392,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             title="Exact-size A4 PDF die layout with cut lines. Open it and print at 100% / Actual size — guaranteed exact physical size, unlike the browser HTML print."
             className="ml-auto rounded-lg border border-[var(--accent)] px-4 py-2 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)] disabled:opacity-50"
           >
-            ⤓ A4 PDF die ({dims.w}×{dims.h})
+            ⤓ A4{landscape ? " landscape" : ""} PDF die ({dims.w}×{dims.h})
           </button>
         )}
         <button
@@ -435,7 +469,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       )}
       {a4 && (
         <p className="no-print -mt-1 text-xs text-[var(--muted)]">
-          <b>A4 die sheet:</b> tiles your <b>{dims.w}×{dims.h} mm</b> label across A4 (<b>~{perPage} per page</b>),
+          <b>A4 die sheet ({landscape ? "landscape 297×210" : "portrait 210×297"}):</b> tiles your <b>{dims.w}×{dims.h} mm</b> label across A4 (<b>~{perPage} per page</b>) — switch between <b>A4 × label size</b> and <b>A4 landscape</b> and watch this number to see which fits more for this size,
           black-on-white with cut lines. For <b>exact physical size</b> use <b>⤓ A4 PDF die</b> (points-based — prints true size,
           unlike the browser) → open it and print at <b>100% / Actual size</b> on <b>matte white</b> sticker/paper. The <b>🖨 Print</b> button is the quick preview.
         </p>

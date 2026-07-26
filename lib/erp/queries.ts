@@ -116,7 +116,22 @@ export type StockAnalyticsRow = Sku & {
   qty: number; value: number; sold: number; last_out: string | null;
   status: StockStatus; movement: Movement; low: boolean;
 };
+// The Stock page aggregates stock_moves by sku_id and filters by (type,
+// created_at). Without these indexes it full-scans the table on every load.
+// Self-migrating (cached) so prod (Neon) gets them without a manual db:push.
+let smIdxEnsured = false;
+async function ensureStockMovesIndexes(): Promise<void> {
+  if (smIdxEnsured) return;
+  try {
+    const sql = getSql();
+    await sql.unsafe(`CREATE INDEX IF NOT EXISTS stock_moves_sku_idx ON stock_moves (sku_id)`);
+    await sql.unsafe(`CREATE INDEX IF NOT EXISTS stock_moves_type_created_idx ON stock_moves (type, created_at)`);
+    smIdxEnsured = true;
+  } catch { /* index may already exist / insufficient privs — ignore */ }
+}
+
 export async function stockAnalytics(windowDays = 90): Promise<StockAnalyticsRow[]> {
+  await ensureStockMovesIndexes();
   const sql = getSql();
   const rows = (await sql`
     SELECT s.*,
