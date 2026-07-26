@@ -8,25 +8,25 @@ import { canWrite } from "@/lib/erp/rbac";
 export const dynamic = "force-dynamic";
 const PAGE_CAP = 600;
 
-// Party-wise Disc% (formerly "Party-wise Net Rate"): each customer's standing
-// discount % off MRP. Versioned — most recent value is live, every prior value kept.
-export default async function PartyDiscMasterPage({
+// FOC Disc%: a party-level free-of-cost discount % applied LAST — on top of
+// party Disc% / OGL / any item net rate. Above and beyond every other discount.
+export default async function FocMasterPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const rows = await getCustomersWithPct("disc", sp.q, PAGE_CAP);
+  const rows = await getCustomersWithPct("foc", sp.q, PAGE_CAP);
   const editable = canWrite(user.role, "rates");
   return (
     <>
       <PageHeader
-        title="Party-wise Disc%"
-        subtitle="Each customer's standing discount % off MRP — applied on the sales order unless an item net rate supersedes it. Versioned: the latest value is live everywhere, every prior value is kept."
+        title="FOC Disc%"
+        subtitle="Party-level free-of-cost discount % — applied LAST, on top of every other discount (party Disc%, OGL, and any item net rate). Versioned: latest value is live, every prior value kept."
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
-      <PartyPctMaster rows={rows} kind="disc" label="Disc%" editable={editable} />
+      <PartyPctMaster rows={rows} kind="foc" label="FOC%" editable={editable} />
     </>
   );
 }

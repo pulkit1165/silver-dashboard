@@ -2,19 +2,20 @@
  * Sales-order line pricing waterfall (single source of truth, shared by the
  * New Sales Order screen and the server-side order writer).
  *
- * Three discounts stack in a fixed order, exactly as the business applies them:
+ * The discounts stack in a fixed order, exactly as the business applies them:
  *
- *   1. PARTY DISCOUNT %  — a whole-order % off MRP, set per customer.
- *        base = MRP × (1 − partyDiscPct/100)
+ *   1. NET RATE OVERRIDE — a fixed net rate that SUPERSEDES the party discount
+ *        for that line (party % + OGL go inert). Most specific wins:
+ *          a. PARTY × ITEM net rate — the party's own rate for that item.
+ *          b. GLOBAL ITEM net rate  — a per-SKU rate for everyone.
+ *        The Y/N ("Net-rate") flag on the punch screen is true when either wins.
  *
- *   2. ITEM-WISE NET RATE — a GLOBAL per-SKU net rate that exists for only some
- *        SKUs. When present it SUPERSEDES the party discount for that line
- *        (the party % no longer applies to it). This is the Y/N the grid shows.
- *        preFoc = itemNetRate            (netRateApplied = true)
- *               = base                   (netRateApplied = false)
+ *   2. PARTY DISCOUNT % then OGL % — only when no net rate override applies.
+ *        base   = MRP × (1 − partyDiscPct/100)
+ *        preFoc = base × (1 − oglPct/100)     (OGL is an extra party discount)
  *
- *   3. FOC DISCOUNT %    — an extra % taken off whatever rate step 2 produced,
- *        applied last, sourced from the uploadable FOC master.
+ *   3. FOC DISCOUNT %  — a party-level % taken off whatever the steps above
+ *        produced, applied LAST, on top of everything.
  *        final = preFoc × (1 − focPct/100)
  *
  * All amounts are ex-GST net rates (GST is added later on the invoice). Every
@@ -24,17 +25,23 @@
 
 export interface LineRateInput {
   mrp: number;
-  partyDiscPct: number;        // 0 when the party has no standing discount
-  itemNetRate?: number | null; // global per-SKU net rate, or null/0 if none
-  focPct?: number | null;      // FOC % for this SKU, or null/0 if none
+  partyDiscPct: number;            // 0 when the party has no standing discount
+  oglPct?: number | null;          // extra party discount %, or null/0 if none
+  itemNetRate?: number | null;     // global per-SKU net rate, or null/0 if none
+  partyItemNetRate?: number | null;// party-specific net rate for this item (most specific)
+  focPct?: number | null;          // party-level FOC %, applied last, or null/0
 }
+
+export type NetRateSource = "party-item" | "item" | "none";
 
 export interface LineRateResult {
   base: number;            // MRP after party discount
-  preFoc: number;          // rate after the item-net-rate supersede step
+  preFoc: number;          // rate after the net-rate / party-disc + OGL step
   final: number;           // final net rate charged (after FOC)
-  netRateApplied: boolean; // did a global item net rate override the party %?
+  netRateApplied: boolean; // did a net rate (party-item or global) override the party %?
+  netRateSource: NetRateSource; // which net rate won
   partyDiscPct: number;    // echoed back (0 if net rate applied — party % didn't act)
+  oglPct: number;          // OGL % actually applied (0 if net rate applied)
   focPct: number;          // FOC % actually applied
   effectiveDiscPct: number;// total effective % off MRP (for display / GP)
 }
@@ -44,13 +51,19 @@ export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 10
 export function computeLineRate(input: LineRateInput): LineRateResult {
   const mrp = Number(input.mrp) || 0;
   const partyDiscPct = clampPct(input.partyDiscPct);
-  const itemNetRate = input.itemNetRate != null && input.itemNetRate > 0 ? Number(input.itemNetRate) : null;
+  const oglPct = clampPct(input.oglPct ?? 0);
   const focPct = clampPct(input.focPct ?? 0);
+  const partyItemNetRate = input.partyItemNetRate != null && input.partyItemNetRate > 0 ? Number(input.partyItemNetRate) : null;
+  const itemNetRate = input.itemNetRate != null && input.itemNetRate > 0 ? Number(input.itemNetRate) : null;
+
+  // Most specific net rate wins: party×item, then global item.
+  const netRate = partyItemNetRate ?? itemNetRate;
+  const netRateApplied = netRate != null;
+  const netRateSource: NetRateSource = partyItemNetRate != null ? "party-item" : itemNetRate != null ? "item" : "none";
 
   const base = round2(mrp * (1 - partyDiscPct / 100));
-
-  const netRateApplied = itemNetRate != null;
-  const preFoc = netRateApplied ? round2(itemNetRate) : base;
+  // When a net rate wins, party disc% + OGL are inert. Otherwise OGL stacks on base.
+  const preFoc = netRateApplied ? round2(netRate!) : round2(base * (1 - oglPct / 100));
 
   const final = round2(preFoc * (1 - focPct / 100));
 
@@ -59,7 +72,9 @@ export function computeLineRate(input: LineRateInput): LineRateResult {
     preFoc,
     final,
     netRateApplied,
+    netRateSource,
     partyDiscPct: netRateApplied ? 0 : partyDiscPct, // party % is inert when net rate wins
+    oglPct: netRateApplied ? 0 : oglPct,
     focPct,
     effectiveDiscPct: mrp > 0 ? round2((1 - final / mrp) * 100) : 0,
   };

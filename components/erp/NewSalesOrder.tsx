@@ -9,7 +9,7 @@ interface SkuOption {
   id: number; sku_code: string; name: string; price: number; unit: string;
   gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number; foc_pct: number;
 }
-interface CustomerOption { id: number; code: string; name: string; discount_pct: number }
+interface CustomerOption { id: number; code: string; name: string; discount_pct: number; ogl_pct: number; foc_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
 
 interface Line {
@@ -40,8 +40,17 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const [err, setErr] = useState("");
 
   const customer = customers.find((c) => c.id === customerId);
-  // The party's locked discount %, from the Party-rate master (customers.discount_pct).
+  // Party-level pricing inputs (all from the party masters, mirrored on customers):
+  //   Disc% + OGL% off MRP, and party FOC% applied last. Party×item net rates
+  //   are fetched per-customer into partyItemRates and win over everything.
   const discPct = customer?.discount_pct ?? 0;
+  const oglPct = customer?.ogl_pct ?? 0;
+  const partyFocPct = customer?.foc_pct ?? 0;
+  const [partyItemRates, setPartyItemRates] = useState<Map<number, number>>(new Map());
+  // Pricing context for a SKU — most-specific party×item rate (optional map override for freshly-fetched data).
+  function pctx(skuId: number, map: Map<number, number> = partyItemRates) {
+    return { discPct, oglPct, focPct: partyFocPct, partyItemNetRate: map.get(skuId) ?? 0 };
+  }
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
   const customerOptions = useMemo(
     () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: c.code })),
@@ -72,24 +81,34 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   // each item, the Rate Type (NET/MRP) and net rate are auto-fetched from the
   // party-wise net-rate file (NET if the party has a rate for it, else MRP).
   useEffect(() => {
-    if (!customer) return;
+    if (!customer) { setPartyItemRates(new Map()); return; }
     const party = customer.name;
-    const d = customer.discount_pct ?? 0;
     let cancelled = false;
     const snapshot = linesRef.current;
     setLines((ls) => ls.map((l) => {
       const sku = l.skuId ? skuById.get(l.skuId) : undefined;
       return sku ? { ...l, loadingRates: true } : l;
     }));
-    snapshot.forEach((l, idx) => {
-      if (!l.skuId) return;
-      const sku = skuById.get(l.skuId);
-      if (!sku) return;
-      loadRates(sku.name, party).then(({ partyRates, itemRates }) => {
-        if (cancelled) return;
-        updateLine(idx, { ...deriveRate(sku, partyRates, d), partyRates, itemRates, loadingRates: false });
+    (async () => {
+      // Party × item net rates for this customer (most-specific rate) — fetched once per party.
+      let map = new Map<number, number>();
+      try {
+        const r = await fetch(`/api/erp/masters/party-item-net-rate?customer_id=${customer.id}`);
+        const d = await r.json();
+        if (d.ok && d.map) map = new Map(Object.entries(d.map).map(([k, v]) => [Number(k), Number(v)]));
+      } catch { /* no party-item rates */ }
+      if (cancelled) return;
+      setPartyItemRates(map);
+      snapshot.forEach((l, idx) => {
+        if (!l.skuId) return;
+        const sku = skuById.get(l.skuId);
+        if (!sku) return;
+        loadRates(sku.name, party).then(({ partyRates, itemRates }) => {
+          if (cancelled) return;
+          updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id, map)), partyRates, itemRates, loadingRates: false });
+        });
       });
-    });
+    })();
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
@@ -111,9 +130,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     setDupError(null);
     if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", netApplied: false, loadingRates: false, itemRates: [], partyRates: [] }); return; }
     // optimistic default while we fetch the party-wise rate for this item
-    updateLine(idx, { skuId, ...deriveRate(sku, [], discPct), loadingRates: true, itemRates: [], partyRates: [] });
+    updateLine(idx, { skuId, ...deriveRate(sku, [], pctx(sku.id)), loadingRates: true, itemRates: [], partyRates: [] });
     const { partyRates, itemRates } = await loadRates(sku.name, customer?.name ?? null);
-    updateLine(idx, { ...deriveRate(sku, partyRates, discPct), partyRates, itemRates, loadingRates: false });
+    updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id)), partyRates, itemRates, loadingRates: false });
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
@@ -417,13 +436,18 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-// The auto-locked rate follows the shared 3-step waterfall (lib/erp/pricing):
-//   1. party disc% off MRP  →  2. global item net rate supersedes it (Y/N)  →
-//   3. FOC % applied last. Oracle party/market history stays as optional
-// suggestion chips below; it never silently overrides the waterfall.
-// `_partyRates` is accepted for call-site symmetry but no longer auto-applied.
-function deriveRate(sku: SkuOption, _partyRates: RateRow[], discPct: number): { price: number; rateType: string; netApplied: boolean } {
-  const r = computeLineRate({ mrp: sku.price, partyDiscPct: discPct, itemNetRate: sku.item_net_rate, focPct: sku.foc_pct });
+// The auto-locked rate follows the shared pricing waterfall (lib/erp/pricing):
+//   1. party×item net rate → global item net rate (most specific wins; Y/N flag)
+//   2. else party disc% then OGL% off MRP
+//   3. party FOC% applied last, on top of everything.
+// Oracle party/market history stays as optional suggestion chips below; it never
+// silently overrides the waterfall. `_partyRates` kept for call-site symmetry.
+interface PriceCtx { discPct: number; oglPct: number; focPct: number; partyItemNetRate: number }
+function deriveRate(sku: SkuOption, _partyRates: RateRow[], ctx: PriceCtx): { price: number; rateType: string; netApplied: boolean } {
+  const r = computeLineRate({
+    mrp: sku.price, partyDiscPct: ctx.discPct, oglPct: ctx.oglPct,
+    itemNetRate: sku.item_net_rate, partyItemNetRate: ctx.partyItemNetRate, focPct: ctx.focPct,
+  });
   return { price: r.final, rateType: r.netRateApplied ? "NET" : "MRP", netApplied: r.netRateApplied };
 }
 

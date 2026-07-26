@@ -65,6 +65,8 @@ export interface Customer {
   id: number; code: string; name: string; gst: string; email: string; phone: string;
   billing: string; shipping: string; credit_limit: number; payment_terms: string;
   discount_pct: number | null; discount_class_id: number | null;
+  ogl_pct?: number | null;  // party-wise OGL % (extra party discount)
+  foc_pct?: number | null;  // party-wise FOC % (applied last, on top of everything)
 }
 export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;

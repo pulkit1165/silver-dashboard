@@ -22,7 +22,10 @@ export default async function NewSalesOrderPage() {
         subtitle="Rate suggestions are pulled live from Oracle sales history (read-only) — nothing is ever written back to Oracle."
       />
       <NewSalesOrder
-        customers={customers.map((c) => ({ id: c.id, code: c.code, name: c.name, discount_pct: c.discount_pct ?? 0 }))}
+        customers={customers.map((c) => ({
+          id: c.id, code: c.code, name: c.name,
+          discount_pct: c.discount_pct ?? 0, ogl_pct: c.ogl_pct ?? 0, foc_pct: c.foc_pct ?? 0,
+        }))}
         skus={skus.map((s) => ({
           id: s.id, sku_code: s.sku_code, name: s.name, price: s.price, unit: s.unit,
           gst_rate: s.gst_rate ?? 18, master_qty: s.master_qty ?? 0, bal_qty: s.qty ?? 0,

@@ -75,6 +75,36 @@ const RULES: RuleDef[] = [
     detail: "The item_net_rates ledger keeps every prior value; the live value mirrors to skus.item_net_rate.",
     check: async () => (await tableExists("item_net_rates") ? ok("item_net_rates ledger present") : man("not created yet — set one net rate to initialise")),
   },
+  {
+    id: "price-ogl-stacks", module: "Sales · Pricing", icon: "↗",
+    title: "OGL % stacks after the party discount",
+    detail: "With no net rate, OGL is an extra party discount taken after the party Disc% (compounding).",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10 }); return near(r.final, 72) ? ok("₹100 − 20% then − 10% OGL = ₹72") : bad(`got ₹${r.final}`); },
+  },
+  {
+    id: "price-party-item-supersede", module: "Sales · Pricing", icon: "↗",
+    title: "Party-item net rate beats the global item net rate",
+    detail: "A party's own net rate for an item is the most specific rate and wins over the global item net rate.",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, itemNetRate: 60, partyItemNetRate: 55 }); return r.netRateSource === "party-item" && near(r.final, 55) ? ok("party ₹55 wins over global ₹60") : bad(`source=${r.netRateSource} final=₹${r.final}`); },
+  },
+  {
+    id: "price-foc-party-last", module: "Sales · Pricing", icon: "↗",
+    title: "Party FOC % is applied last, on top of everything",
+    detail: "FOC is a party-level % taken off whatever the party-disc / OGL / net-rate steps produced.",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, focPct: 10 }); return near(r.final, 64.8) ? ok("₹100 −20% −10% then −10% FOC = ₹64.80") : bad(`got ₹${r.final}`); },
+  },
+  {
+    id: "party-item-versioned", module: "Masters · Recency", icon: "💲",
+    title: "Party-item net rate master is versioned",
+    detail: "party_item_net_rates keeps every prior value; the latest per (party, item) is live on the sales order.",
+    check: async () => (await tableExists("party_item_net_rates") ? ok("party_item_net_rates ledger present") : man("not created yet — set one party-item rate to initialise")),
+  },
+  {
+    id: "party-pct-versioned", module: "Masters · Recency", icon: "💲",
+    title: "Party Disc% / OGL / FOC masters are versioned",
+    detail: "party_disc_history, party_ogl_history and party_foc_history keep full change history; the latest mirrors onto customers.",
+    check: async () => ((await tableExists("party_ogl_history")) && (await tableExists("party_foc_history")) ? ok("party OGL + FOC ledgers present") : man("not created yet — set one OGL/FOC value to initialise")),
+  },
 
   // ── Invoicing · GST ────────────────────────────────────────────────────
   {

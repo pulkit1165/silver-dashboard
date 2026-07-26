@@ -8,25 +8,25 @@ import { canWrite } from "@/lib/erp/rbac";
 export const dynamic = "force-dynamic";
 const PAGE_CAP = 600;
 
-// Party-wise Disc% (formerly "Party-wise Net Rate"): each customer's standing
-// discount % off MRP. Versioned — most recent value is live, every prior value kept.
-export default async function PartyDiscMasterPage({
+// Party-wise OGL: an extra party-level discount % that stacks on top of the
+// party Disc% (compounding) when no item net rate supersedes the line.
+export default async function PartyOglMasterPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const rows = await getCustomersWithPct("disc", sp.q, PAGE_CAP);
+  const rows = await getCustomersWithPct("ogl", sp.q, PAGE_CAP);
   const editable = canWrite(user.role, "rates");
   return (
     <>
       <PageHeader
-        title="Party-wise Disc%"
-        subtitle="Each customer's standing discount % off MRP — applied on the sales order unless an item net rate supersedes it. Versioned: the latest value is live everywhere, every prior value is kept."
+        title="Party-wise OGL"
+        subtitle="An extra party-level discount % — applied on top of the party Disc% (after it) when the line isn't on a fixed net rate. Versioned: latest value is live, every prior value kept."
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
-      <PartyPctMaster rows={rows} kind="disc" label="Disc%" editable={editable} />
+      <PartyPctMaster rows={rows} kind="ogl" label="OGL%" editable={editable} />
     </>
   );
 }
