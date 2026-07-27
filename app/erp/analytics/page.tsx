@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AnalyticsPage() {
   await getCurrentUser(); // gate to signed-in users
-  const data = await getAnalytics(365, new Date().toISOString());
+  const data = await getAnalytics(undefined, new Date().toISOString());
   return (
     <>
       <PageHeader

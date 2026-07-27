@@ -8,7 +8,8 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  const days = Number(new URL(req.url).searchParams.get("days")) || 365;
-  const data = await getAnalytics(days, new Date().toISOString());
+  const sp = new URL(req.url).searchParams;
+  const from = sp.get("from") || "", to = sp.get("to") || "";
+  const data = await getAnalytics(from && to ? { from, to } : undefined, new Date().toISOString());
   return NextResponse.json({ ok: true, data });
 }

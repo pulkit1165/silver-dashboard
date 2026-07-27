@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AnalyticsBundle, ItemRow } from "@/lib/erp/analytics";
 import { AreaTrend, RankedBars, Donut, StatTile, inr, num, CAT } from "./AnalyticsCharts";
 
@@ -8,11 +8,25 @@ type ReportKey =
   | "daily-sales" | "daily-purchase" | "sold-by-sku" | "by-category" | "top-customers"
   | "returning" | "slow-stock" | "insights" | "state" | "salesman" | "transporter" | "freight";
 
-const RANGES = [
-  { d: 7, label: "Last 7 days" }, { d: 30, label: "Last 30 days" },
-  { d: 90, label: "Last 90 days" }, { d: 365, label: "Last 12 months" },
+const isoDate = (d: Date) => { const p = (n: number) => String(n).padStart(2, "0"); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; };
+function presetRange(key: string): { from: string; to: string; label: string } {
+  const today = new Date();
+  const minus = (n: number) => { const d = new Date(today); d.setDate(d.getDate() - n); return isoDate(d); };
+  const t = isoDate(today);
+  switch (key) {
+    case "today": return { from: t, to: t, label: "Today" };
+    case "yesterday": { const y = minus(1); return { from: y, to: y, label: "Yesterday" }; }
+    case "7": return { from: minus(6), to: t, label: "Last 7 days" };
+    case "30": return { from: minus(29), to: t, label: "Last 30 days" };
+    case "90": return { from: minus(89), to: t, label: "Last 90 days" };
+    default: return { from: minus(364), to: t, label: "Last 12 months" };
+  }
+}
+const PRESETS = [
+  { key: "today", label: "Today" }, { key: "yesterday", label: "Yesterday" },
+  { key: "7", label: "Last 7 days" }, { key: "30", label: "Last 30 days" },
+  { key: "90", label: "Last 90 days" }, { key: "365", label: "Last 12 months" },
 ];
-const rangeLabel = (d: number) => RANGES.find((r) => r.d === d)?.label ?? "Last 12 months";
 const fmtTime = (iso: string) => { try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
 
@@ -25,15 +39,15 @@ const PENDING: Record<string, string> = {
 
 export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsBundle }) {
   const [data, setData] = useState(initial);
-  const [days, setDays] = useState(initial.days || 365);
+  const [label, setLabel] = useState("Last 12 months");
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<ReportKey | null>(null);
   const [refreshed, setRefreshed] = useState("");
   useEffect(() => { setRefreshed(fmtTime(data.generatedAt)); }, [data.generatedAt]);
 
-  async function setRange(d: number) {
-    setDays(d); setLoading(true);
-    try { const r = await fetch(`/api/erp/analytics/data?days=${d}`); const j = await r.json(); if (j.ok) setData(j.data); }
+  async function applyRange(from: string, to: string, lbl: string) {
+    setLabel(lbl); setLoading(true);
+    try { const r = await fetch(`/api/erp/analytics/data?from=${from}&to=${to}`); const j = await r.json(); if (j.ok) setData(j.data); }
     catch { /* keep current */ } finally { setLoading(false); }
   }
   const k = data.kpis;
@@ -42,14 +56,9 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
     <div className="flex flex-col gap-5">
       {/* toolbar — date range + refreshed */}
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
-          {RANGES.map((r) => (
-            <button key={r.d} onClick={() => setRange(r.d)}
-              className={`rounded-md px-3 py-1.5 text-xs font-bold ${days === r.d ? "bg-[var(--accent)] text-white" : "text-[var(--muted)] hover:bg-[var(--surface-2)]"}`}>
-              {r.label}
-            </button>
-          ))}
-        </div>
+        <DateRangeMenu label={label}
+          onPreset={(key) => { const p = presetRange(key); applyRange(p.from, p.to, p.label); }}
+          onCustom={(f, t) => applyRange(f, t, `${f} → ${t}`)} />
         {loading && <span className="text-xs font-semibold text-[var(--accent)]">Refreshing…</span>}
         <span className="ml-auto text-xs font-semibold text-[var(--muted-2)]">{refreshed && `Last refreshed ${refreshed}`}</span>
       </div>
@@ -62,7 +71,7 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <StatTile label={`Revenue · ${rangeLabel(days).replace("Last ", "")}`} value={inr(k.revenue)} sub={`${num(k.bills)} bills`} accent={CAT[1]} />
+        <StatTile label={`Revenue · ${label.replace("Last ", "")}`} value={inr(k.revenue)} sub={`${num(k.bills)} bills`} accent={CAT[1]} />
         <StatTile label="Avg order value" value={inr(k.aov)} accent={CAT[2]} />
         <StatTile label="Units sold" value={num(k.units)} accent={CAT[3]} />
         <StatTile label="Active SKUs" value={num(k.skus)} accent={CAT[4]} />
@@ -110,7 +119,53 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
         ))}
       </div>
 
-      {open && <ReportOverlay k={open} data={data} days={days} refreshed={refreshed} onClose={() => setOpen(null)} />}
+      {open && <ReportOverlay k={open} data={data} label={label} refreshed={refreshed} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+// ── Date-range menu (presets + custom picker) ───────────────────────────────
+function DateRangeMenu({ label, onPreset, onCustom }:
+  { label: string; onPreset: (key: string) => void; onCustom: (from: string, to: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [cf, setCf] = useState("");
+  const [ct, setCt] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+  return (
+    <div ref={ref} className="relative">
+      <button onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">
+        📅 {label} <span className="text-[var(--muted-2)]">▾</span>
+      </button>
+      {open && (
+        <div className="absolute z-30 mt-1 w-64 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-1.5 shadow-2xl">
+          {PRESETS.map((p) => (
+            <button key={p.key} onClick={() => { onPreset(p.key); setOpen(false); }}
+              className={`block w-full rounded-lg px-3 py-2 text-left text-sm font-semibold hover:bg-[var(--surface-2)] ${label === p.label ? "text-[var(--accent-strong)]" : ""}`}>
+              {p.label}
+            </button>
+          ))}
+          <div className="my-1 border-t border-[var(--border)]" />
+          <div className="px-2 py-1">
+            <div className="mb-1 text-[10px] font-bold uppercase text-[var(--muted)]">Custom range</div>
+            <div className="flex items-center gap-1">
+              <input type="date" value={cf} onChange={(e) => setCf(e.target.value)} className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1 text-xs" />
+              <span className="text-[var(--muted)]">→</span>
+              <input type="date" value={ct} onChange={(e) => setCt(e.target.value)} className="w-full rounded border border-[var(--border)] bg-[var(--surface)] px-1.5 py-1 text-xs" />
+            </div>
+            <button disabled={!cf || !ct}
+              onClick={() => { if (cf && ct) { const a = cf <= ct ? cf : ct, b = cf <= ct ? ct : cf; onCustom(a, b); setOpen(false); } }}
+              className="mt-1.5 w-full rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-bold text-white disabled:opacity-50">
+              Apply custom range
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -133,8 +188,8 @@ function Card({ title, icon, accent, children, onOpen, full, pending }:
 }
 
 // ── Full report overlay — Shopify report-detail style ───────────────────────
-function ReportOverlay({ k, data, days, refreshed, onClose }:
-  { k: ReportKey; data: AnalyticsBundle; days: number; refreshed: string; onClose: () => void }) {
+function ReportOverlay({ k, data, label, refreshed, onClose }:
+  { k: ReportKey; data: AnalyticsBundle; label: string; refreshed: string; onClose: () => void }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -162,7 +217,7 @@ function ReportOverlay({ k, data, days, refreshed, onClose }:
             <button onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">✕ Close</button>
           </div>
           <div className="mt-2 flex flex-wrap items-center gap-2 pb-2">
-            <Chip>📅 {rangeLabel(days)}</Chip>
+            <Chip>📅 {label}</Chip>
             <Chip>₹ INR</Chip>
             {summary && (
               <span className="ml-1 flex items-center gap-2 text-sm">

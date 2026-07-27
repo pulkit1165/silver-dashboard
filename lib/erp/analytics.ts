@@ -22,6 +22,23 @@ async function q(sql: string): Promise<Record<string, unknown>[]> {
   }
 }
 
+// A date window (YYYY-MM-DD, inclusive). Drives every sale query's WHERE clause.
+export type Range = { from: string; to: string };
+const isDate = (s: unknown) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+export function defaultRange(): Range {
+  const to = new Date(); const from = new Date(); from.setDate(from.getDate() - 364);
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  return { from: iso(from), to: iso(to) };
+}
+// `col >= from AND col < to+1` so the whole `to` day is included. Falls back to
+// last-365 if the range is malformed (values are format-validated, not user text).
+function within(r: Range | undefined, col = "trdate"): string {
+  if (r && isDate(r.from) && isDate(r.to)) {
+    return `${col} >= to_date('${r.from}','YYYY-MM-DD') and ${col} < to_date('${r.to}','YYYY-MM-DD')+1`;
+  }
+  return `${col} >= trunc(sysdate)-365`;
+}
+
 export type DailyPoint = { d: string; revenue: number; bills: number };
 export type PurchasePoint = { d: string; amount: number; bills: number };
 export type SkuRow = { code: string; name: string; units: number; revenue: number };
@@ -32,55 +49,55 @@ export type SlowRow = { code: string; name: string; qty: number; lastSale: strin
 export type ItemRow = { code: string; name: string; units: number; revenue: number };
 export type Kpis = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
 
-// Daily sales, last N days — VW_SALE_D (SALEAMOUNT = net of trade discount)
-export async function dailySales(days = 90): Promise<DailyPoint[]> {
+// Daily sales — VW_SALE_D (SALEAMOUNT = net of trade discount)
+export async function dailySales(range?: Range): Promise<DailyPoint[]> {
   const rows = await q(`select cast(to_char(trdate,'YYYY-MM-DD') as varchar2(30)) d,
       round(sum(saleamount)) revenue, count(*) bills
-    from VW_SALE_D where trdate >= trunc(sysdate)-${days}
+    from VW_SALE_D where ${within(range)}
     group by to_char(trdate,'YYYY-MM-DD') order by 1`);
   return rows.map((r) => ({ d: t(r.D), revenue: n(r.REVENUE), bills: n(r.BILLS) }));
 }
 
-// Daily purchase, last N days — DTC201 (BILLAMOUNT)
-export async function dailyPurchase(days = 90): Promise<PurchasePoint[]> {
+// Daily purchase — DTC201 (BILLAMOUNT)
+export async function dailyPurchase(range?: Range): Promise<PurchasePoint[]> {
   const rows = await q(`select cast(to_char(trdate,'YYYY-MM-DD') as varchar2(30)) d,
       round(sum(billamount)) amount, count(*) bills
-    from DTC201 where trdate >= trunc(sysdate)-${days}
+    from DTC201 where ${within(range)}
     group by to_char(trdate,'YYYY-MM-DD') order by 1`);
   return rows.map((r) => ({ d: t(r.D), amount: n(r.AMOUNT), bills: n(r.BILLS) }));
 }
 
 // Sold by SKU (units, highest → lowest) — VW_SALE_GST_D
-export async function soldBySku(days = 365, limit = 60): Promise<SkuRow[]> {
+export async function soldBySku(range?: Range, limit = 60): Promise<SkuRow[]> {
   const rows = await q(`select * from (
       select itemcode part_no, max(itemdescription) name,
              sum(quantity) units, round(sum(amount - nvl(discamt,0))) revenue
-        from VW_SALE_GST_D where trdate >= trunc(sysdate)-${days}
+        from VW_SALE_GST_D where ${within(range)}
        group by itemcode order by 3 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ code: t(r.PART_NO), name: t(r.NAME), units: n(r.UNITS), revenue: n(r.REVENUE) }));
 }
 
 // Sales by category — VW_SALE_GST_D × A_LABELPRINT (collapse the item master first)
-export async function salesByCategory(days = 365, limit = 12): Promise<CatRow[]> {
+export async function salesByCategory(range?: Range, limit = 12): Promise<CatRow[]> {
   const rows = await q(`select * from (
       select cast(nvl(l.itemcateg,'UNCATEGORIZED') as varchar2(60)) category,
              round(sum(s.amount - nvl(s.discamt,0))) revenue, sum(s.quantity) units
         from VW_SALE_GST_D s
         left join (select itemid, max(itemcateg) itemcateg from A_LABELPRINT group by itemid) l
           on s.itemid = l.itemid
-       where s.trdate >= trunc(sysdate)-${days}
+       where ${within(range, "s.trdate")}
        group by nvl(l.itemcateg,'UNCATEGORIZED') order by 2 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ category: t(r.CATEGORY), revenue: n(r.REVENUE), units: n(r.UNITS) }));
 }
 
 // Top customers (highest → lowest) — VW_SALE_D.ACNTDESC
-export async function topCustomers(days = 365, limit = 40): Promise<CustomerRow[]> {
+export async function topCustomers(range?: Range, limit = 40): Promise<CustomerRow[]> {
   const rows = await q(`select * from (
       select cast(acntdesc as varchar2(80)) customer,
              round(sum(saleamount)) revenue, count(*) bills
-        from VW_SALE_D where trdate >= trunc(sysdate)-${days}
+        from VW_SALE_D where ${within(range)}
        group by acntdesc order by 2 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ customer: t(r.CUSTOMER), revenue: n(r.REVENUE), bills: n(r.BILLS) }));
@@ -128,11 +145,11 @@ export async function slowMovingStock(limit = 60): Promise<SlowRow[]> {
 }
 
 // Headline KPIs — one round trip
-export async function analyticsKpis(days = 365): Promise<Kpis> {
+export async function analyticsKpis(range?: Range): Promise<Kpis> {
   const [a] = await q(`select round(sum(saleamount)) revenue, count(*) bills,
-       count(distinct acntdesc) customers from VW_SALE_D where trdate >= trunc(sysdate)-${days}`);
+       count(distinct acntdesc) customers from VW_SALE_D where ${within(range)}`);
   const [b] = await q(`select sum(quantity) units, count(distinct itemid) skus
-       from VW_SALE_GST_D where trdate >= trunc(sysdate)-${days}`);
+       from VW_SALE_GST_D where ${within(range)}`);
   const revenue = n(a?.REVENUE), bills = n(a?.BILLS);
   return {
     revenue, bills, customers: n(a?.CUSTOMERS),
@@ -143,7 +160,8 @@ export async function analyticsKpis(days = 365): Promise<Kpis> {
 
 export type AnalyticsBundle = {
   live: boolean;
-  days: number;
+  from: string;
+  to: string;
   generatedAt: string;
   kpis: Kpis;
   daily: DailyPoint[];
@@ -155,14 +173,12 @@ export type AnalyticsBundle = {
   slow: SlowRow[];
 };
 
-const WINDOWS = new Set([7, 30, 90, 365]);
-export async function getAnalytics(days = 365, nowIso = ""): Promise<AnalyticsBundle> {
-  if (!WINDOWS.has(days)) days = 365;
-  const trend = Math.min(days, 90); // daily trend caps at ~90 points for readability
+export async function getAnalytics(range?: Range, nowIso = ""): Promise<AnalyticsBundle> {
+  const r = range && isDate(range.from) && isDate(range.to) ? range : defaultRange();
   const [kpis, daily, purchase, sku, category, customers, returning, slow] = await Promise.all([
-    analyticsKpis(days), dailySales(trend), dailyPurchase(trend), soldBySku(days), salesByCategory(days),
-    topCustomers(days), returningCustomers(), slowMovingStock(),
+    analyticsKpis(r), dailySales(r), dailyPurchase(r), soldBySku(r), salesByCategory(r),
+    topCustomers(r), returningCustomers(), slowMovingStock(),
   ]);
   const live = isConfigured() && daily.length + sku.length + customers.length > 0;
-  return { live, days, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow };
+  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow };
 }
