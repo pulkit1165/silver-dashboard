@@ -57,6 +57,9 @@ const SYNC_TABLES = [
   { name: "VW_BANKBOOKPOST", keyCol: null,      dateCol: null, snapshot: true },
   { name: "VW_MRPLIST",      keyCol: "ITEMID",  dateCol: null },
   { name: "A_CURRCPM",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_SALE_GST_D",  keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_STOCK_REQ",   keyCol: "ITEMID",  dateCol: null },
+  { name: "A_LABELPRINT",   keyCol: null,      dateCol: null },
 ];
 
 const PAGE = 500, PAGE_DELAY = 400, TABLE_DELAY = 3000;
@@ -145,7 +148,7 @@ for (const def of tables) {
       source_table: def.name,
       source_key:   rowKey(row, def, snapDate, offset + i),
       fy:           fiscalYear(row, def),
-      data:         JSON.stringify(row),
+      data:         row,
     }));
 
     try {

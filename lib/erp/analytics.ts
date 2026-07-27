@@ -1,28 +1,14 @@
 import "server-only";
-import { runQuery, isConfigured } from "@/lib/oracle";
+import { getSql } from "@/lib/erp/db";
 
 // ── Analytics data layer ────────────────────────────────────────────────────
-// Runs on the LIVE Oracle sale views (the same verified objects the domain
-// dashboards use — VW_SALE_D header incl. ACNTDESC/SALEAMOUNT, VW_SALE_GST_D
-// lines, A_LABELPRINT item master, VW_STOCK_REQ stock). Every query fails safe
-// to [] so a down connector or one bad query degrades that card, never the page.
-// Oracle 11g syntax only (no FETCH FIRST — use rownum; cast literals wide).
+// Reads from oracle_raw (PostgreSQL JSONB) — NOT live Oracle.
+// Dates in oracle_raw are ISO-8601 UTC (Oracle midnight IST = 18:30 UTC prev day).
+// All date comparisons use AT TIME ZONE 'Asia/Kolkata' to get correct Indian dates.
 
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 const t = (v: unknown) => String(v ?? "");
-const esc = (s: string) => s.replace(/'/g, "''");
 
-async function q(sql: string): Promise<Record<string, unknown>[]> {
-  if (!isConfigured()) return [];
-  try {
-    const r = await runQuery(sql);
-    return (r.rows as Record<string, unknown>[]) ?? [];
-  } catch {
-    return [];
-  }
-}
-
-// A date window (YYYY-MM-DD, inclusive). Drives every sale query's WHERE clause.
 export type Range = { from: string; to: string };
 const isDate = (s: unknown) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
 export function defaultRange(): Range {
@@ -30,132 +16,254 @@ export function defaultRange(): Range {
   const iso = (d: Date) => d.toISOString().slice(0, 10);
   return { from: iso(from), to: iso(to) };
 }
-// `col >= from AND col < to+1` so the whole `to` day is included. Falls back to
-// last-365 if the range is malformed (values are format-validated, not user text).
-function within(r: Range | undefined, col = "trdate"): string {
-  if (r && isDate(r.from) && isDate(r.to)) {
-    return `${col} >= to_date('${r.from}','YYYY-MM-DD') and ${col} < to_date('${r.to}','YYYY-MM-DD')+1`;
-  }
-  return `${col} >= trunc(sysdate)-365`;
-}
 
-export type DailyPoint = { d: string; revenue: number; bills: number };
+export type DailyPoint  = { d: string; revenue: number; bills: number };
 export type PurchasePoint = { d: string; amount: number; bills: number };
-export type SkuRow = { code: string; name: string; units: number; revenue: number };
-export type CatRow = { category: string; revenue: number; units: number };
+export type SkuRow      = { code: string; name: string; units: number; revenue: number };
+export type CatRow      = { category: string; revenue: number; units: number };
 export type CustomerRow = { customer: string; revenue: number; bills: number };
-export type ReturnRow = { customer: string; bills: number; avgDays: number; lastBill: string };
-export type SlowRow = { code: string; name: string; qty: number; lastSale: string; daysIdle: number };
-export type ItemRow = { code: string; name: string; units: number; revenue: number };
-export type Kpis = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
+export type ReturnRow   = { customer: string; bills: number; avgDays: number; lastBill: string };
+export type SlowRow     = { code: string; name: string; qty: number; lastSale: string; daysIdle: number };
+export type ItemRow     = { code: string; name: string; units: number; revenue: number };
+export type Kpis        = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
 
-// Daily sales — VW_SALE_D (SALEAMOUNT = net of trade discount)
+// Daily sales grouped by Indian date — VW_SALE_D
 export async function dailySales(range?: Range): Promise<DailyPoint[]> {
-  const rows = await q(`select cast(to_char(trdate,'YYYY-MM-DD') as varchar2(30)) d,
-      round(sum(saleamount)) revenue, count(*) bills
-    from VW_SALE_D where ${within(range)}
-    group by to_char(trdate,'YYYY-MM-DD') order by 1`);
-  return rows.map((r) => ({ d: t(r.D), revenue: n(r.REVENUE), bills: n(r.BILLS) }));
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const rows = await sql<{ d: string; revenue: string; bills: string }[]>`
+      SELECT
+        ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS d,
+        ROUND(SUM((data->>'SALEAMOUNT')::numeric)) AS revenue,
+        COUNT(*) AS bills
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_D'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY 1 ORDER BY 1
+    `;
+    return rows.map(row => ({ d: t(row.d), revenue: n(row.revenue), bills: n(row.bills) }));
+  } catch { return []; }
 }
 
-// Daily purchase — DTC201 (BILLAMOUNT)
+// Daily purchase grouped by Indian date — DTC201
 export async function dailyPurchase(range?: Range): Promise<PurchasePoint[]> {
-  const rows = await q(`select cast(to_char(trdate,'YYYY-MM-DD') as varchar2(30)) d,
-      round(sum(billamount)) amount, count(*) bills
-    from DTC201 where ${within(range)}
-    group by to_char(trdate,'YYYY-MM-DD') order by 1`);
-  return rows.map((r) => ({ d: t(r.D), amount: n(r.AMOUNT), bills: n(r.BILLS) }));
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const rows = await sql<{ d: string; amount: string; bills: string }[]>`
+      SELECT
+        ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS d,
+        ROUND(SUM((data->>'BILLAMOUNT')::numeric)) AS amount,
+        COUNT(*) AS bills
+      FROM oracle_raw
+      WHERE source_table = 'DTC201'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY 1 ORDER BY 1
+    `;
+    return rows.map(row => ({ d: t(row.d), amount: n(row.amount), bills: n(row.bills) }));
+  } catch { return []; }
 }
 
-// Sold by SKU (units, highest → lowest) — VW_SALE_GST_D
+// Top SKUs by units sold — VW_SALE_GST_D
 export async function soldBySku(range?: Range, limit = 60): Promise<SkuRow[]> {
-  const rows = await q(`select * from (
-      select itemcode part_no, max(itemdescription) name,
-             sum(quantity) units, round(sum(amount - nvl(discamt,0))) revenue
-        from VW_SALE_GST_D where ${within(range)}
-       group by itemcode order by 3 desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ code: t(r.PART_NO), name: t(r.NAME), units: n(r.UNITS), revenue: n(r.REVENUE) }));
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const rows = await sql<{ code: string; name: string; units: string; revenue: string }[]>`
+      SELECT
+        data->>'ITEMCODE' AS code,
+        MAX(data->>'ITEMDESCRIPTION') AS name,
+        SUM((data->>'QUANTITY')::numeric) AS units,
+        ROUND(SUM((data->>'AMOUNT')::numeric - COALESCE((data->>'DISCAMT')::numeric, 0))) AS revenue
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_GST_D'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY data->>'ITEMCODE'
+      ORDER BY units DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ code: t(row.code), name: t(row.name), units: n(row.units), revenue: n(row.revenue) }));
+  } catch { return []; }
 }
 
-// Sales by category — VW_SALE_GST_D × A_LABELPRINT (collapse the item master first)
+// Sales by category — VW_SALE_GST_D × A_LABELPRINT
 export async function salesByCategory(range?: Range, limit = 12): Promise<CatRow[]> {
-  const rows = await q(`select * from (
-      select cast(nvl(l.itemcateg,'UNCATEGORIZED') as varchar2(60)) category,
-             round(sum(s.amount - nvl(s.discamt,0))) revenue, sum(s.quantity) units
-        from VW_SALE_GST_D s
-        left join (select itemid, max(itemcateg) itemcateg from A_LABELPRINT group by itemid) l
-          on s.itemid = l.itemid
-       where ${within(range, "s.trdate")}
-       group by nvl(l.itemcateg,'UNCATEGORIZED') order by 2 desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ category: t(r.CATEGORY), revenue: n(r.REVENUE), units: n(r.UNITS) }));
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const rows = await sql<{ category: string; revenue: string; units: string }[]>`
+      SELECT
+        COALESCE(a.data->>'ITEMCATEG', 'UNCATEGORIZED') AS category,
+        ROUND(SUM((s.data->>'AMOUNT')::numeric - COALESCE((s.data->>'DISCAMT')::numeric, 0))) AS revenue,
+        SUM((s.data->>'QUANTITY')::numeric) AS units
+      FROM oracle_raw s
+      LEFT JOIN oracle_raw a
+        ON a.source_table = 'A_LABELPRINT'
+        AND a.data->>'ITEMID' = s.data->>'ITEMID'
+      WHERE s.source_table = 'VW_SALE_GST_D'
+        AND (s.data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (s.data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY COALESCE(a.data->>'ITEMCATEG', 'UNCATEGORIZED')
+      ORDER BY revenue DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ category: t(row.category), revenue: n(row.revenue), units: n(row.units) }));
+  } catch { return []; }
 }
 
-// Top customers (highest → lowest) — VW_SALE_D.ACNTDESC
+// Top customers by revenue — VW_SALE_D
 export async function topCustomers(range?: Range, limit = 40): Promise<CustomerRow[]> {
-  const rows = await q(`select * from (
-      select cast(acntdesc as varchar2(80)) customer,
-             round(sum(saleamount)) revenue, count(*) bills
-        from VW_SALE_D where ${within(range)}
-       group by acntdesc order by 2 desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ customer: t(r.CUSTOMER), revenue: n(r.REVENUE), bills: n(r.BILLS) }));
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const rows = await sql<{ customer: string; revenue: string; bills: string }[]>`
+      SELECT
+        data->>'ACNTDESC' AS customer,
+        ROUND(SUM((data->>'SALEAMOUNT')::numeric)) AS revenue,
+        COUNT(*) AS bills
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_D'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY data->>'ACNTDESC'
+      ORDER BY revenue DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ customer: t(row.customer), revenue: n(row.revenue), bills: n(row.bills) }));
+  } catch { return []; }
 }
 
-// A customer's items bought (highest → lowest) — join lines to header by TRMID
+// A customer's items bought — VW_SALE_GST_D has ACNTDESC directly
 export async function customerItems(customer: string, limit = 25): Promise<ItemRow[]> {
-  const rows = await q(`select * from (
-      select g.itemcode code, max(g.itemdescription) name,
-             sum(g.quantity) units, round(sum(g.amount - nvl(g.discamt,0))) revenue
-        from VW_SALE_GST_D g
-        join VW_SALE_D d on d.trmid = g.trmid
-       where d.acntdesc = '${esc(customer)}' and g.trdate >= trunc(sysdate)-365
-       group by g.itemcode order by 4 desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ code: t(r.CODE), name: t(r.NAME), units: n(r.UNITS), revenue: n(r.REVENUE) }));
+  try {
+    const sql = getSql();
+    const rows = await sql<{ code: string; name: string; units: string; revenue: string }[]>`
+      SELECT
+        data->>'ITEMCODE' AS code,
+        MAX(data->>'ITEMDESCRIPTION') AS name,
+        SUM((data->>'QUANTITY')::numeric) AS units,
+        ROUND(SUM((data->>'AMOUNT')::numeric - COALESCE((data->>'DISCAMT')::numeric, 0))) AS revenue
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_GST_D'
+        AND data->>'ACNTDESC' = ${customer}
+        AND (data->>'TRDATE')::timestamptz >= (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata' - interval '365 days')
+      GROUP BY data->>'ITEMCODE'
+      ORDER BY revenue DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ code: t(row.code), name: t(row.name), units: n(row.units), revenue: n(row.revenue) }));
+  } catch { return []; }
 }
 
 // Returning customers: average days between bills — VW_SALE_D
 export async function returningCustomers(limit = 50): Promise<ReturnRow[]> {
-  const rows = await q(`select * from (
-      select cast(acntdesc as varchar2(80)) customer, count(*) bills,
-             round((cast(max(trdate) as date) - cast(min(trdate) as date)) / nullif(count(*)-1,0), 1) avg_days,
-             cast(to_char(max(trdate),'YYYY-MM-DD') as varchar2(30)) last_bill
-        from VW_SALE_D group by acntdesc
-       having count(*) >= 2
-       order by 2 desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ customer: t(r.CUSTOMER), bills: n(r.BILLS), avgDays: n(r.AVG_DAYS), lastBill: t(r.LAST_BILL) }));
+  try {
+    const sql = getSql();
+    const rows = await sql<{ customer: string; bills: string; avg_days: string; last_bill: string }[]>`
+      SELECT
+        data->>'ACNTDESC' AS customer,
+        COUNT(*) AS bills,
+        ROUND(
+          (MAX(((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date)
+           - MIN(((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date)
+          )::numeric / NULLIF(COUNT(*) - 1, 0), 1
+        ) AS avg_days,
+        MAX(((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date)::text AS last_bill
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_D'
+      GROUP BY data->>'ACNTDESC'
+      HAVING COUNT(*) >= 2
+      ORDER BY bills DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({
+      customer: t(row.customer),
+      bills: n(row.bills),
+      avgDays: n(row.avg_days),
+      lastBill: t(row.last_bill),
+    }));
+  } catch { return []; }
 }
 
-// Slow-moving stock: on hand, days since last sale (never = 9999) — VW_STOCK_REQ
+// Slow-moving stock: items with stock > 0, sorted by days since last sale — VW_STOCK_REQ × VW_SALE_GST_D
 export async function slowMovingStock(limit = 60): Promise<SlowRow[]> {
-  const rows = await q(`select * from (
-      select s.itemcode part_no, s.itemdesc name, s.stock qty,
-             cast(nvl(to_char(ls.last_sale,'YYYY-MM-DD'),'never') as varchar2(30)) last_sale,
-             nvl(trunc(sysdate) - ls.last_sale, 9999) days_idle
-        from VW_STOCK_REQ s
-        left join (select itemid, max(trdate) last_sale from VW_SALE_GST_D group by itemid) ls
-          on s.itemid = ls.itemid
-       where s.stock > 0
-       order by days_idle desc, s.stock desc)
-    where rownum <= ${limit}`);
-  return rows.map((r) => ({ code: t(r.PART_NO), name: t(r.NAME), qty: n(r.QTY), lastSale: t(r.LAST_SALE), daysIdle: n(r.DAYS_IDLE) }));
+  try {
+    const sql = getSql();
+    const rows = await sql<{ code: string; name: string; qty: string; last_sale: string; days_idle: string }[]>`
+      SELECT
+        s.data->>'ITEMCODE' AS code,
+        s.data->>'ITEMDESC' AS name,
+        (s.data->>'STOCK')::numeric AS qty,
+        COALESCE(
+          MAX(((g.data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date)::text,
+          'never'
+        ) AS last_sale,
+        COALESCE(
+          (CURRENT_DATE AT TIME ZONE 'Asia/Kolkata')::date
+          - MAX(((g.data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date),
+          9999
+        ) AS days_idle
+      FROM oracle_raw s
+      LEFT JOIN oracle_raw g
+        ON g.source_table = 'VW_SALE_GST_D'
+        AND g.data->>'ITEMID' = s.data->>'ITEMID'
+      WHERE s.source_table = 'VW_STOCK_REQ'
+        AND (s.data->>'STOCK')::numeric > 0
+      GROUP BY s.data->>'ITEMCODE', s.data->>'ITEMDESC', (s.data->>'STOCK')::numeric
+      ORDER BY days_idle DESC, qty DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({
+      code: t(row.code),
+      name: t(row.name),
+      qty: n(row.qty),
+      lastSale: t(row.last_sale),
+      daysIdle: n(row.days_idle),
+    }));
+  } catch { return []; }
 }
 
-// Headline KPIs — one round trip
+// Headline KPIs — VW_SALE_D for revenue/bills/customers, VW_SALE_GST_D for units/skus
 export async function analyticsKpis(range?: Range): Promise<Kpis> {
-  const [a] = await q(`select round(sum(saleamount)) revenue, count(*) bills,
-       count(distinct acntdesc) customers from VW_SALE_D where ${within(range)}`);
-  const [b] = await q(`select sum(quantity) units, count(distinct itemid) skus
-       from VW_SALE_GST_D where ${within(range)}`);
-  const revenue = n(a?.REVENUE), bills = n(a?.BILLS);
-  return {
-    revenue, bills, customers: n(a?.CUSTOMERS),
-    units: n(b?.UNITS), skus: n(b?.SKUS),
-    aov: bills > 0 ? Math.round(revenue / bills) : 0,
-  };
+  const r = range ?? defaultRange();
+  try {
+    const sql = getSql();
+    const [saleRows, lineRows] = await Promise.all([
+      sql<{ revenue: string; bills: string; customers: string }[]>`
+        SELECT
+          ROUND(SUM((data->>'SALEAMOUNT')::numeric)) AS revenue,
+          COUNT(*) AS bills,
+          COUNT(DISTINCT data->>'ACNTDESC') AS customers
+        FROM oracle_raw
+        WHERE source_table = 'VW_SALE_D'
+          AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+          AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      `,
+      sql<{ units: string; skus: string }[]>`
+        SELECT
+          SUM((data->>'QUANTITY')::numeric) AS units,
+          COUNT(DISTINCT data->>'ITEMID') AS skus
+        FROM oracle_raw
+        WHERE source_table = 'VW_SALE_GST_D'
+          AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+          AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      `,
+    ]);
+    const revenue = n(saleRows[0]?.revenue), bills = n(saleRows[0]?.bills);
+    return {
+      revenue, bills,
+      customers: n(saleRows[0]?.customers),
+      units: n(lineRows[0]?.units),
+      skus: n(lineRows[0]?.skus),
+      aov: bills > 0 ? Math.round(revenue / bills) : 0,
+    };
+  } catch {
+    return { revenue: 0, bills: 0, units: 0, skus: 0, customers: 0, aov: 0 };
+  }
 }
 
 export type AnalyticsBundle = {
@@ -179,6 +287,6 @@ export async function getAnalytics(range?: Range, nowIso = ""): Promise<Analytic
     analyticsKpis(r), dailySales(r), dailyPurchase(r), soldBySku(r), salesByCategory(r),
     topCustomers(r), returningCustomers(), slowMovingStock(),
   ]);
-  const live = isConfigured() && daily.length + sku.length + customers.length > 0;
+  const live = daily.length + sku.length + customers.length > 0;
   return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow };
 }

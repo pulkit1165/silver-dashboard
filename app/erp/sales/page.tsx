@@ -4,7 +4,7 @@ import ListFilters from "@/components/erp/ListFilters";
 import { getSalesOrders } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { runQuery, isConfigured } from "@/lib/oracle";
+import { getSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = {
@@ -30,26 +30,34 @@ export default async function SalesOrdersPage({
   let oracleRows: OracleRow[] = [];
   let oracleNote: string | null = null;
   if (tab === "oracle") {
-    if (!isConfigured()) {
-      oracleNote = "Oracle connector not configured.";
-    } else {
-      const party = sp.party?.trim() ? `'%${sp.party.trim().replace(/'/g, "''")}%'` : null;
-      const from = sp.from?.trim() ? `'${sp.from.trim()}'` : null;
-      const to = sp.to?.trim() ? `'${sp.to.trim()}'` : null;
-      const sql = `
-        SELECT TRMID, TO_CHAR(TRDATE,'YYYY-MM-DD') AS TRDATE,
-               ACNTDESC, BILLAMOUNT, SALEAMOUNT, AGENT
-        FROM VW_SALE_D
-        WHERE TRDATE >= ADD_MONTHS(SYSDATE,-18)
-          ${party ? `AND UPPER(ACNTDESC) LIKE UPPER(${party})` : ""}
-          ${from ? `AND TRDATE >= TO_DATE(${from},'YYYY-MM-DD')` : ""}
-          ${to ? `AND TRDATE <= TO_DATE(${to},'YYYY-MM-DD')` : ""}
-        ORDER BY TRDATE DESC`;
-      const result = await runQuery(sql).catch((e: Error) => {
-        oracleNote = `Oracle query failed: ${e.message}`;
-        return { rows: [] as OracleRow[] };
-      });
-      oracleRows = result.rows as OracleRow[];
+    try {
+      const db = getSql();
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 18);
+      const cutoffStr = cutoff.toISOString().slice(0, 10);
+      const party = sp.party?.trim() || null;
+      const spFrom = sp.from?.trim() || null;
+      const spTo = sp.to?.trim() || null;
+      const partyCond = party ? db`AND UPPER(data->>'ACNTDESC') LIKE UPPER(${'%' + party + '%'})` : db``;
+      const fromCond = spFrom ? db`AND (data->>'TRDATE')::timestamptz >= ${spFrom}::date::timestamp AT TIME ZONE 'Asia/Kolkata'` : db``;
+      const toCond = spTo ? db`AND (data->>'TRDATE')::timestamptz < (${spTo}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'` : db``;
+      oracleRows = await db`
+        SELECT
+          data->>'TRMID' AS "TRMID",
+          ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS "TRDATE",
+          data->>'ACNTDESC' AS "ACNTDESC",
+          (data->>'BILLAMOUNT')::numeric AS "BILLAMOUNT",
+          (data->>'SALEAMOUNT')::numeric AS "SALEAMOUNT",
+          data->>'AGENT' AS "AGENT"
+        FROM oracle_raw
+        WHERE source_table = 'VW_SALE_D'
+          AND (data->>'TRDATE')::timestamptz >= ${cutoffStr}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+          ${partyCond}
+          ${fromCond}
+          ${toCond}
+        ORDER BY (data->>'TRDATE')::timestamptz DESC
+      ` as OracleRow[];
+    } catch (e) {
+      oracleNote = `Query failed: ${(e as Error).message}`;
     }
   }
 
@@ -163,7 +171,7 @@ export default async function SalesOrdersPage({
                     </tr>
                   ))}
                   {oracleRows.length === 0 && (
-                    <tr><td colSpan={5} className="py-8 text-center text-[var(--muted)]">No Oracle records found{isConfigured() ? " for this period/filter." : " — connector not connected."}</td></tr>
+                    <tr><td colSpan={5} className="py-8 text-center text-[var(--muted)]">No records found for this period/filter.</td></tr>
                   )}
                 </tbody>
               </table>

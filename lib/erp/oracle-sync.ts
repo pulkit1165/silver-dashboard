@@ -32,6 +32,9 @@ export const SYNC_TABLES: TableDef[] = [
   { name: "VW_BANKBOOKPOST", label: "Bank Book Ledger",     keyCol: null,      dateCol: null, snapshot: true },
   { name: "VW_MRPLIST",      label: "Item / MRP Master",    keyCol: "ITEMID",  dateCol: null },
   { name: "A_CURRCPM",       label: "Cost Price Master",    keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_SALE_GST_D",  label: "Sales Lines GST",      keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_STOCK_REQ",   label: "Stock Requirements",   keyCol: "ITEMID",  dateCol: null },
+  { name: "A_LABELPRINT",   label: "Item Labels / Categ.", keyCol: null,      dateCol: null },
 ];
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -134,7 +137,7 @@ export async function syncTable(
         source_table: def.name,
         source_key:   rowKey(row, def, snapDate, offset + i),
         fy:           fiscalYear(row, def),
-        data:         JSON.stringify(row),
+        data:         row,
       }));
 
       await db`
