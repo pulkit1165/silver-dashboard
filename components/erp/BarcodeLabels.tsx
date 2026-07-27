@@ -173,6 +173,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
           printerId: pnPrinterId, w: dims.w, h: dims.h,
+          // which end the pre-printed address sits on, so the print lands in the
+          // white half and the content auto-fits that zone
+          layout: { pos: contentPos },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
             masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,

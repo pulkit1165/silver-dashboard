@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { printLabels, type LabelData } from "@/lib/erp/printnode";
+import { printLabels, type LabelData, type LayoutOpts } from "@/lib/erp/printnode";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
@@ -25,7 +25,15 @@ export async function POST(req: Request) {
   if (!printerId) return NextResponse.json({ ok: false, error: "No printer selected." }, { status: 400 });
   if (!labels.length) return NextResponse.json({ ok: false, error: "No labels to print." }, { status: 400 });
 
-  const results = await printLabels(printerId, labels, w, h);
+  const lay = (body.layout ?? {}) as Record<string, unknown>;
+  const opts: LayoutOpts = {
+    pos: lay.pos === "bottom" ? "bottom" : "top",
+    large: !!lay.large,
+    ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
+    ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
+    ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
+  };
+  const results = await printLabels(printerId, labels, w, h, opts);
   const sent = results.filter((r) => r.ok).length;
   return NextResponse.json({ ok: sent > 0, sent, total: results.length, results });
 }

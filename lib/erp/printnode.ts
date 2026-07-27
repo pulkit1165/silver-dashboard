@@ -69,44 +69,63 @@ function wrapText(s: string, font: string, maxDots: number, maxLines: number): s
 }
 const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
-export function buildTSPL(l: LabelData, w: number, h: number): string {
+// Per-size layout: `pos` says which end carries the pre-printed address (so we
+// print into the OTHER half); the optional mm overrides let the operator nudge.
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom" };
+
+export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): string {
   const dp = 8;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   const pad = Math.round(2 * dp);
-  const top = Math.round(Hd * 0.13);       // a little space at the top
-  const bottom = Math.round(Hd * 0.66);    // content area; below = pre-printed address
-  const qrX = Math.round(4 * dp);          // 4mm in from the left so the QR never clips
-  const qrY = top;
-  // Biggest QR that fits BOTH the content height and ~half the label width — so
-  // it scales up on big labels. NOTE: TSPL QRCODE cell width maxes at 10; going
-  // higher makes the printer silently drop the QR, so 10 is the hard cap.
-  const qrByH = Math.floor((bottom - qrY) / 25);
-  const qrByW = Math.floor((Wd * 0.5) / 25);
-  const qrCell = Math.max(5, Math.min(10, qrByH, qrByW));
-  const qrPx = qrCell * 25;
-  const textX = qrX + qrPx + Math.round(3 * dp);
-  const textW = Wd - textX - pad;
+  const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
-  // Fonts scale with label height so text is big on big labels.
-  const big = h >= 60, med = h >= 45;
+  // ── White printable zone ─────────────────────────────────────────────────
+  // The pre-printed address sits on one end (~30% of the label); we print into
+  // the rest. `pos: "top"` = address at bottom → print in the TOP zone (green
+  // labels); `"bottom"` = banner at top → print in the BOTTOM zone (red label).
+  const pos = opts.pos === "bottom" ? "bottom" : "top";
+  const top = opts.topMM != null
+    ? Math.max(0, Math.round(opts.topMM * dp))
+    : Math.round(Hd * (pos === "bottom" ? 0.30 : 0.05));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.95 : 0.70));
+  const zoneH = Math.max(25, bottom - top);
+  const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(3 * dp);
+
+  // QR: explicit mm, else the biggest that fits BOTH the zone height and ~half
+  // the width. TSPL QRCODE cell width maxes at 10 (higher → printer drops it).
+  const autoCell = Math.max(4, Math.min(10, Math.floor(zoneH / 25), Math.floor((Wd * 0.5) / 25)));
+  const qrCell = opts.qrMM != null ? Math.max(4, Math.min(10, Math.round((opts.qrMM * dp) / 25))) : autoCell;
+  const qrPx = qrCell * 25;
+  const qrY = top + Math.max(0, Math.round((zoneH - qrPx) / 2)); // centre the QR in the zone
+  const textX = qrX + qrPx + Math.round(3 * dp);
+  const textW = Math.max(4 * dp, Wd - textX - pad);
+
+  // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
+  // 70×40 = medium (was tiny), 50×30 = small.
+  const big = h >= 54 || (!!opts.large && h >= 40);
+  const med = h >= 38 || (!!opts.large && h >= 26);
   const skuF = big ? "5" : med ? "4" : "3";
   const nameF = big ? "5" : med ? "4" : "3";
   const qtyF = big ? "4" : med ? "3" : "2";
-  const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
-  const nameLines = wrapText(esc(l.name), nameF, textW, 2);
+  // Fit the name to at most 2 lines — but drop to 1 line if 2 wouldn't fit the zone.
+  let nameLines = wrapText(esc(l.name), nameF, textW, 2);
+  const heightOf = (nl: number) => lh(skuF) + nl * lh(nameF) + 2 * lh(qtyF);
+  if (heightOf(nameLines.length) > zoneH && nameLines.length > 1) nameLines = nameLines.slice(0, 1);
 
-  // Vertically centre the text block against the QR so the label looks balanced
-  // (was top-anchored, leaving the big labels looking half-empty).
-  const contentH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
+  // Centre the text block against the QR, then clamp so it stays inside the zone.
+  const contentH = heightOf(nameLines.length);
   let cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2));
+  if (cy + contentH > bottom) cy = bottom - contentH;
+  if (cy < top) cy = top;
+
   const rows: string[] = [];
   rows.push(`TEXT ${textX},${cy},"${skuF}",0,1,1,"${fitText(esc(l.sku_code), skuF, textW)}"`); cy += lh(skuF);
   for (const nl of nameLines) { rows.push(`TEXT ${textX},${cy},"${nameF}",0,1,1,"${nl}"`); cy += lh(nameF); }
-  // QTY and MRP on SEPARATE lines — combined on one line the MRP overran the text
-  // width and got cut to "MRP.R." on the bigger labels. Each short line fits fully.
+  // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
+  // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
   rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qtyStr), qtyF, textW)}"`); cy += lh(qtyF);
   rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`);
 
@@ -128,10 +147,10 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   ].join("\r\n");
 }
 
-export async function printLabels(printerId: number, labels: LabelData[], w: number, h: number) {
+export async function printLabels(printerId: number, labels: LabelData[], w: number, h: number, opts: LayoutOpts = {}) {
   const out: Array<{ token: string; ok: boolean; job?: unknown; error?: string }> = [];
   for (const l of labels) {
-    const tspl = buildTSPL(l, w, h);
+    const tspl = buildTSPL(l, w, h, opts);
     const body = {
       printerId,
       title: `Silver label ${l.qrToken}`,
