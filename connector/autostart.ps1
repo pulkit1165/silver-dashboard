@@ -33,7 +33,7 @@ Start-Sleep 3
 # Start ngrok with your permanent static domain
 # REPLACE the domain below with your actual ngrok static domain
 Start-Process -FilePath $ngrok `
-  -ArgumentList "http","--domain=ammonia-margarine-haphazard.ngrok-free.dev","8151" `
+  -ArgumentList "http","--domain=ashen-tameness-haziness.ngrok-free.dev","8151" `
   -WindowStyle Hidden `
   -RedirectStandardOutput "$c2\ngrok.log" `
   -RedirectStandardError  "$c2\ngrok-err.log"
