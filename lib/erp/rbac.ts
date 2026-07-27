@@ -24,6 +24,7 @@ export const NAV: NavGroup[] = [
       { href: "/", label: "Home", icon: "⌂", roles: ALL },
       { href: "/erp", label: "ERP Dashboard", icon: "▥", roles: ALL },
       { href: "/erp/activity", label: "Activity Feed", icon: "⚡", roles: ALL },
+      { href: "/erp/analytics", label: "Analytics", icon: "📊", roles: ["admin", "accounts", "sales", "purchase", "inventory"] },
       { href: "/erp/checklist", label: "Process Checklist", icon: "✔", roles: ALL },
       { href: "/erp/rulebook", label: "Rule Book", icon: "✅", roles: ALL },
     ],
