@@ -71,6 +71,8 @@ function rowKey(row, def, snapDate, idx) {
   }
   const d = row[def.dateCol ?? "TRDATE"] ?? row["TRDATE"];
   if (d) parts.push(d);
+  // Always include global idx as tiebreaker to prevent duplicate-key errors
+  parts.push(String(idx));
   return parts.length ? parts.join("|") : `IDX_${snapDate}_${idx}`;
 }
 
