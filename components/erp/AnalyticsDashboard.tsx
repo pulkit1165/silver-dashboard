@@ -8,6 +8,14 @@ type ReportKey =
   | "daily-sales" | "daily-purchase" | "sold-by-sku" | "by-category" | "top-customers"
   | "returning" | "slow-stock" | "insights" | "state" | "salesman" | "transporter" | "freight";
 
+const RANGES = [
+  { d: 7, label: "Last 7 days" }, { d: 30, label: "Last 30 days" },
+  { d: 90, label: "Last 90 days" }, { d: 365, label: "Last 12 months" },
+];
+const rangeLabel = (d: number) => RANGES.find((r) => r.d === d)?.label ?? "Last 12 months";
+const fmtTime = (iso: string) => { try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
+const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
+
 const PENDING: Record<string, string> = {
   state: "State-wise sale needs a party→state (GST state code) mapping in the Oracle sale view. Once the party master's state column is confirmed, this renders an India choropleth + a ranked state table.",
   salesman: "Sale-by-salesman needs the salesman/agent column on the sale header (VW_SALE_D). Confirm the column and this becomes a ranked salesman leaderboard with trend.",
@@ -15,12 +23,37 @@ const PENDING: Record<string, string> = {
   freight: "Freight expense needs the freight/other-charges column on the invoice. Once mapped, this trends freight cost and freight as a % of sales.",
 };
 
-export default function AnalyticsDashboard({ data }: { data: AnalyticsBundle }) {
+export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsBundle }) {
+  const [data, setData] = useState(initial);
+  const [days, setDays] = useState(initial.days || 365);
+  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState<ReportKey | null>(null);
+  const [refreshed, setRefreshed] = useState("");
+  useEffect(() => { setRefreshed(fmtTime(data.generatedAt)); }, [data.generatedAt]);
+
+  async function setRange(d: number) {
+    setDays(d); setLoading(true);
+    try { const r = await fetch(`/api/erp/analytics/data?days=${d}`); const j = await r.json(); if (j.ok) setData(j.data); }
+    catch { /* keep current */ } finally { setLoading(false); }
+  }
   const k = data.kpis;
 
   return (
     <div className="flex flex-col gap-5">
+      {/* toolbar — date range + refreshed */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-lg border border-[var(--border)] bg-[var(--surface)] p-0.5">
+          {RANGES.map((r) => (
+            <button key={r.d} onClick={() => setRange(r.d)}
+              className={`rounded-md px-3 py-1.5 text-xs font-bold ${days === r.d ? "bg-[var(--accent)] text-white" : "text-[var(--muted)] hover:bg-[var(--surface-2)]"}`}>
+              {r.label}
+            </button>
+          ))}
+        </div>
+        {loading && <span className="text-xs font-semibold text-[var(--accent)]">Refreshing…</span>}
+        <span className="ml-auto text-xs font-semibold text-[var(--muted-2)]">{refreshed && `Last refreshed ${refreshed}`}</span>
+      </div>
+
       {!data.live && (
         <div className="rounded-xl border border-[var(--warning)] bg-[var(--warning-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--warning)]">
           ⚠ Live Oracle link is not returning data right now — reports show empty. They populate automatically once the connector is up.
@@ -29,12 +62,12 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsBundle }) 
 
       {/* KPI strip */}
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
-        <StatTile label="Revenue · 12mo" value={inr(k.revenue)} sub={`${num(k.bills)} bills`} accent={CAT[1]} />
+        <StatTile label={`Revenue · ${rangeLabel(days).replace("Last ", "")}`} value={inr(k.revenue)} sub={`${num(k.bills)} bills`} accent={CAT[1]} />
         <StatTile label="Avg order value" value={inr(k.aov)} accent={CAT[2]} />
         <StatTile label="Units sold" value={num(k.units)} accent={CAT[3]} />
         <StatTile label="Active SKUs" value={num(k.skus)} accent={CAT[4]} />
         <StatTile label="Customers" value={num(k.customers)} accent={CAT[5]} />
-        <StatTile label="Bills · 12mo" value={num(k.bills)} accent={CAT[0]} />
+        <StatTile label="Bills" value={num(k.bills)} accent={CAT[0]} />
       </div>
 
       {/* Report cards */}
@@ -77,7 +110,7 @@ export default function AnalyticsDashboard({ data }: { data: AnalyticsBundle }) 
         ))}
       </div>
 
-      {open && <ReportOverlay k={open} data={data} onClose={() => setOpen(null)} />}
+      {open && <ReportOverlay k={open} data={data} days={days} refreshed={refreshed} onClose={() => setOpen(null)} />}
     </div>
   );
 }
@@ -99,8 +132,9 @@ function Card({ title, icon, accent, children, onOpen, full, pending }:
   );
 }
 
-// ── Full report overlay ─────────────────────────────────────────────────────
-function ReportOverlay({ k, data, onClose }: { k: ReportKey; data: AnalyticsBundle; onClose: () => void }) {
+// ── Full report overlay — Shopify report-detail style ───────────────────────
+function ReportOverlay({ k, data, days, refreshed, onClose }:
+  { k: ReportKey; data: AnalyticsBundle; days: number; refreshed: string; onClose: () => void }) {
   useEffect(() => {
     const h = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", h);
@@ -113,12 +147,31 @@ function ReportOverlay({ k, data, onClose }: { k: ReportKey; data: AnalyticsBund
     "slow-stock": "Slow-moving Stock", "insights": "AI Insights", "state": "State-wise Sale",
     "salesman": "Sale by Salesman", "transporter": "Transporter Workload", "freight": "Freight Expense",
   };
+  const summary = reportSummary(k, data);
   return (
     <div className="fixed inset-0 z-50 flex justify-center bg-black/40 p-2 sm:p-6" onClick={onClose}>
       <div className="flex max-h-full w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--background)] shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface)] px-5 py-3">
-          <h2 className="text-lg font-extrabold">{titles[k]}</h2>
-          <button onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">✕ Close</button>
+        {/* header */}
+        <div className="border-b border-[var(--border)] bg-[var(--surface)] px-5 pt-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[var(--muted-2)]">▤</span>
+              <h2 className="text-lg font-extrabold">{titles[k]}</h2>
+              {refreshed && <span className="text-xs font-semibold text-[var(--muted-2)]">Last refreshed {refreshed}</span>}
+            </div>
+            <button onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">✕ Close</button>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2 pb-2">
+            <Chip>📅 {rangeLabel(days)}</Chip>
+            <Chip>₹ INR</Chip>
+            {summary && (
+              <span className="ml-1 flex items-center gap-2 text-sm">
+                <span className="h-2 w-2 rounded-full bg-[var(--accent-2)]" />
+                <b className="tabular-nums">{summary.total}</b>
+                <span className="text-[var(--muted)]">{summary.label}</span>
+              </span>
+            )}
+          </div>
         </div>
         <div className="overflow-auto p-5">
           <ReportBody k={k} data={data} />
@@ -126,6 +179,23 @@ function ReportOverlay({ k, data, onClose }: { k: ReportKey; data: AnalyticsBund
       </div>
     </div>
   );
+}
+
+function Chip({ children }: { children: React.ReactNode }) {
+  return <span className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2.5 py-1 text-xs font-bold text-[var(--ink-2)]">{children}</span>;
+}
+
+function reportSummary(k: ReportKey, d: AnalyticsBundle): { total: string; label: string } | null {
+  switch (k) {
+    case "daily-sales": return { total: inr(sum(d.daily.map((x) => x.revenue))), label: `Total sales · ${num(sum(d.daily.map((x) => x.bills)))} bills` };
+    case "daily-purchase": return { total: inr(sum(d.purchase.map((x) => x.amount))), label: `Total purchase · ${num(sum(d.purchase.map((x) => x.bills)))} bills` };
+    case "sold-by-sku": return { total: num(sum(d.sku.map((x) => x.units))), label: `units · ${d.sku.length} SKUs · ${inr(sum(d.sku.map((x) => x.revenue)))} revenue` };
+    case "by-category": return { total: inr(sum(d.category.map((x) => x.revenue))), label: `revenue across ${d.category.length} categories` };
+    case "top-customers": return { total: inr(sum(d.customers.map((x) => x.revenue))), label: `from ${d.customers.length} customers` };
+    case "returning": return { total: num(d.returning.length), label: "repeat customers" };
+    case "slow-stock": return { total: num(d.slow.filter((x) => x.daysIdle >= 180).length), label: "SKUs idle 180+ days" };
+    default: return null;
+  }
 }
 
 function Panel({ title, children }: { title?: string; children: React.ReactNode }) {
@@ -148,37 +218,57 @@ function ReportBody({ k, data }: { k: ReportKey; data: AnalyticsBundle }) {
   }
   if (k === "daily-sales") return (
     <div className="flex flex-col gap-4">
-      <Panel title="Revenue · last 90 days"><AreaTrend data={data.daily as never} valueKey="revenue" color={CAT[1]} height={280} /></Panel>
-      <Panel title="Daily detail"><DataTable head={["Date", "Revenue", "Bills"]} rows={data.daily.slice().reverse().map((d) => [d.d, inr(d.revenue), num(d.bills)])} /></Panel>
+      <Panel title="Revenue over time"><AreaTrend data={data.daily as never} valueKey="revenue" color={CAT[1]} height={280} /></Panel>
+      <Panel title="Daily detail">
+        <DataTable head={["Date", "Revenue", "Bills"]}
+          summary={["Summary", inr(sum(data.daily.map((d) => d.revenue))), num(sum(data.daily.map((d) => d.bills)))]}
+          rows={data.daily.slice().reverse().map((d) => [d.d, inr(d.revenue), num(d.bills)])} />
+      </Panel>
     </div>
   );
   if (k === "daily-purchase") return (
     <div className="flex flex-col gap-4">
-      <Panel title="Purchase · last 90 days"><AreaTrend data={data.purchase as never} valueKey="amount" color={CAT[2]} height={280} /></Panel>
-      <Panel title="Daily detail"><DataTable head={["Date", "Amount", "Bills"]} rows={data.purchase.slice().reverse().map((d) => [d.d, inr(d.amount), num(d.bills)])} /></Panel>
+      <Panel title="Purchase over time"><AreaTrend data={data.purchase as never} valueKey="amount" color={CAT[2]} height={280} /></Panel>
+      <Panel title="Daily detail">
+        <DataTable head={["Date", "Amount", "Bills"]}
+          summary={["Summary", inr(sum(data.purchase.map((d) => d.amount))), num(sum(data.purchase.map((d) => d.bills)))]}
+          rows={data.purchase.slice().reverse().map((d) => [d.d, inr(d.amount), num(d.bills)])} />
+      </Panel>
     </div>
   );
   if (k === "sold-by-sku") return (
-    <Panel title="Units sold by SKU · last 12 months (highest → lowest)">
+    <Panel title="Units sold by SKU (highest → lowest)">
       <RankedBars rows={data.sku.map((s) => ({ label: s.code, sub: s.name, value: s.units }))} unit="count" />
-      <div className="mt-4"><DataTable head={["Code", "Item", "Units", "Revenue"]} rows={data.sku.map((s) => [s.code, s.name, num(s.units), inr(s.revenue)])} /></div>
+      <div className="mt-4">
+        <DataTable head={["Code", "Item", "Units", "Revenue"]}
+          summary={["Summary", "", num(sum(data.sku.map((s) => s.units))), inr(sum(data.sku.map((s) => s.revenue)))]}
+          rows={data.sku.map((s) => [s.code, s.name, num(s.units), inr(s.revenue)])} />
+      </div>
     </Panel>
   );
   if (k === "by-category") return (
-    <Panel title="Sales share by category · last 12 months">
+    <Panel title="Sales share by category">
       <Donut rows={data.category.map((c) => ({ label: c.category, value: c.revenue }))} size={240} />
-      <div className="mt-4"><DataTable head={["Category", "Revenue", "Units"]} rows={data.category.map((c) => [c.category, inr(c.revenue), num(c.units)])} /></div>
+      <div className="mt-4">
+        <DataTable head={["Category", "Revenue", "Units"]}
+          summary={["Summary", inr(sum(data.category.map((c) => c.revenue))), num(sum(data.category.map((c) => c.units)))]}
+          rows={data.category.map((c) => [c.category, inr(c.revenue), num(c.units)])} />
+      </div>
     </Panel>
   );
   if (k === "top-customers") return <TopCustomers data={data} />;
   if (k === "returning") return (
     <Panel title="Returning customers · average days between purchases">
-      <DataTable head={["Customer", "Bills", "Avg days", "Last bill"]} rows={data.returning.map((c) => [c.customer, num(c.bills), c.avgDays ? `${c.avgDays}d` : "—", c.lastBill])} />
+      <DataTable head={["Customer", "Bills", "Avg days", "Last bill"]}
+        summary={["Summary", num(sum(data.returning.map((c) => c.bills))), "", ""]}
+        rows={data.returning.map((c) => [c.customer, num(c.bills), c.avgDays ? `${c.avgDays}d` : "—", c.lastBill])} />
     </Panel>
   );
   if (k === "slow-stock") return (
     <Panel title="Slow-moving stock · on hand, days since last sale">
-      <DataTable head={["Code", "Item", "In stock", "Last sale", "Days idle"]} rows={data.slow.map((s) => [s.code, s.name, num(s.qty), s.lastSale, s.daysIdle >= 9999 ? "never sold" : `${num(s.daysIdle)}d`])} />
+      <DataTable head={["Code", "Item", "In stock", "Last sale", "Days idle"]}
+        summary={["Summary", "", num(sum(data.slow.map((s) => s.qty))), "", ""]}
+        rows={data.slow.map((s) => [s.code, s.name, num(s.qty), s.lastSale, s.daysIdle >= 9999 ? "never sold" : `${num(s.daysIdle)}d`])} />
     </Panel>
   );
   if (k === "insights") return (
@@ -220,20 +310,29 @@ function TopCustomers({ data }: { data: AnalyticsBundle }) {
       <Panel title={sel ? `${sel} — items bought` : "Select a customer"}>
         {!sel && <p className="text-sm text-[var(--muted)]">Click a customer on the left to load the items they buy, highest to lowest.</p>}
         {loading && <p className="text-sm text-[var(--muted)]">Loading…</p>}
-        {items && items.length > 0 && <DataTable head={["Code", "Item", "Units", "Revenue"]} rows={items.map((it) => [it.code, it.name, num(it.units), inr(it.revenue)])} />}
+        {items && items.length > 0 && <DataTable head={["Code", "Item", "Units", "Revenue"]}
+          summary={["Summary", "", num(sum(items.map((it) => it.units))), inr(sum(items.map((it) => it.revenue)))]}
+          rows={items.map((it) => [it.code, it.name, num(it.units), inr(it.revenue)])} />}
         {items && items.length === 0 && !loading && <p className="text-sm text-[var(--muted)]">No item detail found for this customer.</p>}
       </Panel>
     </div>
   );
 }
 
-function DataTable({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
+function DataTable({ head, rows, summary }: { head: string[]; rows: (string | number)[][]; summary?: (string | number)[] }) {
   if (rows.length === 0) return <p className="py-4 text-center text-sm text-[var(--muted)]">No rows.</p>;
   return (
     <div className="overflow-auto rounded-lg border border-[var(--border)]">
       <table className="rtable">
         <thead><tr>{head.map((h, i) => <th key={i} className={i === 0 ? "" : "!text-right"}>{h}</th>)}</tr></thead>
-        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={j === 0 ? "font-semibold" : "text-right tabular-nums"}>{c}</td>)}</tr>)}</tbody>
+        <tbody>
+          {summary && (
+            <tr className="bg-[var(--surface-2)] font-extrabold">
+              {summary.map((c, j) => <td key={j} className={j === 0 ? "" : "text-right tabular-nums"}>{c}</td>)}
+            </tr>
+          )}
+          {rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j} className={j === 0 ? "font-semibold" : "text-right tabular-nums"}>{c}</td>)}</tr>)}
+        </tbody>
       </table>
     </div>
   );
@@ -242,7 +341,6 @@ function DataTable({ head, rows }: { head: string[]; rows: (string | number)[][]
 // ── Rule-based insights (deterministic, no API key needed) ──────────────────
 function insights(b: AnalyticsBundle): string[] {
   const out: string[] = [];
-  const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
   if (b.daily.length >= 14) {
     const last7 = sum(b.daily.slice(-7).map((d) => d.revenue));
     const prev7 = sum(b.daily.slice(-14, -7).map((d) => d.revenue));

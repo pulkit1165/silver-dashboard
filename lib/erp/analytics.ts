@@ -51,36 +51,36 @@ export async function dailyPurchase(days = 90): Promise<PurchasePoint[]> {
 }
 
 // Sold by SKU (units, highest → lowest) — VW_SALE_GST_D
-export async function soldBySku(limit = 60): Promise<SkuRow[]> {
+export async function soldBySku(days = 365, limit = 60): Promise<SkuRow[]> {
   const rows = await q(`select * from (
       select itemcode part_no, max(itemdescription) name,
              sum(quantity) units, round(sum(amount - nvl(discamt,0))) revenue
-        from VW_SALE_GST_D where trdate >= trunc(sysdate)-365
+        from VW_SALE_GST_D where trdate >= trunc(sysdate)-${days}
        group by itemcode order by 3 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ code: t(r.PART_NO), name: t(r.NAME), units: n(r.UNITS), revenue: n(r.REVENUE) }));
 }
 
 // Sales by category — VW_SALE_GST_D × A_LABELPRINT (collapse the item master first)
-export async function salesByCategory(limit = 12): Promise<CatRow[]> {
+export async function salesByCategory(days = 365, limit = 12): Promise<CatRow[]> {
   const rows = await q(`select * from (
       select cast(nvl(l.itemcateg,'UNCATEGORIZED') as varchar2(60)) category,
              round(sum(s.amount - nvl(s.discamt,0))) revenue, sum(s.quantity) units
         from VW_SALE_GST_D s
         left join (select itemid, max(itemcateg) itemcateg from A_LABELPRINT group by itemid) l
           on s.itemid = l.itemid
-       where s.trdate >= trunc(sysdate)-365
+       where s.trdate >= trunc(sysdate)-${days}
        group by nvl(l.itemcateg,'UNCATEGORIZED') order by 2 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ category: t(r.CATEGORY), revenue: n(r.REVENUE), units: n(r.UNITS) }));
 }
 
 // Top customers (highest → lowest) — VW_SALE_D.ACNTDESC
-export async function topCustomers(limit = 40): Promise<CustomerRow[]> {
+export async function topCustomers(days = 365, limit = 40): Promise<CustomerRow[]> {
   const rows = await q(`select * from (
       select cast(acntdesc as varchar2(80)) customer,
              round(sum(saleamount)) revenue, count(*) bills
-        from VW_SALE_D where trdate >= trunc(sysdate)-365
+        from VW_SALE_D where trdate >= trunc(sysdate)-${days}
        group by acntdesc order by 2 desc)
     where rownum <= ${limit}`);
   return rows.map((r) => ({ customer: t(r.CUSTOMER), revenue: n(r.REVENUE), bills: n(r.BILLS) }));
@@ -128,11 +128,11 @@ export async function slowMovingStock(limit = 60): Promise<SlowRow[]> {
 }
 
 // Headline KPIs — one round trip
-export async function analyticsKpis(): Promise<Kpis> {
+export async function analyticsKpis(days = 365): Promise<Kpis> {
   const [a] = await q(`select round(sum(saleamount)) revenue, count(*) bills,
-       count(distinct acntdesc) customers from VW_SALE_D where trdate >= trunc(sysdate)-365`);
+       count(distinct acntdesc) customers from VW_SALE_D where trdate >= trunc(sysdate)-${days}`);
   const [b] = await q(`select sum(quantity) units, count(distinct itemid) skus
-       from VW_SALE_GST_D where trdate >= trunc(sysdate)-365`);
+       from VW_SALE_GST_D where trdate >= trunc(sysdate)-${days}`);
   const revenue = n(a?.REVENUE), bills = n(a?.BILLS);
   return {
     revenue, bills, customers: n(a?.CUSTOMERS),
@@ -143,6 +143,8 @@ export async function analyticsKpis(): Promise<Kpis> {
 
 export type AnalyticsBundle = {
   live: boolean;
+  days: number;
+  generatedAt: string;
   kpis: Kpis;
   daily: DailyPoint[];
   purchase: PurchasePoint[];
@@ -153,11 +155,14 @@ export type AnalyticsBundle = {
   slow: SlowRow[];
 };
 
-export async function getAnalytics(): Promise<AnalyticsBundle> {
+const WINDOWS = new Set([7, 30, 90, 365]);
+export async function getAnalytics(days = 365, nowIso = ""): Promise<AnalyticsBundle> {
+  if (!WINDOWS.has(days)) days = 365;
+  const trend = Math.min(days, 90); // daily trend caps at ~90 points for readability
   const [kpis, daily, purchase, sku, category, customers, returning, slow] = await Promise.all([
-    analyticsKpis(), dailySales(), dailyPurchase(), soldBySku(), salesByCategory(),
-    topCustomers(), returningCustomers(), slowMovingStock(),
+    analyticsKpis(days), dailySales(trend), dailyPurchase(trend), soldBySku(days), salesByCategory(days),
+    topCustomers(days), returningCustomers(), slowMovingStock(),
   ]);
   const live = isConfigured() && daily.length + sku.length + customers.length > 0;
-  return { live, kpis, daily, purchase, sku, category, customers, returning, slow };
+  return { live, days, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow };
 }
