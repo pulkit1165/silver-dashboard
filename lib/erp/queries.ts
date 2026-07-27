@@ -237,7 +237,17 @@ export interface DecodedOrderInput {
   requiredBy?: string;
   remarks?: string;
   createdById?: number;
-  lines: Array<{ skuId: number; qty: number }>;
+  salesmanId?: number;
+  // Where the order came from: decode-manual | decode-photo | decode-text |
+  // decode-excel | decode-voice. Shown as a badge in the Decode Orders queue.
+  source?: string;
+  // Per-line pricing is OPTIONAL. The manual writer sends only skuId+qty and we
+  // price at MRP; the AI decoder already computed a net rate, so it can pass
+  // price/mrp/discountPct/rateType/focQty through and we keep them.
+  lines: Array<{
+    skuId: number; qty: number;
+    price?: number; mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
+  }>;
 }
 
 export async function createDecodedOrder(
@@ -257,11 +267,20 @@ export async function createDecodedOrder(
     seen.add(l.skuId);
   }
 
-  // Price each line at the current SKU MRP (skus.price).
+  // Fill any missing MRP/price from the SKU master (skus.price = MRP).
   const skuIds = clean.map((l) => l.skuId);
   const priceRows = (await sql`SELECT id, price FROM skus WHERE id = ANY(${skuIds})`) as unknown as Array<{ id: number; price: number | null }>;
-  const priceById = new Map(priceRows.map((r) => [r.id, Number(r.price) || 0]));
-  const total = clean.reduce((s, l) => s + l.qty * (priceById.get(l.skuId) ?? 0), 0);
+  const mrpById = new Map(priceRows.map((r) => [r.id, Number(r.price) || 0]));
+  const resolved = clean.map((l) => {
+    const masterMrp = mrpById.get(l.skuId) ?? 0;
+    const mrp = l.mrp != null ? l.mrp : masterMrp;
+    const price = l.price != null ? l.price : mrp; // net rate; defaults to MRP
+    return {
+      skuId: l.skuId, qty: l.qty, price, mrp,
+      discountPct: l.discountPct ?? 0, rateType: l.rateType ?? "MRP", focQty: l.focQty ?? 0,
+    };
+  });
+  const total = resolved.reduce((s, l) => s + l.qty * l.price, 0);
 
   return await sql.begin(async (tx) => {
     const [{ next }] = await tx`
@@ -272,30 +291,29 @@ export async function createDecodedOrder(
       INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, remarks,
         salesman_id, salesman_name, required_by, source)
       VALUES (${soNo}, ${input.customerId}, 'decoded', ${input.orderDate}, ${total},
-        ${input.remarks ?? ""}, ${input.createdById ?? null}, ${input.salesmanName ?? ""},
-        ${input.requiredBy ?? ""}, 'decode-manual')
+        ${input.remarks ?? ""}, ${input.salesmanId ?? input.createdById ?? null}, ${input.salesmanName ?? ""},
+        ${input.requiredBy ?? ""}, ${input.source ?? "decode-manual"})
       RETURNING id`;
-    for (const l of clean) {
-      const mrp = priceById.get(l.skuId) ?? 0;
+    for (const l of resolved) {
       await tx`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
-        VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${mrp}, ${mrp}, 0, 'MRP', 0)`;
+        VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price}, ${l.mrp}, ${l.discountPct}, ${l.rateType}, ${l.focQty})`;
     }
     return { id: so.id as number, so_no: soNo };
   });
 }
 
 export async function listDecodedOrders(): Promise<Array<{
-  id: number; so_no: string; customer_name: string; salesman_name: string;
+  id: number; so_no: string; customer_name: string; salesman_name: string; source: string;
   order_date: string; required_by: string; total: number; lines: number; created_at: string;
 }>> {
   await ensureSalesOrderCols();
   return (await getSql()`
-    SELECT so.id, so.so_no, c.name AS customer_name, so.salesman_name, so.order_date,
+    SELECT so.id, so.so_no, c.name AS customer_name, so.salesman_name, so.source, so.order_date,
            so.required_by, so.total, so.created_at,
            (SELECT COUNT(*)::int FROM so_lines l WHERE l.so_id = so.id) AS lines
     FROM sales_orders so JOIN customers c ON c.id = so.customer_id
     WHERE so.status = 'decoded' ORDER BY so.id DESC`) as unknown as Array<{
-    id: number; so_no: string; customer_name: string; salesman_name: string;
+    id: number; so_no: string; customer_name: string; salesman_name: string; source: string;
     order_date: string; required_by: string; total: number; lines: number; created_at: string;
   }>;
 }
@@ -316,6 +334,52 @@ export async function promoteDecodedOrder(
     await tx`UPDATE sales_orders SET so_no=${soNo}, status='open' WHERE id=${id}`;
     return { ok: true as const, soId: id, soNo };
   });
+}
+
+// ─── SKU alias learning ("train the decoder on our names") ──────────────────
+// Every time a human confirms/corrects a decoded line, we remember the mapping
+// (normalized raw text → sku_id). Next time that shorthand appears it's an
+// instant, high-confidence match. Self-migrating so prod needs no db:push.
+let aliasEnsured = false;
+async function ensureSkuAliases(): Promise<void> {
+  if (aliasEnsured) return;
+  try {
+    await getSql().unsafe(`CREATE TABLE IF NOT EXISTS sku_aliases (
+      id serial PRIMARY KEY,
+      alias_norm text UNIQUE NOT NULL,
+      sku_id integer NOT NULL,
+      hits integer DEFAULT 1,
+      created_by text,
+      created_at text DEFAULT to_char(now(),'YYYY-MM-DD HH24:MI:SS')
+    )`);
+    aliasEnsured = true;
+  } catch { /* exists / insufficient privs — ignore */ }
+}
+
+/** All learned aliases → a Map of normalized phrase → sku_id (most-hit wins). */
+export async function getSkuAliasMap(): Promise<Map<string, number>> {
+  await ensureSkuAliases();
+  const rows = (await getSql()`
+    SELECT alias_norm, sku_id FROM sku_aliases ORDER BY hits DESC`) as unknown as Array<{ alias_norm: string; sku_id: number }>;
+  const m = new Map<string, number>();
+  for (const r of rows) if (!m.has(r.alias_norm)) m.set(r.alias_norm, r.sku_id);
+  return m;
+}
+
+/** Record confirmed (alias → sku) pairs; upsert increments the hit counter. */
+export async function learnSkuAliases(
+  pairs: Array<{ aliasNorm: string; skuId: number }>, by?: string,
+): Promise<number> {
+  const clean = pairs.filter((p) => p.aliasNorm && p.aliasNorm.length >= 3 && Number(p.skuId));
+  if (clean.length === 0) return 0;
+  await ensureSkuAliases();
+  const sql = getSql();
+  for (const p of clean) {
+    await sql`
+      INSERT INTO sku_aliases (alias_norm, sku_id, created_by) VALUES (${p.aliasNorm}, ${p.skuId}, ${by ?? null})
+      ON CONFLICT (alias_norm) DO UPDATE SET sku_id = EXCLUDED.sku_id, hits = sku_aliases.hits + 1`;
+  }
+  return clean.length;
 }
 
 /** Delete a decoded slip that hasn't been promoted. */

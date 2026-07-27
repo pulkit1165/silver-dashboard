@@ -5,7 +5,7 @@ import Link from "next/link";
 
 type Customer = { id: number; code: string | null; name: string | null };
 type Salesman = { id: number; name: string; territory: string };
-type Sku = { id: number; sku_code: string; name: string; price: number };
+type Sku = { id: number; sku_code: string; name: string; price: number; stdPack: number };
 type Line = { key: number; sku: Sku; qty: number };
 
 const inr = (n: number) => (n ?? 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -121,7 +121,7 @@ export default function ManualOrderBuilder({
         <section className="panel">
           <div className="overflow-x-auto">
             <table className="rtable">
-              <thead><tr><th>#</th><th>SKU</th><th>Item</th><th className="!text-right">MRP</th><th className="!text-right">Qty</th><th className="!text-right">Line total</th></tr></thead>
+              <thead><tr><th>#</th><th>SKU</th><th>Item</th><th className="!text-right">MRP</th><th className="!text-right">Qty ordered</th><th className="!text-right">Std Pack 🔒</th><th className="!text-right">Line total</th></tr></thead>
               <tbody>
                 {lines.map((l, i) => (
                   <tr key={l.key}>
@@ -130,12 +130,14 @@ export default function ManualOrderBuilder({
                     <td>{l.sku.name}</td>
                     <td className="num-cell">{inr(l.sku.price)}</td>
                     <td className="num-cell font-semibold">{l.qty}</td>
+                    <td className="num-cell text-[var(--muted)]">{l.sku.stdPack || "—"}</td>
                     <td className="num-cell">{inr(l.qty * l.sku.price)}</td>
                   </tr>
                 ))}
                 <tr className="bg-[var(--accent-bg)] font-extrabold">
                   <td colSpan={4} className="uppercase text-[var(--accent-strong)]">Total</td>
                   <td className="num-cell">{totalQty}</td>
+                  <td></td>
                   <td className="num-cell">₹{inr(grandTotal)}</td>
                 </tr>
               </tbody>
@@ -188,9 +190,9 @@ export default function ManualOrderBuilder({
           <SkuPicker onPick={addSku} />
           <div className="mt-3 overflow-x-auto">
             <table className="rtable">
-              <thead><tr><th>#</th><th>SKU</th><th>Item</th><th className="!text-right">MRP</th><th className="!text-right">Qty</th><th className="!text-right">Line total</th><th></th></tr></thead>
+              <thead><tr><th>#</th><th>SKU</th><th>Item</th><th className="!text-right">MRP</th><th className="!text-right">Qty ordered</th><th className="!text-right" title="Standard packing of this item (locked)">Std Pack 🔒</th><th className="!text-right">Line total</th><th></th></tr></thead>
               <tbody>
-                {lines.length === 0 && <tr><td colSpan={7} className="!py-5 text-center text-[var(--muted)]">Search and add items above.</td></tr>}
+                {lines.length === 0 && <tr><td colSpan={8} className="!py-5 text-center text-[var(--muted)]">Search and add items above.</td></tr>}
                 {lines.map((l, i) => (
                   <tr key={l.key}>
                     <td>{i + 1}</td>
@@ -201,6 +203,7 @@ export default function ManualOrderBuilder({
                       <input type="number" min={1} className="w-20 rounded-md border border-[var(--border)] px-2 py-1 text-right" value={l.qty}
                         onChange={(e) => setQty(l.key, Math.max(0, Number(e.target.value)))} />
                     </td>
+                    <td className="num-cell bg-[var(--surface-2)] text-[var(--muted)]" title="Standard packing (from item master — read only)">{l.sku.stdPack || "—"}</td>
                     <td className="num-cell">{inr(l.qty * l.sku.price)}</td>
                     <td className="num-cell"><button onClick={() => removeLine(l.key)} className="text-red-600 hover:underline">✕</button></td>
                   </tr>
@@ -209,6 +212,7 @@ export default function ManualOrderBuilder({
                   <tr className="bg-[var(--accent-bg)] font-extrabold">
                     <td colSpan={4} className="uppercase text-[var(--accent-strong)]">Total</td>
                     <td className="num-cell">{totalQty}</td>
+                    <td></td>
                     <td className="num-cell">₹{inr(grandTotal)}</td><td></td>
                   </tr>
                 )}
@@ -257,6 +261,7 @@ function SkuPicker({ onPick }: { onPick: (s: Sku) => void }) {
       const skus = Array.isArray(d.skus) ? d.skus : [];
       setResults(skus.slice(0, 25).map((s: Record<string, unknown>) => ({
         id: Number(s.id), sku_code: String(s.sku_code), name: String(s.name), price: Number(s.price) || 0,
+        stdPack: Number(s.master_qty) || 0,
       })));
     } catch { /* keep */ } finally { setSearching(false); }
   }, []);
@@ -287,7 +292,7 @@ function SkuPicker({ onPick }: { onPick: (s: Sku) => void }) {
             <button key={s.id} onClick={() => { onPick(s); setQ(""); setOpen(false); }}
               className="flex w-full items-center justify-between gap-3 rounded-md px-3 py-1.5 text-left text-sm hover:bg-[var(--surface-2)]">
               <span><span className="font-mono text-xs">{s.sku_code}</span> · {s.name}</span>
-              <span className="whitespace-nowrap text-xs text-[var(--muted)]">₹{inr(s.price)}</span>
+              <span className="whitespace-nowrap text-xs text-[var(--muted)]">{s.stdPack ? `pack ${s.stdPack} · ` : ""}₹{inr(s.price)}</span>
             </button>
           ))}
         </div>

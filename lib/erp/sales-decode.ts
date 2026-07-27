@@ -1,5 +1,5 @@
 import "server-only";
-import { getSkus, getCustomers } from "./queries";
+import { getSkus, getCustomers, getSkuAliasMap } from "./queries";
 import { aiAvailable } from "./ai";
 import type { Sku, Customer } from "./types";
 
@@ -180,7 +180,7 @@ async function readSlip(imageBase64: string, mediaType: string): Promise<VisionR
 
 const STOP_WORDS = new Set(["FOR", "AND", "THE", "PCS", "NOS", "SET", "DOZ", "BOX", "QTY"]);
 
-function normalise(s: string): string {
+export function normalise(s: string): string {
   return s.toUpperCase().replace(/[^A-Z0-9 ]+/g, " ").replace(/\s+/g, " ").trim();
 }
 function tokens(s: string): string[] {
@@ -257,28 +257,147 @@ function matchCustomer(hint: string, customers: Customer[]): {
   return { id: scored[0]?.c.id ?? null, candidates: [...ranked, ...rest] };
 }
 
+// ── AI re-rank ──────────────────────────────────────────────────────────────
+// The token matcher surfaces candidates but often ranks the wrong neighbour #1
+// (e.g. "Stand ct" → it can't know ct = STR CITY). Claude reads the shorthand
+// and picks the correct SKU from the candidate list in one batched call. It may
+// only choose among the given candidate ids (or null) — it can't invent codes.
+const RERANK_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    picks: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          index: { type: "number" },
+          sku_id: { type: ["number", "null"] },
+          confidence: { type: "string", enum: ["high", "medium", "low", "none"] },
+        },
+        required: ["index", "sku_id", "confidence"],
+      },
+    },
+  },
+  required: ["picks"],
+} as const;
+
+const RERANK_SYSTEM =
+  "You match handwritten/typed order lines to the correct catalogue SKU for an Indian " +
+  "two-wheeler spare-parts distributor. Input: order lines, each with an index, the raw " +
+  "text as written, and a short list of candidate SKUs (id, code, name). For each line, " +
+  "pick the candidate whose product is the SAME item, expanding trade shorthand and brand " +
+  "codes. Domain hints: HH=Hero Honda, ct/STR CITY=Star City, ES=Platina ES, Pt/PESS=Passion, " +
+  "SXL/S-XL=Splendor, SXUNO=S-XL 100CC, RH/LH=right/left hand, Aktiva=Activa, Plsr=Pulsar, " +
+  "BS6/N/M model variants matter (don't cross them). Choose the sku_id from the candidates " +
+  "ONLY; if none is clearly the same item, return sku_id null. Set confidence high when the " +
+  "model+variant match, medium when the base product matches but a variant is uncertain, low " +
+  "otherwise. Return one pick per input line.";
+
+async function aiRerank(
+  items: Array<{ index: number; raw_text: string; candidates: SkuCandidate[] }>,
+): Promise<Map<number, { sku_id: number | null; confidence: MatchConfidence }>> {
+  const out = new Map<number, { sku_id: number | null; confidence: MatchConfidence }>();
+  const todo = items.filter((it) => it.candidates.length > 0);
+  if (todo.length === 0 || !aiAvailable()) return out;
+
+  try {
+    const { default: Anthropic } = await import("@anthropic-ai/sdk");
+    const client = new Anthropic();
+    const payload = todo.map((it) => ({
+      index: it.index,
+      raw_text: it.raw_text,
+      candidates: it.candidates.map((c) => ({ id: c.id, code: c.sku_code, name: c.name })),
+    }));
+    const params = {
+      model: "claude-opus-4-8",
+      max_tokens: 4000,
+      thinking: { type: "adaptive" },
+      output_config: { effort: "medium", format: { type: "json_schema", schema: RERANK_SCHEMA } },
+      system: RERANK_SYSTEM,
+      messages: [{ role: "user", content: JSON.stringify({ lines: payload }) }],
+    };
+    const msg = (await client.messages.create(
+      params as unknown as Parameters<typeof client.messages.create>[0],
+    )) as { content: Array<{ type: string; text?: string }> };
+    const text = msg.content.filter((b) => b.type === "text" && b.text).map((b) => b.text as string).join("");
+    const parsed = JSON.parse(text) as { picks?: Array<{ index: number; sku_id: number | null; confidence: string }> };
+    for (const p of parsed.picks ?? []) {
+      const conf = (["high", "medium", "low", "none"] as const).includes(p.confidence as MatchConfidence)
+        ? (p.confidence as MatchConfidence) : "low";
+      out.set(p.index, { sku_id: p.sku_id != null ? Number(p.sku_id) : null, confidence: conf });
+    }
+  } catch { /* fall back to the deterministic ranking */ }
+  return out;
+}
+
+/**
+ * Turn raw vision/text lines into verified-pending DraftLines: token match →
+ * learned-alias override (instant high-confidence for names we've seen before)
+ * → AI re-rank of the candidates. Shared by every decode path.
+ */
+async function finishLines(
+  rawLines: RawLine[],
+  skus: Sku[],
+  aliasMap: Map<string, number>,
+): Promise<DraftLine[]> {
+  const haystacks = skus.map((sku) => ({ sku, hay: normalise(`${sku.name} ${sku.sku_code}`) }));
+  const skuById = new Map(skus.map((s) => [s.id, s]));
+
+  const lines: DraftLine[] = rawLines.map((l) => {
+    const m = matchLine(l.raw_text, haystacks);
+    let best = m.best;
+    let candidates = m.candidates;
+    let confidence = m.confidence;
+
+    // Learned-alias override: an exact match on a name we've been taught wins.
+    const aliasSku = aliasMap.get(normalise(l.raw_text));
+    if (aliasSku && skuById.has(aliasSku)) {
+      const c = trim(skuById.get(aliasSku)!);
+      best = c; confidence = "high";
+      candidates = [c, ...candidates.filter((x) => x.id !== c.id)];
+    }
+
+    const rate = l.rate > 0 ? l.rate : best?.selling_price ?? 0;
+    return {
+      raw_text: l.raw_text, qty: l.qty, rate,
+      unit: l.unit || best?.unit || "",
+      sku_id: best?.id ?? null, suggested: best, candidates, confidence,
+    };
+  });
+
+  // AI re-rank the lines that weren't alias-locked (confidence not forced high
+  // by an alias). Overriding with the model's pick from the candidate set.
+  const rerankItems = lines
+    .map((l, index) => ({ index, raw_text: l.raw_text, candidates: l.candidates, aliased: aliasMap.has(normalise(l.raw_text)) }))
+    .filter((it) => !it.aliased);
+  const picks = await aiRerank(rerankItems);
+  for (const [index, pick] of picks) {
+    const line = lines[index];
+    if (!line) continue;
+    if (pick.sku_id && skuById.has(pick.sku_id)) {
+      const c = trim(skuById.get(pick.sku_id)!);
+      line.sku_id = c.id;
+      line.suggested = c;
+      line.candidates = [c, ...line.candidates.filter((x) => x.id !== c.id)];
+      line.confidence = pick.confidence;
+      if (!(line.rate > 0)) line.rate = c.selling_price;
+      if (!line.unit) line.unit = c.unit;
+    } else if (pick.sku_id === null && pick.confidence === "none") {
+      // model is confident nothing fits → leave unmatched for the human
+      line.sku_id = null; line.suggested = null; line.confidence = "low";
+    }
+  }
+  return lines;
+}
+
 /** Full pipeline: read the slip, then match everything against the live masters. */
 export async function decodeSalesImage(imageBase64: string, mediaType: string): Promise<DraftOrder> {
   const vision = await readSlip(imageBase64, mediaType);
 
-  const [skus, customers] = await Promise.all([getSkus(), getCustomers()]);
-  const haystacks = skus.map((sku) => ({ sku, hay: normalise(`${sku.name} ${sku.sku_code}`) }));
-
-  const lines: DraftLine[] = vision.lines.map((l) => {
-    const m = matchLine(l.raw_text, haystacks);
-    const rate = l.rate > 0 ? l.rate : m.best?.selling_price ?? 0;
-    return {
-      raw_text: l.raw_text,
-      qty: l.qty,
-      rate,
-      unit: l.unit || m.best?.unit || "",
-      sku_id: m.best?.id ?? null,
-      suggested: m.best,
-      candidates: m.candidates,
-      confidence: m.confidence,
-    };
-  });
-
+  const [skus, customers, aliasMap] = await Promise.all([getSkus(), getCustomers(), getSkuAliasMap()]);
+  const lines = await finishLines(vision.lines, skus, aliasMap);
   const cust = matchCustomer(vision.customer_hint, customers);
 
   return {
@@ -355,19 +474,8 @@ export async function decodeTextOrder(text: string, customerHint?: string): Prom
       : [],
   };
 
-  const [skus, customers] = await Promise.all([getSkus(), getCustomers()]);
-  const haystacks = skus.map((sku) => ({ sku, hay: normalise(`${sku.name} ${sku.sku_code}`) }));
-
-  const lines: DraftLine[] = vision.lines.map((l) => {
-    const m = matchLine(l.raw_text, haystacks);
-    const rate = l.rate > 0 ? l.rate : m.best?.selling_price ?? 0;
-    return {
-      raw_text: l.raw_text, qty: l.qty, rate,
-      unit: l.unit || m.best?.unit || "",
-      sku_id: m.best?.id ?? null,
-      suggested: m.best, candidates: m.candidates, confidence: m.confidence,
-    };
-  });
+  const [skus, customers, aliasMap] = await Promise.all([getSkus(), getCustomers(), getSkuAliasMap()]);
+  const lines = await finishLines(vision.lines, skus, aliasMap);
 
   const cust = matchCustomer(vision.customer_hint, customers);
   return {

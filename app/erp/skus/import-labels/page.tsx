@@ -20,6 +20,13 @@ export default async function ImportLabelInfoPage() {
   return (
     <>
       <PageHeader title="Backfill Barcode / Master Qty" subtitle="Update existing SKUs with their legacy barcode code and/or master carton qty — matched by SKU code." />
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <a href="/api/erp/skus/std-pack-template"
+          className="rounded-lg bg-[var(--accent)] px-3 py-1.5 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">
+          ⬇ Download Std Pack template (all items)
+        </a>
+        <span className="text-xs text-[var(--muted)]">Fill the “Std Pack” column, then upload it below — it maps to each item’s standard packing.</span>
+      </div>
       <ImportLabelInfo />
     </>
   );

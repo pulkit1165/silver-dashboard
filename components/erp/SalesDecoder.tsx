@@ -97,7 +97,42 @@ export default function SalesDecoder({
   const [topGpSkus, setTopGpSkus] = useState<SkuCandidate[]>([]);
 
   const [punching, setPunching] = useState(false);
-  const [creditWarn, setCreditWarn] = useState<string | null>(null);
+  const [recording, setRecording] = useState(false);
+  const [transcribing, setTranscribing] = useState(false);
+  const mediaRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+
+  async function startRecording() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mr = new MediaRecorder(stream);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        setTranscribing(true);
+        try {
+          const fd = new FormData();
+          fd.append("audio", blob, "order.webm");
+          const d = await fetch("/api/erp/sales/transcribe", { method: "POST", body: fd }).then((r) => r.json());
+          if (!d.ok) { setError(d.error ?? "Transcription failed."); return; }
+          setOrderText((prev) => (prev ? prev.trim() + "\n" : "") + (d.text ?? ""));
+        } catch { setError("Network error during transcription."); }
+        finally { setTranscribing(false); }
+      };
+      mr.start();
+      mediaRef.current = mr;
+      setRecording(true);
+    } catch {
+      setError("Couldn't access the microphone. Check browser permissions (HTTPS required).");
+    }
+  }
+  function stopRecording() {
+    mediaRef.current?.stop();
+    setRecording(false);
+  }
   const [done, setDone] = useState<{ so_no: string } | null>(null);
 
   // Fetch high-GP SKUs once for auto-compensation
@@ -193,29 +228,29 @@ export default function SalesDecoder({
   const unmatched = (rows ?? []).filter((r) => !r.sku).length;
   const canPunch = !!customerId && (rows?.length ?? 0) > 0 && unmatched === 0 && (rows ?? []).every((r) => r.qty > 0);
 
-  async function punch(allowOverCredit = false) {
+  async function punch() {
     if (!rows || !customerId) return;
-    setPunching(true); setError(null); setCreditWarn(null);
+    setPunching(true); setError(null);
     try {
-      const r = await fetch("/api/erp/sales-orders", {
+      // All decoded orders land in the Decode Orders queue (status 'decoded'),
+      // NOT punched directly — a reviewer promotes + punches them.
+      const r = await fetch("/api/erp/sales/decoded", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           customer_id: customerId,
           order_date: orderDate || undefined,
           remarks: remarks || undefined,
-          allow_over_credit_limit: allowOverCredit,
           salesman_id: salesmanId || undefined,
-          source,
-          lines: rows.filter((r) => r.sku).map((r) => ({ sku_id: r.sku!.id, qty: r.qty, price: r.rate })),
+          source: source && source !== "manual" ? source : "decode-photo",
+          lines: rows.filter((r) => r.sku).map((r) => ({ sku_id: r.sku!.id, qty: r.qty, price: r.rate, raw_text: r.raw_text })),
         }),
       });
       const d = await r.json();
-      if (r.status === 422 && d.creditLimitExceeded) { setCreditWarn(d.error ?? "Credit limit would be exceeded."); return; }
-      if (!d.ok) { setError(d.error ?? "Could not punch the order."); return; }
-      setDone({ so_no: d.order.so_no });
+      if (!d.ok) { setError(d.error ?? "Could not submit the order."); return; }
+      setDone({ so_no: d.so_no });
     } catch {
-      setError("Network error while punching the order. Please retry.");
+      setError("Network error while submitting the order. Please retry.");
     } finally {
       setPunching(false);
     }
@@ -227,14 +262,14 @@ export default function SalesDecoder({
         <div className="p-6 text-center">
           <div className="text-4xl">✓</div>
           <div className="mt-2 text-lg font-extrabold" style={{ color: "var(--accent-2)" }}>
-            Sales order {done.so_no} created (draft)
+            Decoded order {done.so_no} submitted
           </div>
           <p className="mt-1 text-sm text-[var(--muted)]">
-            Review it under Sales Orders and confirm it to hand it to the warehouse.
+            It's waiting in Decode Orders. A reviewer can promote it to an open sales order and punch it.
           </p>
           <div className="mt-4 flex items-center justify-center gap-3">
-            <a href="/erp/sales" className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">
-              Go to Sales Orders
+            <a href="/erp/sales/decoded" className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">
+              Go to Decode Orders
             </a>
             <button
               onClick={() => { setDone(null); setRows(null); setDataUrl(null); setFileB64(null); setKind(null); setFileName(""); setOrderText(""); }}
@@ -286,8 +321,16 @@ export default function SalesDecoder({
               <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
                 Order description
                 <textarea rows={7} className={`${inp} resize-y`} value={orderText} onChange={(e) => setOrderText(e.target.value)}
-                  placeholder={"Type or paste the order:\n200 chain 5spd\n50 brake shoe rear HH\n12 clutch plate CT100 ES\n…"} />
+                  placeholder={"Type, paste, or dictate the order:\n200 chain 5spd\n50 brake shoe rear HH\n12 clutch plate CT100 ES\n…"} />
               </label>
+              <div className="flex items-center gap-2">
+                <button onClick={recording ? stopRecording : startRecording} disabled={busy || transcribing}
+                  className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-bold text-white disabled:opacity-50 ${recording ? "bg-[var(--danger)] animate-pulse" : "bg-[var(--accent-2)]"}`}>
+                  {recording ? "⏹ Stop & transcribe" : "🎙 Dictate order"}
+                </button>
+                {transcribing && <span className="text-xs text-[var(--muted)]">Transcribing…</span>}
+                {recording && <span className="text-xs font-semibold text-[var(--danger)]">Recording…</span>}
+              </div>
               <button onClick={decode} disabled={busy || !orderText.trim()}
                 className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">
                 {busy ? "Reading…" : rows ? "Re-decode" : "Decode order"}
@@ -416,23 +459,11 @@ export default function SalesDecoder({
               )}
             </div>
 
-            {creditWarn && (
-              <div className="mt-4 rounded-xl border px-4 py-3 text-sm"
-                style={{ borderColor: "var(--danger)", background: "var(--danger-bg)", color: "var(--danger)" }}>
-                <div className="font-bold">Credit limit warning</div>
-                <div className="mt-1">{creditWarn}</div>
-                <button onClick={() => punch(true)} disabled={punching}
-                  className="mt-2 rounded-lg bg-[var(--danger)] px-3 py-1.5 text-sm font-bold text-white disabled:opacity-50">
-                  Punch anyway
-                </button>
-              </div>
-            )}
-
             <div className="mt-4 flex items-center justify-end gap-3">
               {!canPunch && !customerId && <span className="text-sm text-[var(--muted)]">Select a customer to continue.</span>}
-              <button onClick={() => punch(false)} disabled={!canPunch || punching}
+              <button onClick={() => punch()} disabled={!canPunch || punching}
                 className="rounded-lg bg-[var(--accent-2)] px-5 py-2.5 text-sm font-extrabold text-white hover:opacity-90 disabled:opacity-50">
-                {punching ? "Punching…" : "Confirm & punch sales order"}
+                {punching ? "Submitting…" : "✓ Submit to Decode Orders"}
               </button>
             </div>
           </div>
