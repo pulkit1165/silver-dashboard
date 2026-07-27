@@ -94,15 +94,21 @@ export function buildTSPL(l: LabelData, w: number, h: number): string {
   const qtyF = big ? "4" : med ? "3" : "2";
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
-  const qty = (l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`)
-    + `  MRP.Rs.${Math.round(l.price)}/-`;
+  const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
+  const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
   const nameLines = wrapText(esc(l.name), nameF, textW, 2);
 
-  let cy = top;
+  // Vertically centre the text block against the QR so the label looks balanced
+  // (was top-anchored, leaving the big labels looking half-empty).
+  const contentH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
+  let cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2));
   const rows: string[] = [];
   rows.push(`TEXT ${textX},${cy},"${skuF}",0,1,1,"${fitText(esc(l.sku_code), skuF, textW)}"`); cy += lh(skuF);
   for (const nl of nameLines) { rows.push(`TEXT ${textX},${cy},"${nameF}",0,1,1,"${nl}"`); cy += lh(nameF); }
-  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qty), qtyF, textW)}"`);
+  // QTY and MRP on SEPARATE lines — combined on one line the MRP overran the text
+  // width and got cut to "MRP.R." on the bigger labels. Each short line fits fully.
+  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qtyStr), qtyF, textW)}"`); cy += lh(qtyF);
+  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`);
 
   return [
     `SIZE ${w} mm, ${h} mm`,
