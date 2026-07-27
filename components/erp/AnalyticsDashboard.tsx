@@ -65,7 +65,7 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
 
       {!data.live && (
         <div className="rounded-xl border border-[var(--warning)] bg-[var(--warning-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--warning)]">
-          ⚠ Live Oracle link is not returning data right now — reports show empty. They populate automatically once the connector is up.
+          ⚠ No sales data found for this date range. Try a wider range or check that the daily sync has run.
         </div>
       )}
 
