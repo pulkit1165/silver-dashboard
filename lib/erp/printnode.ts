@@ -89,7 +89,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
 // Per-size layout: `pos` says which end carries the pre-printed address (so we
 // print into the OTHER half); the optional mm overrides let the operator nudge.
-export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number };
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
   // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
@@ -167,11 +167,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
   const bmp = renderQrBytes(qr, modDots, QUIET);
+  // Darkness (DENSITY 1–15) and SPEED are the main QR print-quality knobs and are
+  // printer/media-specific — operator-tunable, with crisp defaults (a bit lower on
+  // the finer 300 dpi head, slow speed so modules form cleanly without bleeding).
+  const density = opts.density != null && opts.density >= 1 ? Math.min(15, Math.round(opts.density)) : (hires ? 8 : 9);
+  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
   const head = [
     `SIZE ${w} mm, ${h} mm`,
     `GAP 3 mm, 0 mm`,
-    `DENSITY ${hires ? 8 : 9}`,
-    `SPEED 2`,
+    `DENSITY ${density}`,
+    `SPEED ${speed}`,
     `DIRECTION 0`,
     `REFERENCE 0,0`,
     `CLS`,

@@ -60,6 +60,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [pnBusy, setPnBusy] = useState(false);
   const [pnLoading, setPnLoading] = useState(false);
   const [pnMsg, setPnMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Print-quality knobs for the QR (printer/media specific). Darkness = TSPL
+  // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
+  const [density, setDensity] = useState(8);
+  const [speed, setSpeed] = useState(2);
+  useEffect(() => {
+    try {
+      const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
+      const sv = Number(localStorage.getItem("erp_label_speed")); if (sv >= 1) setSpeed(sv);
+    } catch { /* defaults */ }
+  }, []);
   const loadPrinters = useCallback(async () => {
     setPnLoading(true);
     try {
@@ -180,6 +190,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           layout: {
             pos: contentPos,
             dpi: /34\d|300\s*dpi/i.test(pnPrinters.find((p) => p.id === pnPrinterId)?.name ?? "") ? 300 : 203,
+            density, speed,
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
@@ -474,6 +485,21 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               {pnLoading ? "…" : "↻ Refresh"}
             </button>
             <span className="text-sm font-semibold text-[var(--muted)]">at {dims.w} × {dims.h} mm</span>
+            <label className="flex items-center gap-1 text-xs font-semibold text-[var(--muted)]" title="QR darkness (TSPL DENSITY 1–15). Too high = modules bleed/merge; too low = faint/broken. Tune for the sharpest scan.">
+              🖨 Darkness
+              <input type="number" min={1} max={15} value={density}
+                onChange={(e) => { const v = Math.max(1, Math.min(15, Number(e.target.value) || 8)); setDensity(v); try { localStorage.setItem("erp_label_density", String(v)); } catch { /* ignore */ } }}
+                className="w-14 rounded-md border border-[var(--border)] bg-white px-2 py-1 text-sm" />
+            </label>
+            <label className="flex items-center gap-1 text-xs font-semibold text-[var(--muted)]" title="Print speed — slower prints crisper QR modules (better scanning).">
+              Speed
+              <select value={speed} onChange={(e) => { const v = Number(e.target.value); setSpeed(v); try { localStorage.setItem("erp_label_speed", String(v)); } catch { /* ignore */ } }}
+                className="rounded-md border border-[var(--border)] bg-white px-2 py-1 text-sm">
+                <option value={2}>Slow (best)</option>
+                <option value={3}>Normal</option>
+                <option value={4}>Fast</option>
+              </select>
+            </label>
             {(() => {
               const selOffline = !!pnPrinterId && pnPrinters.find((p) => p.id === pnPrinterId)?.state !== "online";
               return (

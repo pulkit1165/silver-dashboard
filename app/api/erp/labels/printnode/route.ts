@@ -40,6 +40,8 @@ export async function POST(req: Request) {
     pos: lay.pos === "bottom" ? "bottom" : "top",
     large: !!lay.large,
     dpi,
+    ...(Number(lay.density) >= 1 ? { density: Number(lay.density) } : {}),
+    ...(Number(lay.speed) >= 1 ? { speed: Number(lay.speed) } : {}),
     ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
