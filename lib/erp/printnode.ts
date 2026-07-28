@@ -92,11 +92,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
     : Math.round(Hd * (pos === "bottom" ? 0.34 : 0.04));
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.70));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.72));
   const zoneH = Math.max(25, bottom - top);
   // Nudge the whole block a few mm DOWN (was clipping at the top edge) and a bit
   // RIGHT, while still clearing the pre-printed address band at the bottom.
-  const downShift = Math.round(3 * dp);
+  const downShift = Math.round(5 * dp);
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
 
   // QR: explicit mm, else the biggest that fits the zone (reserving room for the
