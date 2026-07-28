@@ -31,9 +31,7 @@ const fmtTime = (iso: string) => { try { return new Date(iso).toLocaleTimeString
 const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
 
 const PENDING: Record<string, string> = {
-  state: "State-wise sale needs a party→state (GST state code) mapping in the Oracle sale view. Once the party master's state column is confirmed, this renders an India choropleth + a ranked state table.",
   salesman: "Sale-by-salesman needs the salesman/agent column on the sale header (VW_SALE_D). Confirm the column and this becomes a ranked salesman leaderboard with trend.",
-  freight: "Freight expense needs the freight/other-charges column on the invoice. Once mapped, this trends freight cost and freight as a % of sales.",
 };
 
 export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsBundle }) {
@@ -117,14 +115,24 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
             ? <RankedBars rows={data.transporter.slice(0, 6).map((tr) => ({ label: tr.transporter, sub: `${num(tr.bills)} bills`, value: tr.value }))} unit="money" color={CAT[2]} />
             : <div className="flex h-[120px] items-center justify-center text-xs font-semibold text-[var(--muted)]">No transporter data in this range.</div>}
         </Card>
+        <Card title="State-wise Sale" icon="🗺️" accent={CAT[0]} onOpen={() => setOpen("state")}>
+          {data.state.length > 0
+            ? <RankedBars rows={data.state.slice(0, 6).map((s) => ({ label: s.state, sub: `${num(s.bills)} bills`, value: s.value }))} unit="money" color={CAT[0]} />
+            : <div className="flex h-[120px] items-center justify-center text-xs font-semibold text-[var(--muted)]">No state data in this range.</div>}
+        </Card>
+        <Card title="Freight Expense" icon="💸" accent={CAT[5]} onOpen={() => setOpen("freight")}>
+          {data.freight.length > 0
+            ? <RankedBars rows={data.freight.slice(0, 6).map((f) => ({ label: f.transporter, sub: `${num(f.bills)} bills`, value: f.freight }))} unit="money" color={CAT[5]} />
+            : <div className="flex h-[120px] items-center justify-center text-xs font-semibold text-[var(--muted)]">No freight recorded in this range.</div>}
+        </Card>
         <Card title="AI Insights" icon="✨" accent={CAT[7]} onOpen={() => setOpen("insights")}>
           <ul className="flex flex-col gap-1.5 text-xs">
             {insights(data).slice(0, 3).map((t, i) => <li key={i} className="flex gap-1.5"><span style={{ color: CAT[7] }}>●</span><span>{t}</span></li>)}
           </ul>
         </Card>
-        {(["state", "salesman", "freight"] as const).map((key, i) => (
-          <Card key={key} title={{ state: "State-wise Sale", salesman: "Sale by Salesman", transporter: "Transporter Workload", freight: "Freight Expense" }[key]}
-            icon={{ state: "🗺️", salesman: "🧑‍💼", transporter: "🚚", freight: "💸" }[key]} accent={CAT[(i + 2) % CAT.length]} onOpen={() => setOpen(key)} pending>
+        {(["salesman"] as const).map((key, i) => (
+          <Card key={key} title={{ salesman: "Sale by Salesman" }[key]}
+            icon={{ salesman: "🧑‍💼" }[key]} accent={CAT[(i + 2) % CAT.length]} onOpen={() => setOpen(key)} pending>
             <div className="flex h-[120px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-center text-xs font-semibold text-[var(--muted)]">
               Mapping pending — click for details
             </div>
@@ -263,6 +271,8 @@ function reportSummary(k: ReportKey, d: AnalyticsBundle): { total: string; label
     case "returning": return { total: num(d.returning.length), label: "repeat customers" };
     case "slow-stock": return { total: num(d.slow.filter((x) => x.daysIdle >= 180).length), label: "SKUs idle 180+ days" };
     case "transporter": return { total: inr(sum(d.transporter.map((x) => x.value))), label: `dispatched via ${d.transporter.length} transporters · ${num(sum(d.transporter.map((x) => x.bills)))} bills` };
+    case "state": return { total: inr(sum(d.state.map((x) => x.value))), label: `across ${d.state.length} states · ${num(sum(d.state.map((x) => x.bills)))} bills` };
+    case "freight": return { total: inr(sum(d.freight.map((x) => x.freight))), label: `freight paid · ${d.freight.length} transporters` };
     default: return null;
   }
 }
@@ -358,6 +368,32 @@ function ReportBody({ k, data }: { k: ReportKey; data: AnalyticsBundle }) {
       <p className="mt-2 text-[11px] font-semibold text-[var(--muted-2)]">Source: dispatched sale lines (VW_GST_SALE_ITEM) grouped by transporter. Bills = distinct invoices; value = dispatched amount; weight as recorded.</p>
     </Panel>
   );
+  if (k === "state") return (
+    <Panel title="State-wise sale · by value (place of supply)">
+      <RankedBars rows={data.state.map((s) => ({ label: s.state, sub: `${num(s.bills)} bills`, value: s.value }))} unit="money" color={CAT[0]} />
+      <div className="mt-4">
+        <DataTable head={["State", "Bills", "Value"]}
+          summary={["Summary", num(sum(data.state.map((s) => s.bills))), inr(sum(data.state.map((s) => s.value)))]}
+          rows={data.state.map((s) => [s.state, num(s.bills), inr(s.value)])} />
+      </div>
+    </Panel>
+  );
+  if (k === "freight") {
+    const totFreight = sum(data.freight.map((f) => f.freight));
+    const totSales = sum(data.transporter.map((tr) => tr.value));
+    const pct = totSales > 0 ? ((totFreight / totSales) * 100).toFixed(2) : "0";
+    return (
+      <Panel title="Freight expense · paid per transporter">
+        <RankedBars rows={data.freight.map((f) => ({ label: f.transporter, sub: `${num(f.bills)} bills`, value: f.freight }))} unit="money" color={CAT[5]} />
+        <div className="mt-4">
+          <DataTable head={["Transporter", "Bills", "Freight"]}
+            summary={["Summary", num(sum(data.freight.map((f) => f.bills))), inr(totFreight)]}
+            rows={data.freight.map((f) => [f.transporter, num(f.bills), inr(f.freight)])} />
+        </div>
+        <p className="mt-2 text-[11px] font-semibold text-[var(--muted-2)]">Total freight {inr(totFreight)} ≈ {pct}% of dispatched sales. Freight (FRTAMT) is a per-bill charge, de-duplicated per invoice before summing.</p>
+      </Panel>
+    );
+  }
   return null;
 }
 

@@ -26,6 +26,8 @@ export type ReturnRow   = { customer: string; bills: number; avgDays: number; la
 export type SlowRow     = { code: string; name: string; qty: number; lastSale: string; daysIdle: number };
 export type ItemRow     = { code: string; name: string; units: number; revenue: number };
 export type TransporterRow = { transporter: string; bills: number; value: number; weight: number };
+export type StateRow    = { state: string; bills: number; value: number };
+export type FreightRow  = { transporter: string; bills: number; freight: number };
 export type Kpis        = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
 
 // Daily sales grouped by Indian date — VW_SALE_D
@@ -253,6 +255,58 @@ export async function transporterWorkload(range?: Range, limit = 40): Promise<Tr
   } catch { return []; }
 }
 
+// State-wise sale — VW_GST_SALE_ITEM grouped by the buyer's STATENAME (place of supply).
+export async function stateWiseSale(range?: Range, limit = 40): Promise<StateRow[]> {
+  const r = range ?? defaultRange();
+  try {
+    const sql = getRawSql();
+    const rows = await sql<{ state: string; bills: string; value: string }[]>`
+      SELECT
+        COALESCE(NULLIF(TRIM(data->>'STATENAME'), ''), 'Unspecified') AS state,
+        COUNT(DISTINCT data->>'TRMID') AS bills,
+        ROUND(SUM((data->>'AMOUNT')::numeric)) AS value
+      FROM oracle_raw
+      WHERE source_table = 'VW_GST_SALE_ITEM'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY 1
+      ORDER BY value DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ state: t(row.state), bills: n(row.bills), value: n(row.value) }));
+  } catch { return []; }
+}
+
+// Freight expense — VW_GST_SALE_ITEM. FRTAMT is a bill-level charge repeated on
+// every line, so it's de-duplicated to one value per bill (TRMID) before summing,
+// then grouped by transporter. FRTAMT can hold text ("NO FREIGHT GIVEN") — the
+// regex guard keeps only genuine numbers.
+export async function freightExpense(range?: Range, limit = 40): Promise<FreightRow[]> {
+  const r = range ?? defaultRange();
+  try {
+    const sql = getRawSql();
+    const rows = await sql<{ transporter: string; bills: string; freight: string }[]>`
+      WITH bills AS (
+        SELECT DISTINCT
+          data->>'TRMID' AS trmid,
+          COALESCE(NULLIF(TRIM(data->>'TRANSPORT'), ''), 'Unspecified') AS transporter,
+          CASE WHEN data->>'FRTAMT' ~ '^[0-9]+(\\.[0-9]+)?$' THEN (data->>'FRTAMT')::numeric ELSE 0 END AS frt
+        FROM oracle_raw
+        WHERE source_table = 'VW_GST_SALE_ITEM'
+          AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+          AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      )
+      SELECT transporter, COUNT(*) AS bills, ROUND(SUM(frt)) AS freight
+      FROM bills
+      WHERE frt > 0
+      GROUP BY transporter
+      ORDER BY freight DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ transporter: t(row.transporter), bills: n(row.bills), freight: n(row.freight) }));
+  } catch { return []; }
+}
+
 // Headline KPIs — VW_SALE_D for revenue/bills/customers, VW_SALE_GST_D for units/skus
 export async function analyticsKpis(range?: Range): Promise<Kpis> {
   const r = range ?? defaultRange();
@@ -306,14 +360,16 @@ export type AnalyticsBundle = {
   returning: ReturnRow[];
   slow: SlowRow[];
   transporter: TransporterRow[];
+  state: StateRow[];
+  freight: FreightRow[];
 };
 
 export async function getAnalytics(range?: Range, nowIso = ""): Promise<AnalyticsBundle> {
   const r = range && isDate(range.from) && isDate(range.to) ? range : defaultRange();
-  const [kpis, daily, purchase, sku, category, customers, returning, slow, transporter] = await Promise.all([
+  const [kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight] = await Promise.all([
     analyticsKpis(r), dailySales(r), dailyPurchase(r), soldBySku(r), salesByCategory(r),
-    topCustomers(r), returningCustomers(), slowMovingStock(), transporterWorkload(r),
+    topCustomers(r), returningCustomers(), slowMovingStock(), transporterWorkload(r), stateWiseSale(r), freightExpense(r),
   ]);
   const live = daily.length + sku.length + customers.length > 0;
-  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow, transporter };
+  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight };
 }
