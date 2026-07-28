@@ -44,6 +44,12 @@ export interface SalesOrder {
   id: number; so_no: string; customer_id: number; status: string; order_date: string;
   invoice_no: string | null; total: number; customer_name?: string;
   bill_type: string; disc_pct: number; remarks: string;
+  // Fulfilment / logistics (self-migrated columns) + salesman/source.
+  transporter?: string; tracking_id?: string; salesman_name?: string; source?: string; created_at?: string;
+  // Customer contact + address, joined for the order detail page.
+  customer_code?: string; customer_phone?: string; customer_gst?: string; customer_email?: string;
+  customer_billing?: string; customer_shipping?: string; customer_state?: string;
+  customer_ogl_pct?: number; customer_foc_pct?: number;
 }
 export interface SoLine {
   id: number; so_id: number; sku_id: number; qty: number;

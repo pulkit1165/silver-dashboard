@@ -246,10 +246,14 @@ export async function getSalesOrderList(f: SalesListFilter = {}): Promise<SalesO
 }
 
 export async function getSalesOrder(id: number): Promise<(SalesOrder & { lines: SoLine[] }) | undefined> {
+  await ensureSalesOrderCols();
   const sql = getSql();
   const [so] = (await sql`
-    SELECT so.*, c.name AS customer_name FROM sales_orders so
-    JOIN customers c ON c.id=so.customer_id WHERE so.id=${id}`) as unknown as SalesOrder[];
+    SELECT so.*, c.name AS customer_name, c.code AS customer_code,
+           c.phone AS customer_phone, c.gst AS customer_gst, c.email AS customer_email,
+           c.billing AS customer_billing, c.shipping AS customer_shipping, c.state_code AS customer_state,
+           COALESCE(c.ogl_pct,0) AS customer_ogl_pct, COALESCE(c.foc_pct,0) AS customer_foc_pct
+      FROM sales_orders so JOIN customers c ON c.id=so.customer_id WHERE so.id=${id}`) as unknown as SalesOrder[];
   if (!so) return undefined;
   const lines = (await sql`
     SELECT l.*, s.sku_code, s.name AS sku_name, s.qr_token,
@@ -448,7 +452,9 @@ async function ensureSalesOrderCols() {
       ADD COLUMN IF NOT EXISTS salesman_id integer,
       ADD COLUMN IF NOT EXISTS salesman_name text DEFAULT '',
       ADD COLUMN IF NOT EXISTS required_by text DEFAULT '',
-      ADD COLUMN IF NOT EXISTS source text DEFAULT 'manual'`);
+      ADD COLUMN IF NOT EXISTS source text DEFAULT 'manual',
+      ADD COLUMN IF NOT EXISTS transporter text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS tracking_id text DEFAULT ''`);
     await sql.unsafe(`ALTER TABLE so_lines
       ADD COLUMN IF NOT EXISTS mrp double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
