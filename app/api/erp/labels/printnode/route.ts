@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { printLabels, type LabelData, type LayoutOpts } from "@/lib/erp/printnode";
+import { printLabels, listPrinters, type LabelData, type LayoutOpts } from "@/lib/erp/printnode";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
@@ -26,10 +26,20 @@ export async function POST(req: Request) {
   if (!labels.length) return NextResponse.json({ ok: false, error: "No labels to print." }, { status: 400 });
 
   const lay = (body.layout ?? {}) as Record<string, unknown>;
+
+  // Resolution is AUTHORITATIVE from the printer's model name (300 dpi for the
+  // TTP-345, 203 for the TTP-244s) so a stale client bundle can't send the wrong
+  // dpi and squash the print. Falls back to any client-sent dpi if the lookup fails.
+  let dpi = Number(lay.dpi) >= 280 ? Number(lay.dpi) : 203;
+  try {
+    const p = (await listPrinters()).find((x) => x.id === printerId);
+    if (p) dpi = /34\d|300\s*dpi/i.test(p.name) ? 300 : 203;
+  } catch { /* keep client/default dpi */ }
+
   const opts: LayoutOpts = {
     pos: lay.pos === "bottom" ? "bottom" : "top",
     large: !!lay.large,
-    dpi: Number(lay.dpi) >= 280 ? Number(lay.dpi) : 203,
+    dpi,
     ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
