@@ -33,7 +33,6 @@ const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
 const PENDING: Record<string, string> = {
   state: "State-wise sale needs a party→state (GST state code) mapping in the Oracle sale view. Once the party master's state column is confirmed, this renders an India choropleth + a ranked state table.",
   salesman: "Sale-by-salesman needs the salesman/agent column on the sale header (VW_SALE_D). Confirm the column and this becomes a ranked salesman leaderboard with trend.",
-  transporter: "Transporter workload needs the transporter/LR field on the dispatch/sale record. Once mapped, this ranks transporters by consignments & value.",
   freight: "Freight expense needs the freight/other-charges column on the invoice. Once mapped, this trends freight cost and freight as a % of sales.",
 };
 
@@ -113,12 +112,17 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
           <RankedBars rows={data.slow.slice(0, 6).map((s) => ({ label: s.code, sub: `${num(s.qty)} in stock`, value: s.daysIdle >= 9999 ? 999 : s.daysIdle }))} unit="count" color={CAT[6]} />
           <p className="mt-1 text-[10px] font-semibold text-[var(--muted-2)]">days since last sale (higher = more stuck)</p>
         </Card>
+        <Card title="Transporter Workload" icon="🚚" accent={CAT[2]} onOpen={() => setOpen("transporter")}>
+          {data.transporter.length > 0
+            ? <RankedBars rows={data.transporter.slice(0, 6).map((tr) => ({ label: tr.transporter, sub: `${num(tr.bills)} bills`, value: tr.value }))} unit="money" color={CAT[2]} />
+            : <div className="flex h-[120px] items-center justify-center text-xs font-semibold text-[var(--muted)]">No transporter data in this range.</div>}
+        </Card>
         <Card title="AI Insights" icon="✨" accent={CAT[7]} onOpen={() => setOpen("insights")}>
           <ul className="flex flex-col gap-1.5 text-xs">
             {insights(data).slice(0, 3).map((t, i) => <li key={i} className="flex gap-1.5"><span style={{ color: CAT[7] }}>●</span><span>{t}</span></li>)}
           </ul>
         </Card>
-        {(["state", "salesman", "transporter", "freight"] as const).map((key, i) => (
+        {(["state", "salesman", "freight"] as const).map((key, i) => (
           <Card key={key} title={{ state: "State-wise Sale", salesman: "Sale by Salesman", transporter: "Transporter Workload", freight: "Freight Expense" }[key]}
             icon={{ state: "🗺️", salesman: "🧑‍💼", transporter: "🚚", freight: "💸" }[key]} accent={CAT[(i + 2) % CAT.length]} onOpen={() => setOpen(key)} pending>
             <div className="flex h-[120px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-center text-xs font-semibold text-[var(--muted)]">
@@ -258,6 +262,7 @@ function reportSummary(k: ReportKey, d: AnalyticsBundle): { total: string; label
     case "top-customers": return { total: inr(sum(d.customers.map((x) => x.revenue))), label: `from ${d.customers.length} customers` };
     case "returning": return { total: num(d.returning.length), label: "repeat customers" };
     case "slow-stock": return { total: num(d.slow.filter((x) => x.daysIdle >= 180).length), label: "SKUs idle 180+ days" };
+    case "transporter": return { total: inr(sum(d.transporter.map((x) => x.value))), label: `dispatched via ${d.transporter.length} transporters · ${num(sum(d.transporter.map((x) => x.bills)))} bills` };
     default: return null;
   }
 }
@@ -340,6 +345,17 @@ function ReportBody({ k, data }: { k: ReportKey; data: AnalyticsBundle }) {
       <ul className="flex flex-col gap-2 text-sm">
         {insights(data).map((t, i) => <li key={i} className="flex gap-2 rounded-lg bg-[var(--surface-2)] px-3 py-2"><span style={{ color: CAT[7] }}>●</span><span>{t}</span></li>)}
       </ul>
+    </Panel>
+  );
+  if (k === "transporter") return (
+    <Panel title="Transporter workload · by dispatched value">
+      <RankedBars rows={data.transporter.map((tr) => ({ label: tr.transporter, sub: `${num(tr.bills)} bills`, value: tr.value }))} unit="money" color={CAT[2]} />
+      <div className="mt-4">
+        <DataTable head={["Transporter", "Bills", "Value", "Weight"]}
+          summary={["Summary", num(sum(data.transporter.map((tr) => tr.bills))), inr(sum(data.transporter.map((tr) => tr.value))), num(sum(data.transporter.map((tr) => tr.weight)))]}
+          rows={data.transporter.map((tr) => [tr.transporter, num(tr.bills), inr(tr.value), num(tr.weight)])} />
+      </div>
+      <p className="mt-2 text-[11px] font-semibold text-[var(--muted-2)]">Source: dispatched sale lines (VW_GST_SALE_ITEM) grouped by transporter. Bills = distinct invoices; value = dispatched amount; weight as recorded.</p>
     </Panel>
   );
   return null;

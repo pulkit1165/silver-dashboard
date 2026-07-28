@@ -1,5 +1,5 @@
 import "server-only";
-import { getSql } from "@/lib/erp/db";
+import { getRawSql } from "@/lib/erp/db";
 
 // ── Analytics data layer ────────────────────────────────────────────────────
 // Reads from oracle_raw (PostgreSQL JSONB) — NOT live Oracle.
@@ -25,13 +25,14 @@ export type CustomerRow = { customer: string; revenue: number; bills: number };
 export type ReturnRow   = { customer: string; bills: number; avgDays: number; lastBill: string };
 export type SlowRow     = { code: string; name: string; qty: number; lastSale: string; daysIdle: number };
 export type ItemRow     = { code: string; name: string; units: number; revenue: number };
+export type TransporterRow = { transporter: string; bills: number; value: number; weight: number };
 export type Kpis        = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
 
 // Daily sales grouped by Indian date — VW_SALE_D
 export async function dailySales(range?: Range): Promise<DailyPoint[]> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ d: string; revenue: string; bills: string }[]>`
       SELECT
         ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS d,
@@ -51,7 +52,7 @@ export async function dailySales(range?: Range): Promise<DailyPoint[]> {
 export async function dailyPurchase(range?: Range): Promise<PurchasePoint[]> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ d: string; amount: string; bills: string }[]>`
       SELECT
         ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS d,
@@ -71,7 +72,7 @@ export async function dailyPurchase(range?: Range): Promise<PurchasePoint[]> {
 export async function soldBySku(range?: Range, limit = 60): Promise<SkuRow[]> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ code: string; name: string; units: string; revenue: string }[]>`
       SELECT
         data->>'ITEMCODE' AS code,
@@ -94,7 +95,7 @@ export async function soldBySku(range?: Range, limit = 60): Promise<SkuRow[]> {
 export async function salesByCategory(range?: Range, limit = 12): Promise<CatRow[]> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ category: string; revenue: string; units: string }[]>`
       SELECT
         COALESCE(a.data->>'ITEMCATEG', 'UNCATEGORIZED') AS category,
@@ -119,7 +120,7 @@ export async function salesByCategory(range?: Range, limit = 12): Promise<CatRow
 export async function topCustomers(range?: Range, limit = 40): Promise<CustomerRow[]> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ customer: string; revenue: string; bills: string }[]>`
       SELECT
         data->>'ACNTDESC' AS customer,
@@ -140,7 +141,7 @@ export async function topCustomers(range?: Range, limit = 40): Promise<CustomerR
 // A customer's items bought — VW_SALE_GST_D has ACNTDESC directly
 export async function customerItems(customer: string, limit = 25): Promise<ItemRow[]> {
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ code: string; name: string; units: string; revenue: string }[]>`
       SELECT
         data->>'ITEMCODE' AS code,
@@ -162,7 +163,7 @@ export async function customerItems(customer: string, limit = 25): Promise<ItemR
 // Returning customers: average days between bills — VW_SALE_D
 export async function returningCustomers(limit = 50): Promise<ReturnRow[]> {
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ customer: string; bills: string; avg_days: string; last_bill: string }[]>`
       SELECT
         data->>'ACNTDESC' AS customer,
@@ -192,7 +193,7 @@ export async function returningCustomers(limit = 50): Promise<ReturnRow[]> {
 // Slow-moving stock: items with stock > 0, sorted by days since last sale — VW_STOCK_REQ × VW_SALE_GST_D
 export async function slowMovingStock(limit = 60): Promise<SlowRow[]> {
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const rows = await sql<{ code: string; name: string; qty: string; last_sale: string; days_idle: string }[]>`
       SELECT
         s.data->>'ITEMCODE' AS code,
@@ -227,11 +228,36 @@ export async function slowMovingStock(limit = 60): Promise<SlowRow[]> {
   } catch { return []; }
 }
 
+// Transporter workload — VW_GST_SALE_ITEM grouped by TRANSPORT (the dispatch/LR
+// field on the sale line). Ranks transporters by dispatched value, with the
+// number of bills (consignments) and total weight moved.
+export async function transporterWorkload(range?: Range, limit = 40): Promise<TransporterRow[]> {
+  const r = range ?? defaultRange();
+  try {
+    const sql = getRawSql();
+    const rows = await sql<{ transporter: string; bills: string; value: string; weight: string }[]>`
+      SELECT
+        COALESCE(NULLIF(TRIM(data->>'TRANSPORT'), ''), 'Unspecified') AS transporter,
+        COUNT(DISTINCT data->>'TRMID') AS bills,
+        ROUND(SUM((data->>'AMOUNT')::numeric)) AS value,
+        ROUND(SUM(COALESCE((data->>'WEIGHT')::numeric, 0))) AS weight
+      FROM oracle_raw
+      WHERE source_table = 'VW_GST_SALE_ITEM'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY 1
+      ORDER BY value DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ transporter: t(row.transporter), bills: n(row.bills), value: n(row.value), weight: n(row.weight) }));
+  } catch { return []; }
+}
+
 // Headline KPIs — VW_SALE_D for revenue/bills/customers, VW_SALE_GST_D for units/skus
 export async function analyticsKpis(range?: Range): Promise<Kpis> {
   const r = range ?? defaultRange();
   try {
-    const sql = getSql();
+    const sql = getRawSql();
     const [saleRows, lineRows] = await Promise.all([
       sql<{ revenue: string; bills: string; customers: string }[]>`
         SELECT
@@ -279,14 +305,15 @@ export type AnalyticsBundle = {
   customers: CustomerRow[];
   returning: ReturnRow[];
   slow: SlowRow[];
+  transporter: TransporterRow[];
 };
 
 export async function getAnalytics(range?: Range, nowIso = ""): Promise<AnalyticsBundle> {
   const r = range && isDate(range.from) && isDate(range.to) ? range : defaultRange();
-  const [kpis, daily, purchase, sku, category, customers, returning, slow] = await Promise.all([
+  const [kpis, daily, purchase, sku, category, customers, returning, slow, transporter] = await Promise.all([
     analyticsKpis(r), dailySales(r), dailyPurchase(r), soldBySku(r), salesByCategory(r),
-    topCustomers(r), returningCustomers(), slowMovingStock(),
+    topCustomers(r), returningCustomers(), slowMovingStock(), transporterWorkload(r),
   ]);
   const live = daily.length + sku.length + customers.length > 0;
-  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow };
+  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow, transporter };
 }
