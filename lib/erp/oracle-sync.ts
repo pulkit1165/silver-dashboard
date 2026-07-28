@@ -45,7 +45,7 @@ export const SYNC_TABLES: TableDef[] = [
   { name: "VW_GST_EINV_D",       label: "GST E-Invoice Details",   keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_GST_EWAY_D",       label: "GST E-Way Bill Details",  keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_HSNCODE_STOCK_2Y", label: "HSN Stock Movement 2Y",   keyCol: null,      dateCol: "TRDATE" },
-  { name: "VW_LOTSTORE",         label: "Lot Store",               keyCol: "TRMID",   dateCol: "TRDATE" },
+  { name: "VW_LOTSTORE",         label: "Lot Store",               keyCol: null,      dateCol: "TRDATE" },
   { name: "A_MRP",               label: "MRP History",             keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_CASHBOOKPOST",     label: "Cash Book Postings",      keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_DO_STATUS",        label: "Delivery Order Status",   keyCol: null,      dateCol: null, snapshot: true },

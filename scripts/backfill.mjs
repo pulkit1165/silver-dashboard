@@ -70,7 +70,7 @@ const SYNC_TABLES = [
   { name: "VW_GST_EINV_D",       keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_GST_EWAY_D",       keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_HSNCODE_STOCK_2Y", keyCol: null,      dateCol: "TRDATE" },
-  { name: "VW_LOTSTORE",         keyCol: "TRMID",   dateCol: "TRDATE" },
+  { name: "VW_LOTSTORE",         keyCol: null,      dateCol: "TRDATE" },
   { name: "A_MRP",               keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_CASHBOOKPOST",     keyCol: null,      dateCol: "TRDATE" },
   { name: "VW_DO_STATUS",        keyCol: null,      dateCol: null, snapshot: true },
