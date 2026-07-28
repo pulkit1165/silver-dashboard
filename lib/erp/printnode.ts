@@ -1,4 +1,5 @@
 import "server-only";
+import QRCode from "qrcode";
 
 // PrintNode bridge: the dashboard (cloud) sends raw TSPL to the TSC label
 // printers via PrintNode's API. A small PrintNode client runs on each ERP PC
@@ -73,7 +74,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 // print into the OTHER half); the optional mm overrides let the operator nudge.
 export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number };
 
-export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): string {
+export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
   // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
   // (8 dots/mm); TTP-345 = 300 dpi (~11.81 dots/mm). All x/y/size are in dots,
   // so using the wrong dp squashes the print into a corner on a 300 dpi head.
@@ -99,15 +100,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const downShift = Math.round(5 * dp);
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
 
-  // QR: explicit mm, else the biggest that fits the zone (reserving room for the
-  // down-shift) and ~half the width. TSPL QRCODE cell width maxes at 10.
-  const autoCell = Math.max(4, Math.min(10, Math.floor((zoneH - downShift) / 25), Math.floor((Wd * 0.5) / 25)));
-  const qrCell = opts.qrMM != null ? Math.max(4, Math.min(10, Math.round((opts.qrMM * dp) / 25))) : autoCell;
-  const qrPx = qrCell * 25;
+  // QR rendered as a BITMAP (like BarTender) with a built-in 4-module quiet zone,
+  // sized to the biggest module that fits the zone height and ~half the width.
+  const qr = QRCode.create(l.qrToken, { errorCorrectionLevel: "M" });
+  const qrN = qr.modules.size;
+  const QUIET = 4;
+  const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
+  const maxBox = Math.min(zoneH - downShift, Math.floor(Wd * 0.5));
+  const modDots = opts.qrMM != null
+    ? Math.max(2, Math.floor((opts.qrMM * dp) / qrTotal))
+    : Math.max(2, Math.floor(maxBox / qrTotal));
+  const qrPx = qrTotal * modDots; // full QR box (black symbol + quiet zone)
   let qrY = top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
   if (qrY + qrPx > bottom) qrY = bottom - qrPx; // clamp above the band
   if (qrY < top) qrY = top;
-  const textX = qrX + qrPx + Math.round(3 * dp);
+  const textX = qrX + qrPx + Math.round(2 * dp); // quiet zone already inside the box
   const textW = Math.max(4 * dp, Wd - textX - pad);
 
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
@@ -140,22 +147,55 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qtyStr), qtyF, textW)}"`); cy += lh(qtyF);
   rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`);
 
-  return [
+  // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
+  // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
+  const bmp = renderQrBytes(qr, modDots, QUIET);
+  const head = [
     `SIZE ${w} mm, ${h} mm`,
     `GAP 3 mm, 0 mm`,
-    // Lower density + slow speed = CRISP QR. At DENSITY 15 the fine QR modules
-    // over-ink and bleed into each other, which is why a printed QR won't scan
-    // even though the on-screen one does. ~9-10 keeps modules separated.
-    `DENSITY 9`,
+    `DENSITY ${hires ? 8 : 9}`,
     `SPEED 2`,
     `DIRECTION 0`,
     `REFERENCE 0,0`,
     `CLS`,
-    `QRCODE ${qrX},${qrY},M,${qrCell},A,0,"${esc(l.qrToken)}"`,
-    ...rows,
-    `PRINT 1,1`,
     ``,
   ].join("\r\n");
+  const tail = "\r\n" + [...rows, `PRINT 1,1`, ``].join("\r\n");
+  return Buffer.concat([
+    Buffer.from(head, "ascii"),
+    Buffer.from(`BITMAP ${qrX},${qrY},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"),
+    bmp.bytes,
+    Buffer.from(tail, "ascii"),
+  ]);
+}
+
+// Render a QR into a TSPL BITMAP payload: 1 bit per dot, MSB-first, rows padded
+// to whole bytes. TSPL polarity: bit 0 = black (printed), bit 1 = white. A
+// QUIET-module white border is baked in so hardware scanners lock on reliably.
+function renderQrBytes(
+  qr: { modules: { size: number; data: Uint8Array | number[] } },
+  modDots: number,
+  quiet: number,
+): { bytes: Buffer; widthBytes: number; sideDots: number } {
+  const N = qr.modules.size;
+  const data = qr.modules.data;
+  const sideDots = (N + quiet * 2) * modDots;
+  const widthBytes = Math.ceil(sideDots / 8);
+  const bytes = Buffer.alloc(widthBytes * sideDots, 0xff); // start all-white
+  for (let my = 0; my < N; my++) {
+    for (let mx = 0; mx < N; mx++) {
+      if (!data[my * N + mx]) continue; // light module → leave white
+      const px0 = (quiet + mx) * modDots;
+      const py0 = (quiet + my) * modDots;
+      for (let py = py0; py < py0 + modDots; py++) {
+        const base = py * widthBytes;
+        for (let px = px0; px < px0 + modDots; px++) {
+          bytes[base + (px >> 3)] &= ~(0x80 >> (px & 7)); // clear bit → black
+        }
+      }
+    }
+  }
+  return { bytes, widthBytes, sideDots };
 }
 
 export async function printLabels(printerId: number, labels: LabelData[], w: number, h: number, opts: LayoutOpts = {}) {
@@ -166,7 +206,7 @@ export async function printLabels(printerId: number, labels: LabelData[], w: num
       printerId,
       title: `Silver label ${l.qrToken}`,
       contentType: "raw_base64",
-      content: Buffer.from(tspl, "ascii").toString("base64"),
+      content: tspl.toString("base64"),
       source: "silver-erp",
     };
     try {
