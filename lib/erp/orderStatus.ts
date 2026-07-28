@@ -39,9 +39,23 @@ export const STATUS_FILTERS: { value: string; label: string }[] = [
   { value: "partial-packed", label: "Partial packed" },
   { value: "dispatched", label: "Dispatched" },
   { value: "partial-dispatched", label: "Partial dispatched" },
+  { value: "delivered", label: "Delivered (legacy)" },
   { value: "draft", label: "Draft" },
   { value: "cancelled", label: "Cancelled" },
 ];
+
+// status_key → label + tone (covers ERP-derived keys + legacy 'delivered').
+export const STATUS_META: Record<string, { label: string; tone: StatusTone }> = {
+  "not-punched": { label: "Not punched", tone: "neutral" },
+  punched: { label: "Punched", tone: "accent" },
+  packed: { label: "Packed", tone: "info" },
+  "partial-packed": { label: "Partial packed", tone: "info" },
+  dispatched: { label: "Dispatched", tone: "good" },
+  "partial-dispatched": { label: "Partial dispatched", tone: "info" },
+  delivered: { label: "Delivered", tone: "good" },
+  draft: { label: "Draft", tone: "neutral" },
+  cancelled: { label: "Cancelled", tone: "danger" },
+};
 
 // Tone → light pill colors (inline so it works anywhere without CSS classes).
 export const TONE_STYLE: Record<StatusTone, { bg: string; fg: string; dot: string }> = {
