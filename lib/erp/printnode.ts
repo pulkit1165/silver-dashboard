@@ -91,8 +91,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const pos = opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (pos === "bottom" ? 0.30 : 0.05));
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.95 : 0.70));
+    : Math.round(Hd * (pos === "bottom" ? 0.34 : 0.04));
+  // Keep clear of the pre-printed address band — pull the content zone in a bit
+  // (was 0.70 / 0.95) so text/QR never overprint the band.
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.64));
   const zoneH = Math.max(25, bottom - top);
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(3 * dp);
 
