@@ -174,8 +174,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         body: JSON.stringify({
           printerId: pnPrinterId, w: dims.w, h: dims.h,
           // which end the pre-printed address sits on, so the print lands in the
-          // white half and the content auto-fits that zone
-          layout: { pos: contentPos },
+          // white half; dpi (203 for TTP-244, 300 for TTP-345) so coordinates map
+          // to the printer's real resolution instead of squashing into a corner
+          layout: {
+            pos: contentPos,
+            dpi: /34\d|300\s*dpi/i.test(pnPrinters.find((p) => p.id === pnPrinterId)?.name ?? "") ? 300 : 203,
+          },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
             masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,

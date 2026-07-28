@@ -71,10 +71,15 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
 // Per-size layout: `pos` says which end carries the pre-printed address (so we
 // print into the OTHER half); the optional mm overrides let the operator nudge.
-export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom" };
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): string {
-  const dp = 8;
+  // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
+  // (8 dots/mm); TTP-345 = 300 dpi (~11.81 dots/mm). All x/y/size are in dots,
+  // so using the wrong dp squashes the print into a corner on a 300 dpi head.
+  const dpi = opts.dpi && opts.dpi >= 280 ? opts.dpi : 203;
+  const dp = dpi === 203 ? 8 : dpi / 25.4;
+  const hires = dpi >= 280;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   const pad = Math.round(2 * dp);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
@@ -101,9 +106,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const textW = Math.max(4 * dp, Wd - textX - pad);
 
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
-  // 70×40 = medium (was tiny), 50×30 = small.
-  const big = h >= 54 || (!!opts.large && h >= 40);
-  const med = h >= 38 || (!!opts.large && h >= 26);
+  // 70×40 = medium (was tiny), 50×30 = small. On a 300 dpi head the bitmap fonts
+  // are physically ~⅔ the size, so bump each label up a tier to compensate.
+  const big = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40);
+  const med = h >= (hires ? 30 : 38) || (!!opts.large && h >= 26);
   const skuF = big ? "5" : med ? "4" : "3";
   const nameF = big ? "5" : med ? "4" : "3";
   const qtyF = big ? "4" : med ? "3" : "2";

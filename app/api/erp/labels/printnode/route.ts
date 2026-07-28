@@ -29,6 +29,7 @@ export async function POST(req: Request) {
   const opts: LayoutOpts = {
     pos: lay.pos === "bottom" ? "bottom" : "top",
     large: !!lay.large,
+    dpi: Number(lay.dpi) >= 280 ? Number(lay.dpi) : 203,
     ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
