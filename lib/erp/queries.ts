@@ -204,6 +204,47 @@ export async function getSalesOrders(f: SoFilter = {}): Promise<SalesOrder[]> {
       AND (${f.status ?? null}::text IS NOT NULL OR so.status <> 'decoded')
     ORDER BY so.id DESC`) as unknown as SalesOrder[];
 }
+
+// Unified Orders list (Shopify-style screen) — EVERY order including decoded
+// slips (shown as "Not punched"), newest first, with the packed/dispatched
+// quantities the derived status pill needs and an item count. Filters: party,
+// date range, and item (orders containing a matching SKU code/name).
+export interface SalesOrderListRow {
+  id: number; so_no: string; order_date: string; created_at: string; status: string;
+  customer_name: string; salesman_name: string; source: string;
+  total: number; lines: number; ordered_qty: number; packed_qty: number; dispatched_qty: number;
+}
+export interface SalesListFilter { party?: string; from?: string; to?: string; item?: string }
+export async function getSalesOrderList(f: SalesListFilter = {}): Promise<SalesOrderListRow[]> {
+  await ensureSalesOrderCols();
+  const sql = getSql();
+  const party = f.party?.trim() ? `%${f.party.trim()}%` : null;
+  const item = f.item?.trim() ? `%${f.item.trim()}%` : null;
+  return (await sql`
+    SELECT so.id, so.so_no, so.order_date, so.created_at, so.status,
+           COALESCE(c.name, '—') AS customer_name,
+           COALESCE(NULLIF(so.salesman_name, ''), u.name, '') AS salesman_name,
+           COALESCE(so.source, 'manual') AS source,
+           COALESCE(so.total, 0)::float8 AS total,
+           COUNT(l.id)::int AS lines,
+           COALESCE(SUM(l.qty), 0)::float8 AS ordered_qty,
+           COALESCE(SUM(l.packed_qty), 0)::float8 AS packed_qty,
+           COALESCE(SUM(l.dispatched_qty), 0)::float8 AS dispatched_qty
+      FROM sales_orders so
+      LEFT JOIN customers c ON c.id = so.customer_id
+      LEFT JOIN users u ON u.id = so.salesman_id
+      LEFT JOIN so_lines l ON l.so_id = so.id
+     WHERE (${party}::text IS NULL OR c.name ILIKE ${party})
+       AND (${f.from ?? null}::text IS NULL OR so.order_date >= ${f.from ?? null})
+       AND (${f.to ?? null}::text IS NULL OR so.order_date <= ${f.to ?? null})
+       AND (${item}::text IS NULL OR EXISTS (
+              SELECT 1 FROM so_lines l2 JOIN skus s ON s.id = l2.sku_id
+               WHERE l2.so_id = so.id AND (s.sku_code ILIKE ${item} OR s.name ILIKE ${item})))
+     GROUP BY so.id, c.name, so.salesman_name, u.name, so.source, so.total, so.status, so.so_no, so.order_date, so.created_at
+     ORDER BY so.order_date DESC NULLS LAST, so.id DESC
+     LIMIT 1000`) as unknown as SalesOrderListRow[];
+}
+
 export async function getSalesOrder(id: number): Promise<(SalesOrder & { lines: SoLine[] }) | undefined> {
   const sql = getSql();
   const [so] = (await sql`
