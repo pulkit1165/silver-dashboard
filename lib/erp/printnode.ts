@@ -92,18 +92,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
     : Math.round(Hd * (pos === "bottom" ? 0.34 : 0.04));
-  // Keep clear of the pre-printed address band — pull the content zone in a bit
-  // (was 0.70 / 0.95) so text/QR never overprint the band.
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.64));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.70));
   const zoneH = Math.max(25, bottom - top);
-  const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(3 * dp);
+  // Nudge the whole block a few mm DOWN (was clipping at the top edge) and a bit
+  // RIGHT, while still clearing the pre-printed address band at the bottom.
+  const downShift = Math.round(3 * dp);
+  const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
 
-  // QR: explicit mm, else the biggest that fits BOTH the zone height and ~half
-  // the width. TSPL QRCODE cell width maxes at 10 (higher → printer drops it).
-  const autoCell = Math.max(4, Math.min(10, Math.floor(zoneH / 25), Math.floor((Wd * 0.5) / 25)));
+  // QR: explicit mm, else the biggest that fits the zone (reserving room for the
+  // down-shift) and ~half the width. TSPL QRCODE cell width maxes at 10.
+  const autoCell = Math.max(4, Math.min(10, Math.floor((zoneH - downShift) / 25), Math.floor((Wd * 0.5) / 25)));
   const qrCell = opts.qrMM != null ? Math.max(4, Math.min(10, Math.round((opts.qrMM * dp) / 25))) : autoCell;
   const qrPx = qrCell * 25;
-  const qrY = top + Math.max(0, Math.round((zoneH - qrPx) / 2)); // centre the QR in the zone
+  let qrY = top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
+  if (qrY + qrPx > bottom) qrY = bottom - qrPx; // clamp above the band
+  if (qrY < top) qrY = top;
   const textX = qrX + qrPx + Math.round(3 * dp);
   const textW = Math.max(4 * dp, Wd - textX - pad);
 
