@@ -45,6 +45,15 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
   const [refreshed, setRefreshed] = useState("");
   useEffect(() => { setRefreshed(fmtTime(data.generatedAt)); }, [data.generatedAt]);
 
+  // Auto-fetch on mount if server couldn't load data (Neon cold-start / timeout)
+  useEffect(() => {
+    if (!initial.live) {
+      const p = presetRange("365");
+      applyRange(p.from, p.to, p.label);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function applyRange(from: string, to: string, lbl: string) {
     setLabel(lbl); setLoading(true);
     try { const r = await fetch(`/api/erp/analytics/data?from=${from}&to=${to}`); const j = await r.json(); if (j.ok) setData(j.data); }
@@ -63,9 +72,9 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
         <span className="ml-auto text-xs font-semibold text-[var(--muted-2)]">{refreshed && `Last refreshed ${refreshed}`}</span>
       </div>
 
-      {!data.live && (
+      {!data.live && !loading && (
         <div className="rounded-xl border border-[var(--warning)] bg-[var(--warning-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--warning)]">
-          ⚠ Live Oracle link is not returning data right now — reports show empty. They populate automatically once the connector is up.
+          ⚠ No sales data found for this date range. Try a wider range or check that the daily sync has run.
         </div>
       )}
 

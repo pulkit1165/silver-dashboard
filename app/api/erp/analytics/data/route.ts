@@ -3,6 +3,7 @@ import { getSessionUser } from "@/lib/erp/session";
 import { getAnalytics } from "@/lib/erp/analytics";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 // Analytics bundle for a chosen date window (client date-range filter).
 export async function GET(req: Request) {

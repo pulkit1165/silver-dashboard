@@ -57,6 +57,23 @@ const SYNC_TABLES = [
   { name: "VW_BANKBOOKPOST", keyCol: null,      dateCol: null, snapshot: true },
   { name: "VW_MRPLIST",      keyCol: "ITEMID",  dateCol: null },
   { name: "A_CURRCPM",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_SALE_GST_D",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_STOCK_REQ",        keyCol: "ITEMID",  dateCol: null },
+  { name: "A_LABELPRINT",        keyCol: null,      dateCol: null },
+  { name: "VW_DELYORDER_2Y",     keyCol: "TRMID",   dateCol: "TRDATE" },
+  { name: "VW_DELYORDERDET_2Y",  keyCol: null,      dateCol: null },
+  { name: "VW_MRNDET_2Y",        keyCol: null,      dateCol: null },
+  { name: "VW_LEDGER_2YR",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_GST_D",            keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_GST_SALE_ITEM",    keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_GST_PURC_ITEM",    keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_GST_EINV_D",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_GST_EWAY_D",       keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_HSNCODE_STOCK_2Y", keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_LOTSTORE",         keyCol: null,      dateCol: "TRDATE" },
+  { name: "A_MRP",               keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_CASHBOOKPOST",     keyCol: null,      dateCol: "TRDATE" },
+  { name: "VW_DO_STATUS",        keyCol: null,      dateCol: null, snapshot: true },
 ];
 
 const PAGE = 500, PAGE_DELAY = 400, TABLE_DELAY = 3000;
@@ -145,7 +162,7 @@ for (const def of tables) {
       source_table: def.name,
       source_key:   rowKey(row, def, snapDate, offset + i),
       fy:           fiscalYear(row, def),
-      data:         JSON.stringify(row),
+      data:         row,
     }));
 
     try {

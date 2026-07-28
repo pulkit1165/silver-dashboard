@@ -5,7 +5,7 @@ import { getPurchaseOrders, getVendors } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { aiAvailable } from "@/lib/erp/ai";
-import { runQuery, isConfigured } from "@/lib/oracle";
+import { getSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 
@@ -35,18 +35,22 @@ export default async function PurchasePage({
   let oracleRows: OracleRow[] = [];
   let oracleNote: string | null = null;
   if (tab === "oracle") {
-    if (!isConfigured()) {
-      oracleNote = "Oracle connector not configured.";
-    } else {
-      const result = await runQuery(`
-        SELECT TRMID, TO_CHAR(TRDATE,'YYYY-MM-DD') AS TRDATE, BILLAMOUNT, PARTYID
-        FROM DTC201
-        WHERE TRDATE >= ADD_MONTHS(SYSDATE,-18)
-        ORDER BY TRDATE DESC`).catch((e: Error) => {
-        oracleNote = `Oracle query failed: ${e.message}`;
-        return { rows: [] as OracleRow[] };
-      });
-      oracleRows = result.rows as OracleRow[];
+    try {
+      const db = getSql();
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 18);
+      oracleRows = await db`
+        SELECT
+          data->>'TRMID' AS "TRMID",
+          ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS "TRDATE",
+          (data->>'BILLAMOUNT')::numeric AS "BILLAMOUNT",
+          data->>'PARTYID' AS "PARTYID"
+        FROM oracle_raw
+        WHERE source_table = 'DTC201'
+          AND (data->>'TRDATE')::timestamptz >= ${cutoff.toISOString().slice(0, 10)}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        ORDER BY (data->>'TRDATE')::timestamptz DESC
+      ` as OracleRow[];
+    } catch (e) {
+      oracleNote = `Query failed: ${(e as Error).message}`;
     }
   }
 

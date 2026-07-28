@@ -2,7 +2,7 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import { getDeliveryOrders } from "@/lib/erp/queries";
-import { runQuery, isConfigured } from "@/lib/oracle";
+import { getSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = { open: "n", packed: "n", verified: "g", dispatched: "g" };
@@ -31,18 +31,21 @@ export default async function DeliveryOrdersPage({
   let oracleRows: OracleRow[] = [];
   let oracleNote: string | null = null;
   if (tab === "oracle") {
-    if (!isConfigured()) {
-      oracleNote = "Oracle connector not configured.";
-    } else {
-      const result = await runQuery(`
-        SELECT TRMID, TO_CHAR(TRDATE,'YYYY-MM-DD') AS TRDATE, PARTYID
-        FROM DTC106
-        WHERE TRDATE >= ADD_MONTHS(SYSDATE,-18)
-        ORDER BY TRDATE DESC`).catch((e: Error) => {
-        oracleNote = `Oracle query failed: ${e.message}`;
-        return { rows: [] as OracleRow[] };
-      });
-      oracleRows = result.rows as OracleRow[];
+    try {
+      const db = getSql();
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 18);
+      oracleRows = await db`
+        SELECT
+          data->>'TRMID' AS "TRMID",
+          ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text AS "TRDATE",
+          data->>'PARTYID' AS "PARTYID"
+        FROM oracle_raw
+        WHERE source_table = 'DTC106'
+          AND (data->>'TRDATE')::timestamptz >= ${cutoff.toISOString().slice(0, 10)}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        ORDER BY (data->>'TRDATE')::timestamptz DESC
+      ` as OracleRow[];
+    } catch (e) {
+      oracleNote = `Query failed: ${(e as Error).message}`;
     }
   }
 
@@ -132,7 +135,7 @@ export default async function DeliveryOrdersPage({
                     </tr>
                   ))}
                   {oracleRows.length === 0 && (
-                    <tr><td colSpan={3} className="py-8 text-center text-[var(--muted)]">No Oracle delivery records found{isConfigured() ? " for this period." : " — connector not connected."}</td></tr>
+                    <tr><td colSpan={3} className="py-8 text-center text-[var(--muted)]">No delivery records found for this period.</td></tr>
                   )}
                 </tbody>
               </table>
