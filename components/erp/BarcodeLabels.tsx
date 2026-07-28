@@ -190,15 +190,38 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       });
       const d = await r.json();
       if (d.ok) {
-        setPnMsg({ ok: true, text: `Sent ${d.sent} label${d.sent === 1 ? "" : "s"} to the printer.` });
+        setPnMsg({ ok: true, text: `Sent ${d.sent} label${d.sent === 1 ? "" : "s"} — confirming print…` });
         fetch("/api/erp/labels/log-print", {
           method: "POST", headers: { "content-type": "application/json" },
           body: JSON.stringify({ skuCodes: [...new Set(printable.map((l) => l.sku_code))], labelCount: printable.length }),
         }).catch(() => {});
+        // Confirm the jobs actually printed (catches the "accepted but printer
+        // asleep/offline" phantom-queue case).
+        const ids: number[] = (d.results || []).filter((x: { ok: boolean }) => x.ok).map((x: { job: unknown }) => Number(x.job)).filter((n: number) => Number.isFinite(n));
+        verifyPrint(ids, d.sent);
       } else setPnMsg({ ok: false, text: d.error || "Print failed." });
     } catch (e) {
       setPnMsg({ ok: false, text: String(e) });
     } finally { setPnBusy(false); }
+  }
+
+  // Poll PrintNode job states a couple of times; report whether paper moved.
+  async function verifyPrint(ids: number[], sent: number) {
+    if (ids.length === 0) return;
+    for (const wait of [2500, 3500]) {
+      await new Promise((res) => setTimeout(res, wait));
+      try {
+        const r = await fetch("/api/erp/labels/printnode/status", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }),
+        });
+        const d = await r.json();
+        if (!d.ok) continue;
+        const vals = Object.values(d.states || {}) as string[];
+        const printed = vals.filter((v) => v === "done" || v === "in_progress").length;
+        if (printed >= ids.length) { setPnMsg({ ok: true, text: `✓ Printed ${sent} label${sent === 1 ? "" : "s"} — confirmed on the printer.` }); return; }
+      } catch { /* retry */ }
+    }
+    setPnMsg({ ok: false, text: `⚠ Sent to PrintNode but the printer didn't confirm printing — it may be asleep/offline or out of labels. Check it and reprint.` });
   }
 
   // Exact-size PDF (one label per page, page = the die-cut). Printing this at
@@ -451,10 +474,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               {pnLoading ? "…" : "↻ Refresh"}
             </button>
             <span className="text-sm font-semibold text-[var(--muted)]">at {dims.w} × {dims.h} mm</span>
-            <button onClick={printToTsc} disabled={pnBusy || !pnPrinterId || printable.length === 0}
-              className="ml-auto rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">
-              {pnBusy ? "Printing…" : `Print ${printable.length} to printer`}
-            </button>
+            {(() => {
+              const selOffline = !!pnPrinterId && pnPrinters.find((p) => p.id === pnPrinterId)?.state !== "online";
+              return (
+                <button onClick={printToTsc} disabled={pnBusy || !pnPrinterId || printable.length === 0 || selOffline}
+                  title={selOffline ? "This printer is offline — wake the PC/printer first" : ""}
+                  className="ml-auto rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">
+                  {pnBusy ? "Printing…" : selOffline ? "Printer offline" : `Print ${printable.length} to printer`}
+                </button>
+              );
+            })()}
           </div>
           {pnPrinters.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">

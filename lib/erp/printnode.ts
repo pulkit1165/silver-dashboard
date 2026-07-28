@@ -31,6 +31,23 @@ export async function listPrinters(): Promise<PnPrinter[]> {
   });
 }
 
+// After sending, confirm each job actually printed. PrintNode states progress
+// new → sent_to_client → queued → in_progress → done; reaching in_progress/done
+// means paper moved. Stuck at queued = the printer is asleep/offline (phantom).
+export async function jobStates(ids: number[]): Promise<Record<number, string>> {
+  const out: Record<number, string> = {};
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const r = await fetch(`${API}/printjobs/${id}/states`, { headers: { Authorization: authHeader() }, cache: "no-store" });
+      const d = await r.json();
+      const states: string[] = [];
+      if (Array.isArray(d)) for (const grp of d) if (Array.isArray(grp)) for (const s of grp) if (s?.state) states.push(String(s.state));
+      out[id] = states.includes("done") ? "done" : states.includes("in_progress") ? "in_progress" : states.slice(-1)[0] || "unknown";
+    } catch { out[id] = "unknown"; }
+  }));
+  return out;
+}
+
 export type LabelData = {
   sku_code: string; qrToken: string; name: string; type: "single" | "master";
   masterQty: number; singleQty: number; unit: string; price: number;
