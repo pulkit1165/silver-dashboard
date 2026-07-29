@@ -104,7 +104,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
 // Per-size layout: `pos` says which end carries the pre-printed address (so we
 // print into the OTHER half); the optional mm overrides let the operator nudge.
-export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number };
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
   // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
@@ -114,6 +114,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const dp = dpi === 203 ? 8 : dpi / 25.4;
   const hires = dpi >= 280;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
+  // Operator alignment nudge (from the visual aligner), in mm → dots.
+  const ox = Math.round((opts.offsetXmm ?? 0) * dp);
+  const oy = Math.round((opts.offsetYmm ?? 0) * dp);
   const pad = Math.round(2 * dp);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
@@ -135,7 +138,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const bottom = Math.round(Hd * (pos === "bottom" ? 0.92 : 0.62));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
-  const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
+  const qrX = (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp)) + ox;
 
   // QR rendered as a BITMAP (like BarTender) with a built-in 4-module quiet zone,
   // sized to the biggest module that fits the zone height and ~half the width.
@@ -153,6 +156,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let qrY = top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
   if (qrY + qrPx > bottom) qrY = bottom - qrPx; // clamp above the band
   if (qrY < top) qrY = top;
+  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy)); // apply the operator's vertical nudge (clamped to the label)
   const textX = qrX + qrPx + Math.round(2 * dp); // quiet zone already inside the box
   const textW = Math.max(4 * dp, Wd - textX - pad);
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import LabelAligner, { type Layout } from "./LabelAligner";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
@@ -69,6 +70,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
       const sv = Number(localStorage.getItem("erp_label_speed")); if (sv >= 1) setSpeed(sv);
     } catch { /* defaults */ }
+  }, []);
+  // Shared per-size alignment (visual aligner) — applied automatically on print.
+  const [layouts, setLayouts] = useState<Record<string, Layout>>({});
+  const [alignOpen, setAlignOpen] = useState(false);
+  useEffect(() => {
+    fetch("/api/erp/labels/layout").then((r) => r.json()).then((d) => { if (d.ok) setLayouts(d.layouts || {}); }).catch(() => {});
   }, []);
   const loadPrinters = useCallback(async () => {
     setPnLoading(true);
@@ -191,6 +198,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             pos: contentPos,
             dpi: /34\d|300\s*dpi/i.test(pnPrinters.find((p) => p.id === pnPrinterId)?.name ?? "") ? 300 : 203,
             density, speed,
+            offsetXmm: layouts[sizeId]?.offsetX ?? 0,
+            offsetYmm: layouts[sizeId]?.offsetY ?? 0,
+            qrMM: layouts[sizeId]?.qrMM ?? 0,
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
@@ -377,6 +387,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               {LABEL_SIZES.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
             </select>
           </label>
+        )}
+        {roll && (
+          <button onClick={() => setAlignOpen(true)} title="Visually align this size's print (up/down/left/right + QR size), saved & shared"
+            className="rounded-lg border border-[var(--accent)] px-3 py-1.5 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]">
+            🎯 Align{(layouts[sizeId]?.offsetX || layouts[sizeId]?.offsetY || layouts[sizeId]?.qrMM) ? " ✓" : ""}
+          </button>
         )}
         {(roll || a4) && sizeId === "custom" && (
           <span className="flex items-center gap-1 text-sm font-semibold">
@@ -578,6 +594,19 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {mounted && createPortal(
         <div className={`labels-print-portal print-area ${roll ? "roll" : a4 ? "a4sheet" : ""}`}>{renderSheet()}</div>,
         document.body,
+      )}
+
+      {alignOpen && (
+        <LabelAligner
+          sizeId={sizeId} w={dims.w} h={dims.h}
+          pos={dims.w === 85 && dims.h === 55 ? "bottom" : contentPos}
+          sample={printable[0]
+            ? { code: printable[0].sku_code, name: printable[0].name, qty: `Qty. ${printable[0].singleQty || 1} ${printable[0].unit}`, mrp: `MRP.Rs.${Math.round(printable[0].price)}/-` }
+            : { code: "HH12006", name: "CENTER STAND KIT SPL", qty: "Qty. 1 PCS", mrp: "MRP.Rs.570/-" }}
+          initial={layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }}
+          onClose={() => setAlignOpen(false)}
+          onSaved={(l) => { setLayouts((m) => ({ ...m, [sizeId]: l })); setAlignOpen(false); setPnMsg({ ok: true, text: `Alignment saved for ${dims.w}×${dims.h} mm.` }); }}
+        />
       )}
     </div>
   );
