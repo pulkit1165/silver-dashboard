@@ -34,7 +34,7 @@ const TABS: { key: ElKey; label: string }[] = [
   { key: "mrp", label: "MRP" },
 ];
 // Approx TSPL bitmap-font heights (mm) so the preview font tracks the size control.
-const FONT_MM: Record<number, number> = { 1: 1.7, 2: 2.1, 3: 2.6, 4: 3.2, 5: 3.9 };
+const FONT_MM: Record<number, number> = { 1: 1.7, 2: 2.1, 3: 2.6, 4: 3.2, 5: 3.9, 6: 7.6, 7: 11.4 };
 
 export default function LabelAligner({
   sizeId, w, h, pos, sample, initial, onClose, onSaved,
@@ -183,10 +183,10 @@ export default function LabelAligner({
               <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
                 Text size {els[sel]?.f ? "" : "(auto)"}
                 <div className="flex gap-1">
-                  {[1, 2, 3, 4, 5].map((f) => (
+                  {[1, 2, 3, 4, 5, 6].map((f) => (
                     <button key={f} onClick={() => setEl(sel, { f })}
-                      className={`flex-1 rounded-md border py-1.5 text-sm font-bold ${curFont === f ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
-                      {["", "XS", "S", "M", "L", "XL"][f]}
+                      className={`flex-1 rounded-md border py-1.5 text-xs font-bold ${curFont === f ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
+                      {["", "XS", "S", "M", "L", "XL", "XXL"][f]}
                     </button>
                   ))}
                 </div>

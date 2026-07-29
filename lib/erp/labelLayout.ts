@@ -42,7 +42,7 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
   for (const k of EL_KEYS) {
     const e = src[k]; if (!e || typeof e !== "object") continue;
     const dx = cl(n(e.dx), -40, 40), dy = cl(n(e.dy), -40, 40);
-    const f = Math.round(cl(n(e.f), 0, 5));
+    const f = Math.round(cl(n(e.f), 0, 7));
     const sz = cl(n(e.sz), 0, 60);
     if (dx || dy || f || sz) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}) };
   }

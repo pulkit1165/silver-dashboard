@@ -125,7 +125,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const el = opts.elements || {};
   const emx = (k: string) => Math.round(((el[k]?.dx) || 0) * dp);
   const emy = (k: string) => Math.round(((el[k]?.dy) || 0) * dp);
-  const emf = (k: string, def: string) => { const f = el[k]?.f; return f && f >= 1 && f <= 5 ? String(f) : def; };
+  // Maps an override font level to a TSPL font + magnification. Levels 1–5 are the
+  // native fonts; 6 = XXL (biggest font at 2×), 7 = 3× — TSPL has no font >5, so
+  // we scale via the TEXT x/y-multiplier instead.
+  const emFont = (k: string, def: string): { font: string; mag: number } => {
+    const f = el[k]?.f;
+    if (f && f >= 1 && f <= 5) return { font: String(f), mag: 1 };
+    if (f && f >= 6) return { font: "5", mag: Math.min(3, f - 4) };
+    return { font: def, mag: 1 };
+  };
   const pad = Math.round(2 * dp);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
@@ -221,15 +229,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // override (dx/dy/font from the aligner). Base cy still advances by the auto font
   // height so moving/resizing one attribute doesn't shift the others.
   const rows: string[] = [];
-  { const f = emf("code", skuF); rows.push(`TEXT ${textX + emx("code")},${cy + emy("code")},"${f}",0,1,1,"${fitText(esc(l.sku_code), f, textW)}"`); }
+  const fw = (mag: number) => Math.max(4 * dp, Math.floor(textW / mag)); // width budget shrinks as text magnifies
+  { const { font, mag } = emFont("code", skuF); rows.push(`TEXT ${textX + emx("code")},${cy + emy("code")},"${font}",0,${mag},${mag},"${fitText(esc(l.sku_code), font, fw(mag))}"`); }
   cy += lh(skuF);
-  { const f = emf("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { rows.push(`TEXT ${textX + emx("name")},${ny},"${f}",0,1,1,"${nl}"`); ny += lh(f); } }
+  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { rows.push(`TEXT ${textX + emx("name")},${ny},"${font}",0,${mag},${mag},"${fitText(nl, font, fw(mag))}"`); ny += lh(font) * mag; } }
   cy += nameLines.length * lh(nameF);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
-  { const f = emf("qty", qtyF); rows.push(`TEXT ${textX + emx("qty")},${cy + emy("qty")},"${f}",0,1,1,"${fitText(esc(qtyStr), f, textW)}"`); }
+  { const { font, mag } = emFont("qty", qtyF); rows.push(`TEXT ${textX + emx("qty")},${cy + emy("qty")},"${font}",0,${mag},${mag},"${fitText(esc(qtyStr), font, fw(mag))}"`); }
   cy += lh(qtyF);
-  { const f = emf("mrp", qtyF); rows.push(`TEXT ${textX + emx("mrp")},${cy + emy("mrp")},"${f}",0,1,1,"${fitText(esc(mrpStr), f, textW)}"`); }
+  { const { font, mag } = emFont("mrp", qtyF); rows.push(`TEXT ${textX + emx("mrp")},${cy + emy("mrp")},"${font}",0,${mag},${mag},"${fitText(esc(mrpStr), font, fw(mag))}"`); }
   cy += lh(qtyF);
   for (const e of extras) { rows.push(`TEXT ${textX},${cy},"${exF}",0,1,1,"${fitText(esc(e), exF, textW)}"`); cy += lh(exF); }
 
