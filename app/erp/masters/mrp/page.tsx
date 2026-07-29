@@ -1,12 +1,13 @@
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import MrpMaster from "@/components/erp/MrpMaster";
+import SyncMrpButton from "@/components/erp/SyncMrpButton";
 import { getSkusWithMrp } from "@/lib/erp/mrp";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
-const PAGE_CAP = 400;
+const PAGE_CAP = 1000;
 
 export default async function MrpMasterPage({
   searchParams,
@@ -22,6 +23,7 @@ export default async function MrpMasterPage({
       <PageHeader
         title="MRP Master"
         subtitle="SKU-wise MRP with recency — the most recently set MRP is applied everywhere it's used: barcode/QR labels, new sales orders, invoices and stock value. Existing orders/invoices keep the MRP they were booked at, so history isn't rewritten."
+        right={editable ? <SyncMrpButton /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
       {!sp.q && rows.length >= PAGE_CAP && (

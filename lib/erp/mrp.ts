@@ -1,5 +1,5 @@
 import "server-only";
-import { getSql } from "./db";
+import { getSql, getRawSql } from "./db";
 
 // ── Master MRP with recency ────────────────────────────────────────────────
 // Every MRP change is appended to mrp_history (audit + recency ledger). The
@@ -57,7 +57,7 @@ export async function getSkusWithMrp(search?: string, cap = 400): Promise<MrpRow
         SELECT COUNT(*)::int AS n FROM mrp_history WHERE sku_id = s.id
       ) c ON true
      WHERE (${like}::text IS NULL OR s.sku_code ILIKE ${like} OR s.name ILIKE ${like} OR s.category ILIKE ${like})
-     ORDER BY s.sku_code
+     ORDER BY (COALESCE(s.price, 0) > 0) DESC, s.sku_code
      LIMIT ${cap}`;
   return rows as unknown as MrpRow[];
 }
@@ -114,4 +114,61 @@ export async function setMrp(opts: {
   await sql`UPDATE skus SET price=${effective} WHERE id=${skuId}`;
 
   return { ok: true, skuId, sku_code: skuCode, mrp, effective };
+}
+
+// ── Pull MRPs from Oracle (A_LABELPRINT) ────────────────────────────────────
+// The authoritative MRP per item code, latest per code. Read-only source.
+export async function getOracleMrpByCode(): Promise<Map<string, number>> {
+  try {
+    const db = getRawSql();
+    const rows = (await db`
+      SELECT DISTINCT ON (UPPER(data->>'ITEMCODE')) UPPER(data->>'ITEMCODE') AS code, (data->>'MRP')::numeric AS mrp
+        FROM oracle_raw
+       WHERE source_table = 'A_LABELPRINT' AND data->>'MRP' ~ '^[0-9.]+$'
+       ORDER BY UPPER(data->>'ITEMCODE'), (data->>'RN')::numeric DESC`) as unknown as { code: string; mrp: number }[];
+    const m = new Map<string, number>();
+    for (const r of rows) { const v = Number(r.mrp); if (v > 0) m.set(String(r.code), v); }
+    return m;
+  } catch { return new Map(); }
+}
+
+const todayTs = () => `${new Date().toISOString().slice(0, 10)} 00:00:00`;
+
+// Fill SKU MRPs from Oracle. onlyMissing=true keeps any MRP already set (only
+// fills 0s). Each change appends a dated mrp_history row and syncs skus.price
+// (so it flows to labels/orders) — old values are retained.
+export async function syncMrpFromOracle(opts: {
+  actor?: string | null; onlyMissing?: boolean; effectiveAt?: string;
+}): Promise<{ updated: number; matched: number; oracleItems: number }> {
+  await ensureMrpTable();
+  const sql = getSql();
+  const oracleMrp = await getOracleMrpByCode();
+  if (oracleMrp.size === 0) return { updated: 0, matched: 0, oracleItems: 0 };
+
+  const skus = (await sql`SELECT id, sku_code, COALESCE(price, 0)::float8 AS price FROM skus`) as unknown as
+    { id: number; sku_code: string; price: number }[];
+  const effAt = opts.effectiveAt && /^\d{4}-\d{2}-\d{2}/.test(opts.effectiveAt)
+    ? (opts.effectiveAt.length <= 10 ? `${opts.effectiveAt} 00:00:00` : opts.effectiveAt) : todayTs();
+
+  let matched = 0;
+  const toSet: { id: number; code: string; mrp: number }[] = [];
+  for (const s of skus) {
+    const mrp = oracleMrp.get(String(s.sku_code).toUpperCase());
+    if (mrp == null) continue;
+    matched++;
+    if (opts.onlyMissing && Number(s.price) > 0) continue; // keep existing
+    if (Number(s.price) === mrp) continue;                  // no change
+    toSet.push({ id: s.id, code: s.sku_code, mrp });
+  }
+
+  const CHUNK = 500;
+  for (let i = 0; i < toSet.length; i += CHUNK) {
+    const chunk = toSet.slice(i, i + CHUNK);
+    const histRows = chunk.map((r) => ({ sku_id: r.id, sku_code: r.code, mrp: r.mrp, effective_at: effAt, note: "Synced from Oracle", created_by: opts.actor ?? null }));
+    await sql`INSERT INTO mrp_history ${sql(histRows, "sku_id", "sku_code", "mrp", "effective_at", "note", "created_by")}`;
+    await sql`UPDATE skus AS s SET price = v.mrp::float8
+                FROM (VALUES ${sql(chunk.map((r) => [r.id, r.mrp]))}) AS v(id, mrp)
+               WHERE s.id = v.id::int`;
+  }
+  return { updated: toSet.length, matched, oracleItems: oracleMrp.size };
 }
