@@ -173,8 +173,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // the finer 300 dpi head, slow speed so modules form cleanly without bleeding).
   const density = opts.density != null && opts.density >= 1 ? Math.min(15, Math.round(opts.density)) : (hires ? 8 : 9);
   const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
+  // The 50×30 stock is 2-UP (two labels across per row) — print the QR+text twice,
+  // offset by one label pitch, so BOTH die-cuts get their own barcode + text.
+  const twoUp = w === 50 && h === 30;
+  const colGap = 2;                        // mm between the two columns (tunable)
+  const columns = twoUp ? 2 : 1;
+  const pitch = Math.round((w + colGap) * dp);
+  const sizeW = twoUp ? 2 * w + colGap : w;
   const head = [
-    `SIZE ${w} mm, ${h} mm`,
+    `SIZE ${sizeW} mm, ${h} mm`,
     `GAP 3 mm, 0 mm`,
     `DENSITY ${density}`,
     `SPEED ${speed}`,
@@ -183,13 +190,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     `CLS`,
     ``,
   ].join("\r\n");
-  const tail = "\r\n" + [...rows, `PRINT 1,1`, ``].join("\r\n");
-  return Buffer.concat([
-    Buffer.from(head, "ascii"),
-    Buffer.from(`BITMAP ${qrX},${qrY},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"),
-    bmp.bytes,
-    Buffer.from(tail, "ascii"),
-  ]);
+  const buf: Buffer[] = [Buffer.from(head, "ascii")];
+  for (let c = 0; c < columns; c++) {
+    const xOff = c * pitch;
+    buf.push(Buffer.from(`BITMAP ${qrX + xOff},${qrY},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
+    buf.push(bmp.bytes);
+    const colRows = rows.map((r) => r.replace(/^TEXT (\d+),/, (_m, x) => `TEXT ${Number(x) + xOff},`));
+    buf.push(Buffer.from("\r\n" + colRows.join("\r\n") + "\r\n", "ascii"));
+  }
+  buf.push(Buffer.from(`PRINT 1,1\r\n`, "ascii"));
+  return Buffer.concat(buf);
 }
 
 // Render a QR into a TSPL BITMAP payload: 1 bit per dot, MSB-first, rows padded
