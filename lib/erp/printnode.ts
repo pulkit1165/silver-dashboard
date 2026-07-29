@@ -182,8 +182,22 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const heightOf = (nl: number) => lh(skuF) + nl * lh(nameF) + 2 * lh(qtyF);
   while (nameLines.length > 1 && heightOf(nameLines.length) > zoneH) nameLines = nameLines.slice(0, -1);
 
-  // Centre the text block against the QR, then clamp so it stays inside the zone.
-  const contentH = heightOf(nameLines.length);
+  // Extra attributes (like the reference labels): "(Incl. of All Taxes)", Lot,
+  // Rack, PKD — appended below MRP at a small font. Only as many as fit the zone,
+  // so big labels carry them all and small labels stay minimal.
+  const exF = big ? "3" : "2";
+  const allExtras: string[] = ["(Incl. of All Taxes)"];
+  if (l.lot) allExtras.push(`Lot: ${l.lot}`);
+  if (l.rack) allExtras.push(`Rack: ${l.rack}`);
+  if (l.pkd) allExtras.push(`PKD: ${l.pkd}`);
+  const baseH = heightOf(nameLines.length);
+  let nEx = 0;
+  // leave ~3mm breathing room so the block never fills to the top/bottom edges
+  while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= zoneH - Math.round(3 * dp)) nEx++;
+  const extras = allExtras.slice(0, nEx);
+
+  // Centre the whole block (text + extras) against the QR, then clamp to the zone.
+  const contentH = baseH + extras.length * lh(exF);
   let cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2));
   if (cy + contentH > bottom) cy = bottom - contentH;
   if (cy < top) cy = top;
@@ -194,7 +208,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
   rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qtyStr), qtyF, textW)}"`); cy += lh(qtyF);
-  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`);
+  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`); cy += lh(qtyF);
+  for (const e of extras) { rows.push(`TEXT ${textX},${cy},"${exF}",0,1,1,"${fitText(esc(e), exF, textW)}"`); cy += lh(exF); }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
