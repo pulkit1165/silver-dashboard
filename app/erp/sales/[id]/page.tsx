@@ -7,6 +7,8 @@ import CancelLineButton from "@/components/erp/CancelLineButton";
 import OrderMetaEditor from "@/components/erp/OrderMetaEditor";
 import { PrintButton, WhatsappButton } from "@/components/erp/OrderActions";
 import { getSalesOrder } from "@/lib/erp/queries";
+import { getCostByCode } from "@/lib/erp/cost";
+import { lineGp, orderGp, GP_FLOOR, ORDER_GP_FLOOR } from "@/lib/erp/gpCalc";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { orderDisplayStatus, TONE_STYLE } from "@/lib/erp/orderStatus";
@@ -34,6 +36,11 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
 
   const disp = orderDisplayStatus({ status: so.status, ordered_qty: ordered, packed_qty: packed, dispatched_qty: dispatched });
   const tone = TONE_STYLE[disp.tone];
+
+  // Gross profit — unit cost per line from the Oracle cost master (by SKU code).
+  const costMap = await getCostByCode();
+  const lineCost = (code?: string) => costMap.get(String(code ?? "").toUpperCase()) ?? 0;
+  const gp = orderGp(so.lines.map((l) => ({ qty: l.qty, netRate: l.price, cost: lineCost(l.sku_code) })));
 
   const address = [so.customer_billing, so.customer_shipping && so.customer_shipping !== so.customer_billing ? `Ship: ${so.customer_shipping}` : ""].filter(Boolean).join("\n");
 
@@ -93,7 +100,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
                 <thead>
                   <tr>
                     <th>Item</th><th className="!text-right">MRP</th><th className="!text-right">Disc%</th>
-                    <th>Rate</th><th className="!text-right">Net rate</th><th className="!text-right">Qty</th>
+                    <th>Rate</th><th className="!text-right">Net rate</th><th className="!text-right">GP%</th><th className="!text-right">Qty</th>
                     <th className="!text-right">FOC</th><th className="!text-right">Packed</th><th className="!text-right">Disp.</th>
                     <th className="!text-right">Line total</th>
                   </tr>
@@ -108,6 +115,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
                         <td className="num-cell">{l.discount_pct ? `${l.discount_pct.toFixed(1)}%` : "—"}</td>
                         <td><span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${l.rate_type === "NET" ? "bg-[var(--accent-bg)] text-[var(--accent-strong)]" : "text-[var(--muted)]"}`}>{l.rate_type || "MRP"}</span></td>
                         <td className="num-cell font-semibold">{l.price.toFixed(2)}</td>
+                        <td className="num-cell tabular-nums">{(() => { const g = lineGp({ qty: l.qty, netRate: l.price, cost: lineCost(l.sku_code) }); return g.gpPct == null ? <span className="text-[var(--muted-2)]">—</span> : <span className={g.below ? "font-bold text-[var(--danger)]" : "text-[var(--muted)]"}>{g.gpPct.toFixed(1)}%</span>; })()}</td>
                         <td className="num-cell">{l.qty}</td>
                         <td className="num-cell text-[var(--muted)]">{l.foc_qty || "—"}</td>
                         <td className="num-cell text-[var(--muted)]">{l.packed_qty}</td>
@@ -137,6 +145,29 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
               <Row k="Total (net)" v={inr(netTotal)} bold />
               {so.customer_foc_pct ? <p className="mt-1 text-[11px] text-[var(--muted-2)]">Party is FOC-eligible ({so.customer_foc_pct.toFixed(1)}%). GST added at invoicing.</p> : null}
             </dl>
+          </section>
+
+          {/* Gross profit — internal, not printed */}
+          <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-4 no-print">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-extrabold">Gross profit</span>
+              {gp.gpPct != null ? (
+                <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${gp.below ? "bg-[#fef2f2] text-[#b91c1c]" : "bg-[#ecfdf5] text-[#047857]"}`}>
+                  {gp.gpPct.toFixed(1)}% GP{gp.below ? ` · below ${ORDER_GP_FLOOR}% floor` : ""}
+                </span>
+              ) : <span className="text-xs font-semibold text-[var(--muted-2)]">No cost on file</span>}
+            </div>
+            <dl className="ml-auto flex max-w-md flex-col gap-1.5 text-sm">
+              <Row k="Revenue (costed lines)" v={inr(gp.costedRevenue)} />
+              <Row k="Cost" v={inr(gp.cost)} muted />
+              <Row k="Gross profit" v={inr(gp.profit)} bold />
+            </dl>
+            {(gp.belowLines > 0 || gp.uncostedLines > 0) && (
+              <p className="mt-2 text-[11px] text-[var(--muted-2)]">
+                {gp.belowLines > 0 && <span className="font-semibold text-[var(--danger)]">{gp.belowLines} line(s) below the {GP_FLOOR}% line floor. </span>}
+                {gp.uncostedLines > 0 && <span>{gp.uncostedLines} line(s) have no cost on file (excluded from GP).</span>}
+              </p>
+            )}
           </section>
 
           {/* Logistics/notes shown on the printed slip (read-only) */}

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import NewSalesOrder from "@/components/erp/NewSalesOrder";
 import { getCustomers, stockLevels } from "@/lib/erp/queries";
+import { getCostByCode } from "@/lib/erp/cost";
 import { ensurePricingTables } from "@/lib/erp/pricing-masters";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -13,7 +14,7 @@ export default async function NewSalesOrderPage() {
   if (!canWrite(user.role, "sales")) redirect("/erp/sales");
 
   await ensurePricingTables(); // make sure skus.item_net_rate / foc_pct exist before we read s.*
-  const [customers, skus] = await Promise.all([getCustomers(), stockLevels()]);
+  const [customers, skus, costMap] = await Promise.all([getCustomers(), stockLevels(), getCostByCode()]);
 
   return (
     <>
@@ -31,6 +32,7 @@ export default async function NewSalesOrderPage() {
           gst_rate: s.gst_rate ?? 18, master_qty: s.master_qty ?? 0, bal_qty: s.qty ?? 0,
           item_net_rate: s.item_net_rate ?? 0,
           foc_pct: s.foc_pct ?? 0,
+          cost: costMap.get(String(s.sku_code).toUpperCase()) ?? 0,
         }))}
       />
     </>

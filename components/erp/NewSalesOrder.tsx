@@ -4,10 +4,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import SearchSelect from "./SearchSelect";
 import { computeLineRate } from "@/lib/erp/pricing";
+import { orderGp, ORDER_GP_FLOOR } from "@/lib/erp/gpCalc";
 
 interface SkuOption {
   id: number; sku_code: string; name: string; price: number; unit: string;
-  gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number; foc_pct: number;
+  gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number; foc_pct: number; cost: number;
 }
 interface CustomerOption { id: number; code: string; name: string; discount_pct: number; ogl_pct: number; foc_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
@@ -150,6 +151,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
+  const gp = orderGp(lines.filter((l) => l.skuId).map((l) => ({ qty: l.qty, netRate: l.price, cost: skuById.get(l.skuId as number)?.cost ?? 0 })));
   const [creditWarning, setCreditWarning] = useState<{ message: string; creditLimit: number; outstanding: number; orderTotal: number } | null>(null);
 
   async function submit(allowOverCreditLimit = false) {
@@ -421,7 +423,15 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4">
-        <div className="text-base font-bold">Order total: ₹{total.toFixed(2)}</div>
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="text-base font-bold">Order total: ₹{total.toFixed(2)}</div>
+          {gp.gpPct != null && (
+            <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${gp.below ? "bg-[#fef2f2] text-[#b91c1c]" : "bg-[#ecfdf5] text-[#047857]"}`}
+              title={`Gross profit on costed lines${gp.uncostedLines ? ` · ${gp.uncostedLines} line(s) have no cost on file` : ""}`}>
+              {gp.gpPct.toFixed(1)}% GP{gp.below ? ` · below ${ORDER_GP_FLOOR}% floor` : ""}{gp.belowLines ? ` · ${gp.belowLines} low line(s)` : ""}
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           {err && <span className="text-sm font-semibold text-[var(--danger)]">{err}</span>}
           <button
