@@ -22,6 +22,7 @@ export async function POST(req: Request) {
   if (!sizeId) return NextResponse.json({ ok: false, error: "sizeId required" }, { status: 400 });
   await saveLabelLayout(sizeId, {
     offsetX: Number(b.offsetX) || 0, offsetY: Number(b.offsetY) || 0, qrMM: Number(b.qrMM) || 0,
+    elements: (b.elements && typeof b.elements === "object") ? b.elements : undefined,
   }, user.name);
   return NextResponse.json({ ok: true });
 }

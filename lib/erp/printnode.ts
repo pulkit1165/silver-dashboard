@@ -104,7 +104,11 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 
 // Per-size layout: `pos` says which end carries the pre-printed address (so we
 // print into the OTHER half); the optional mm overrides let the operator nudge.
-export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number };
+// `elements` lets the operator position/size EACH attribute independently (from
+// the visual aligner): key = qr|code|name|qty|mrp, dx/dy = mm nudge from the auto
+// position, f = font 1–5 (text), sz = QR size in mm. Absent/0 = keep auto.
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number };
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride> };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
   // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
@@ -117,6 +121,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Operator alignment nudge (from the visual aligner), in mm → dots.
   const ox = Math.round((opts.offsetXmm ?? 0) * dp);
   const oy = Math.round((opts.offsetYmm ?? 0) * dp);
+  // Per-element overrides (from the visual aligner). dx/dy in mm → dots; f = font.
+  const el = opts.elements || {};
+  const emx = (k: string) => Math.round(((el[k]?.dx) || 0) * dp);
+  const emy = (k: string) => Math.round(((el[k]?.dy) || 0) * dp);
+  const emf = (k: string, def: string) => { const f = el[k]?.f; return f && f >= 1 && f <= 5 ? String(f) : def; };
   const pad = Math.round(2 * dp);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
 
@@ -149,8 +158,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
   const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * 0.5), Math.round(28 * dp));
-  const modDots = opts.qrMM != null
-    ? Math.max(2, Math.floor((opts.qrMM * dp) / qrTotal))
+  // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
+  const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
+  const modDots = qrSzMM > 0
+    ? Math.max(2, Math.floor((qrSzMM * dp) / qrTotal))
     : Math.max(2, Math.floor(maxBox / qrTotal));
   const qrPx = qrTotal * modDots; // full QR box (black symbol + quiet zone)
   let qrY = top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
@@ -206,13 +217,20 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   if (cy + contentH > bottom) cy = bottom - contentH;
   if (cy < top) cy = top;
 
+  // Each attribute is placed at its auto position, then nudged/resized by its own
+  // override (dx/dy/font from the aligner). Base cy still advances by the auto font
+  // height so moving/resizing one attribute doesn't shift the others.
   const rows: string[] = [];
-  rows.push(`TEXT ${textX},${cy},"${skuF}",0,1,1,"${fitText(esc(l.sku_code), skuF, textW)}"`); cy += lh(skuF);
-  for (const nl of nameLines) { rows.push(`TEXT ${textX},${cy},"${nameF}",0,1,1,"${nl}"`); cy += lh(nameF); }
+  { const f = emf("code", skuF); rows.push(`TEXT ${textX + emx("code")},${cy + emy("code")},"${f}",0,1,1,"${fitText(esc(l.sku_code), f, textW)}"`); }
+  cy += lh(skuF);
+  { const f = emf("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { rows.push(`TEXT ${textX + emx("name")},${ny},"${f}",0,1,1,"${nl}"`); ny += lh(f); } }
+  cy += nameLines.length * lh(nameF);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
-  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(qtyStr), qtyF, textW)}"`); cy += lh(qtyF);
-  rows.push(`TEXT ${textX},${cy},"${qtyF}",0,1,1,"${fitText(esc(mrpStr), qtyF, textW)}"`); cy += lh(qtyF);
+  { const f = emf("qty", qtyF); rows.push(`TEXT ${textX + emx("qty")},${cy + emy("qty")},"${f}",0,1,1,"${fitText(esc(qtyStr), f, textW)}"`); }
+  cy += lh(qtyF);
+  { const f = emf("mrp", qtyF); rows.push(`TEXT ${textX + emx("mrp")},${cy + emy("mrp")},"${f}",0,1,1,"${fitText(esc(mrpStr), f, textW)}"`); }
+  cy += lh(qtyF);
   for (const e of extras) { rows.push(`TEXT ${textX},${cy},"${exF}",0,1,1,"${fitText(esc(e), exF, textW)}"`); cy += lh(exF); }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
@@ -243,7 +261,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const buf: Buffer[] = [Buffer.from(head, "ascii")];
   for (let c = 0; c < columns; c++) {
     const xOff = c * pitch;
-    buf.push(Buffer.from(`BITMAP ${qrX + xOff},${qrY},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
+    const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX + xOff + emx("qr")));
+    const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY + emy("qr")));
+    buf.push(Buffer.from(`BITMAP ${qbx},${qby},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
     buf.push(bmp.bytes);
     const colRows = rows.map((r) => r.replace(/^TEXT (\d+),/, (_m, x) => `TEXT ${Number(x) + xOff},`));
     buf.push(Buffer.from("\r\n" + colRows.join("\r\n") + "\r\n", "ascii"));

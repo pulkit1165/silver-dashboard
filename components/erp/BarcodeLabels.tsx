@@ -201,6 +201,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             offsetXmm: layouts[sizeId]?.offsetX ?? 0,
             offsetYmm: layouts[sizeId]?.offsetY ?? 0,
             qrMM: layouts[sizeId]?.qrMM ?? 0,
+            elements: layouts[sizeId]?.elements ?? {},
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
