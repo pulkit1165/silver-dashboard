@@ -128,11 +128,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (pos === "bottom" ? 0.36 : 0.05));
+    : Math.round(Hd * (pos === "bottom" ? 0.36 : 0.08)); // more top margin so the SKU code isn't clipped
   // Content zone kept comfortably clear of the pre-printed address band so it
   // never overprints it — at EITHER resolution (203 dpi rounds the QR a touch
   // bigger, so we leave margin for that too).
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.92 : (tiny ? 0.70 : 0.62)));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.92 : 0.62));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
