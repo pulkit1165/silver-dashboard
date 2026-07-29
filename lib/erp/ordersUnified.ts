@@ -44,14 +44,20 @@ function unifiedCte(db: ReturnType<typeof getRawSql>) {
            END AS status_key
       FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
     UNION ALL
-    -- Legacy Oracle orders (VW_SALE_D header)
-    SELECT data->>'TRMID', data->>'TRMID', 'oracle'::text,
-           ((data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text,
-           COALESCE(NULLIF(data->>'ACNTDESC',''), '—'), COALESCE(data->>'AGENT',''),
-           ''::text, COALESCE(NULLIF(data->>'STATE',''), ''),
-           COALESCE(NULLIF(data->>'SALEAMOUNT','')::numeric, NULLIF(data->>'BILLAMOUNT','')::numeric, 0)::float8,
+    -- Legacy Oracle orders (VW_SALE_D header + transporter from the GST line view)
+    SELECT sd.data->>'TRMID', sd.data->>'TRMID', 'oracle'::text,
+           ((sd.data->>'TRDATE')::timestamptz AT TIME ZONE 'Asia/Kolkata')::date::text,
+           COALESCE(NULLIF(sd.data->>'ACNTDESC',''), '—'), COALESCE(sd.data->>'AGENT',''),
+           COALESCE(tp.tpt, '')::text, COALESCE(NULLIF(sd.data->>'STATE',''), ''),
+           COALESCE(NULLIF(sd.data->>'SALEAMOUNT','')::numeric, NULLIF(sd.data->>'BILLAMOUNT','')::numeric, 0)::float8,
            'delivered'::text
-      FROM oracle_raw WHERE source_table = 'VW_SALE_D'`;
+      FROM oracle_raw sd
+      LEFT JOIN (
+        SELECT DISTINCT ON (data->>'TRMID') data->>'TRMID' AS trmid, data->>'TRANSPORT' AS tpt
+          FROM oracle_raw WHERE source_table = 'VW_GST_SALE_ITEM' AND COALESCE(data->>'TRANSPORT','') <> ''
+         ORDER BY data->>'TRMID'
+      ) tp ON tp.trmid = sd.data->>'TRMID'
+     WHERE sd.source_table = 'VW_SALE_D'`;
 }
 
 function whereFrag(db: ReturnType<typeof getRawSql>, f: UnifiedFilter) {
@@ -109,7 +115,7 @@ export async function getUnifiedOrdersForExport(f: UnifiedFilter, cap = 10000): 
 export interface OracleOrderLine { code: string; name: string; qty: number; rate: number; amount: number; disc: number; hsn: string }
 export interface OracleOrder {
   order_no: string; date: string; customer: string; customer_code: string; salesman: string;
-  state: string; city: string; sale_amount: number; bill_amount: number; lines: OracleOrderLine[];
+  state: string; city: string; transporter: string; sale_amount: number; bill_amount: number; lines: OracleOrderLine[];
 }
 export async function getOracleOrder(docNo: string): Promise<OracleOrder | undefined> {
   const db = getRawSql();
@@ -122,6 +128,9 @@ export async function getOracleOrder(docNo: string): Promise<OracleOrder | undef
            COALESCE(NULLIF(data->>'BILLAMOUNT','')::numeric,0)::float8 AS bill_amount
       FROM oracle_raw WHERE source_table='VW_SALE_D' AND data->>'TRMID'=${docNo} LIMIT 1`) as unknown as Record<string, unknown>[];
   if (!h) return undefined;
+  const [tp] = (await db`
+    SELECT data->>'TRANSPORT' AS transporter FROM oracle_raw
+     WHERE source_table='VW_GST_SALE_ITEM' AND data->>'TRMID'=${docNo} AND COALESCE(data->>'TRANSPORT','')<>'' LIMIT 1`) as unknown as Record<string, unknown>[];
   const lines = (await db`
     SELECT data->>'ITEMCODE' AS code, data->>'ITEMDESCRIPTION' AS name,
            COALESCE(NULLIF(data->>'QUANTITY','')::numeric,0)::float8 AS qty,
@@ -134,7 +143,7 @@ export async function getOracleOrder(docNo: string): Promise<OracleOrder | undef
   return {
     order_no: String(h.order_no ?? docNo), date: String(h.date ?? ""), customer: String(h.customer ?? ""),
     customer_code: String(h.customer_code ?? ""), salesman: String(h.salesman ?? ""),
-    state: String(h.state ?? ""), city: String(h.city ?? ""),
+    state: String(h.state ?? ""), city: String(h.city ?? ""), transporter: String(tp?.transporter ?? ""),
     sale_amount: Number(h.sale_amount) || 0, bill_amount: Number(h.bill_amount) || 0,
     lines: lines.map((l) => ({
       code: String(l.code ?? ""), name: String(l.name ?? ""), qty: Number(l.qty) || 0,

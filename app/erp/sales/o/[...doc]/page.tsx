@@ -86,6 +86,7 @@ export default async function OracleOrderDetail({ params }: { params: Promise<{ 
           </Card>
           <Card title="Order">
             <Meta k="Salesman" v={o.salesman || "—"} />
+            <Meta k="Transporter" v={o.transporter || "—"} />
             <Meta k="State" v={o.state || "—"} />
             <Meta k="Order date" v={o.date || "—"} />
             <Meta k="Source" v="Legacy (Oracle)" />

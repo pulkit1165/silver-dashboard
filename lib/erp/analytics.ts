@@ -28,6 +28,7 @@ export type ItemRow     = { code: string; name: string; units: number; revenue: 
 export type TransporterRow = { transporter: string; bills: number; value: number; weight: number };
 export type StateRow    = { state: string; bills: number; value: number };
 export type FreightRow  = { transporter: string; bills: number; freight: number };
+export type SalesmanRow = { salesman: string; bills: number; value: number };
 export type Kpis        = { revenue: number; bills: number; units: number; skus: number; customers: number; aov: number };
 
 // Daily sales grouped by Indian date — VW_SALE_D
@@ -307,6 +308,27 @@ export async function freightExpense(range?: Range, limit = 40): Promise<Freight
   } catch { return []; }
 }
 
+// Sale by salesman — VW_SALE_D grouped by AGENT (the salesman/agent on the bill).
+export async function salesBySalesman(range?: Range, limit = 40): Promise<SalesmanRow[]> {
+  const r = range ?? defaultRange();
+  try {
+    const sql = getRawSql();
+    const rows = await sql<{ salesman: string; bills: string; value: string }[]>`
+      SELECT COALESCE(NULLIF(TRIM(data->>'AGENT'), ''), 'Unassigned') AS salesman,
+             COUNT(*) AS bills,
+             ROUND(SUM((data->>'SALEAMOUNT')::numeric)) AS value
+      FROM oracle_raw
+      WHERE source_table = 'VW_SALE_D'
+        AND (data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
+        AND (data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
+      GROUP BY 1
+      ORDER BY value DESC NULLS LAST
+      LIMIT ${limit}
+    `;
+    return rows.map(row => ({ salesman: t(row.salesman), bills: n(row.bills), value: n(row.value) }));
+  } catch { return []; }
+}
+
 // Headline KPIs — VW_SALE_D for revenue/bills/customers, VW_SALE_GST_D for units/skus
 export async function analyticsKpis(range?: Range): Promise<Kpis> {
   const r = range ?? defaultRange();
@@ -362,14 +384,15 @@ export type AnalyticsBundle = {
   transporter: TransporterRow[];
   state: StateRow[];
   freight: FreightRow[];
+  salesman: SalesmanRow[];
 };
 
 export async function getAnalytics(range?: Range, nowIso = ""): Promise<AnalyticsBundle> {
   const r = range && isDate(range.from) && isDate(range.to) ? range : defaultRange();
-  const [kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight] = await Promise.all([
+  const [kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight, salesman] = await Promise.all([
     analyticsKpis(r), dailySales(r), dailyPurchase(r), soldBySku(r), salesByCategory(r),
-    topCustomers(r), returningCustomers(), slowMovingStock(), transporterWorkload(r), stateWiseSale(r), freightExpense(r),
+    topCustomers(r), returningCustomers(), slowMovingStock(), transporterWorkload(r), stateWiseSale(r), freightExpense(r), salesBySalesman(r),
   ]);
   const live = daily.length + sku.length + customers.length > 0;
-  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight };
+  return { live, from: r.from, to: r.to, generatedAt: nowIso, kpis, daily, purchase, sku, category, customers, returning, slow, transporter, state, freight, salesman };
 }

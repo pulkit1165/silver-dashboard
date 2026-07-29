@@ -30,9 +30,7 @@ const PRESETS = [
 const fmtTime = (iso: string) => { try { return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); } catch { return ""; } };
 const sum = (xs: number[]) => xs.reduce((a, x) => a + x, 0);
 
-const PENDING: Record<string, string> = {
-  salesman: "Sale-by-salesman needs the salesman/agent column on the sale header (VW_SALE_D). Confirm the column and this becomes a ranked salesman leaderboard with trend.",
-};
+const PENDING: Record<string, string> = {};
 
 export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsBundle }) {
   const [data, setData] = useState(initial);
@@ -130,14 +128,11 @@ export default function AnalyticsDashboard({ data: initial }: { data: AnalyticsB
             {insights(data).slice(0, 3).map((t, i) => <li key={i} className="flex gap-1.5"><span style={{ color: CAT[7] }}>●</span><span>{t}</span></li>)}
           </ul>
         </Card>
-        {(["salesman"] as const).map((key, i) => (
-          <Card key={key} title={{ salesman: "Sale by Salesman" }[key]}
-            icon={{ salesman: "🧑‍💼" }[key]} accent={CAT[(i + 2) % CAT.length]} onOpen={() => setOpen(key)} pending>
-            <div className="flex h-[120px] items-center justify-center rounded-lg border border-dashed border-[var(--border)] text-center text-xs font-semibold text-[var(--muted)]">
-              Mapping pending — click for details
-            </div>
-          </Card>
-        ))}
+        <Card title="Sale by Salesman" icon="🧑‍💼" accent={CAT[3]} onOpen={() => setOpen("salesman")}>
+          {data.salesman.length > 0
+            ? <RankedBars rows={data.salesman.slice(0, 6).map((s) => ({ label: s.salesman, sub: `${num(s.bills)} bills`, value: s.value }))} unit="money" color={CAT[3]} />
+            : <div className="flex h-[120px] items-center justify-center text-xs font-semibold text-[var(--muted)]">No salesman data in this range.</div>}
+        </Card>
       </div>
 
       {open && <ReportOverlay k={open} data={data} label={label} refreshed={refreshed} onClose={() => setOpen(null)} />}
@@ -273,6 +268,7 @@ function reportSummary(k: ReportKey, d: AnalyticsBundle): { total: string; label
     case "transporter": return { total: inr(sum(d.transporter.map((x) => x.value))), label: `dispatched via ${d.transporter.length} transporters · ${num(sum(d.transporter.map((x) => x.bills)))} bills` };
     case "state": return { total: inr(sum(d.state.map((x) => x.value))), label: `across ${d.state.length} states · ${num(sum(d.state.map((x) => x.bills)))} bills` };
     case "freight": return { total: inr(sum(d.freight.map((x) => x.freight))), label: `freight paid · ${d.freight.length} transporters` };
+    case "salesman": return { total: inr(sum(d.salesman.map((x) => x.value))), label: `across ${d.salesman.length} salesmen · ${num(sum(d.salesman.map((x) => x.bills)))} bills` };
     default: return null;
   }
 }
@@ -366,6 +362,16 @@ function ReportBody({ k, data }: { k: ReportKey; data: AnalyticsBundle }) {
           rows={data.transporter.map((tr) => [tr.transporter, num(tr.bills), inr(tr.value), num(tr.weight)])} />
       </div>
       <p className="mt-2 text-[11px] font-semibold text-[var(--muted-2)]">Source: dispatched sale lines (VW_GST_SALE_ITEM) grouped by transporter. Bills = distinct invoices; value = dispatched amount; weight as recorded.</p>
+    </Panel>
+  );
+  if (k === "salesman") return (
+    <Panel title="Sale by salesman · by value">
+      <RankedBars rows={data.salesman.map((s) => ({ label: s.salesman, sub: `${num(s.bills)} bills`, value: s.value }))} unit="money" color={CAT[3]} />
+      <div className="mt-4">
+        <DataTable head={["Salesman", "Bills", "Value"]}
+          summary={["Summary", num(sum(data.salesman.map((s) => s.bills))), inr(sum(data.salesman.map((s) => s.value)))]}
+          rows={data.salesman.map((s) => [s.salesman, num(s.bills), inr(s.value)])} />
+      </div>
     </Panel>
   );
   if (k === "state") return (
