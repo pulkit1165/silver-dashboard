@@ -121,14 +121,18 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // The pre-printed address sits on one end (~30% of the label); we print into
   // the rest. `pos: "top"` = address at bottom → print in the TOP zone (green
   // labels); `"bottom"` = banner at top → print in the BOTTOM zone (red label).
-  const pos = opts.pos === "bottom" ? "bottom" : "top";
+  // The red 85×55 stock has its banner at the TOP → always print in the lower
+  // white area. The 50×30 has extra room below → give it a taller zone (bigger QR).
+  const red = w === 85 && h === 55;
+  const tiny = w === 50 && h === 30;
+  const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (pos === "bottom" ? 0.32 : 0.05));
+    : Math.round(Hd * (pos === "bottom" ? 0.36 : 0.05));
   // Content zone kept comfortably clear of the pre-printed address band so it
   // never overprints it — at EITHER resolution (203 dpi rounds the QR a touch
   // bigger, so we leave margin for that too).
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.88 : 0.62));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.92 : (tiny ? 0.70 : 0.62)));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
@@ -141,7 +145,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
-  const maxBox = Math.min(zoneH - downShift - Math.round(4 * dp), Math.floor(Wd * 0.5), Math.round(28 * dp));
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * 0.5), Math.round(28 * dp));
   const modDots = opts.qrMM != null
     ? Math.max(2, Math.floor((opts.qrMM * dp) / qrTotal))
     : Math.max(2, Math.floor(maxBox / qrTotal));
