@@ -1,7 +1,8 @@
 import PageHeader from "@/components/PageHeader";
-import ListFilters from "@/components/erp/ListFilters";
 import MrpMaster from "@/components/erp/MrpMaster";
+import MrpSearch from "@/components/erp/MrpSearch";
 import SyncMrpButton from "@/components/erp/SyncMrpButton";
+import Link from "next/link";
 import { getSkusWithMrp } from "@/lib/erp/mrp";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -25,9 +26,16 @@ export default async function MrpMasterPage({
         subtitle="SKU-wise MRP with recency — the most recently set MRP is applied everywhere it's used: barcode/QR labels, new sales orders, invoices and stock value. Existing orders/invoices keep the MRP they were booked at, so history isn't rewritten."
         right={editable ? <SyncMrpButton /> : undefined}
       />
-      <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <MrpSearch initial={sp.q ?? ""} />
+        {sp.q && (
+          <span className="text-xs font-semibold text-[var(--muted)]">
+            Filtered to “{sp.q}” · <Link href="/erp/masters/mrp" className="text-[var(--accent)]">clear</Link>
+          </span>
+        )}
+      </div>
       {!sp.q && rows.length >= PAGE_CAP && (
-        <p className="mb-3 text-xs font-semibold text-[var(--muted)]">Showing first {PAGE_CAP} items — use Search to narrow down (bulk upload updates any SKU by code regardless of this list).</p>
+        <p className="mb-3 text-xs font-semibold text-[var(--muted)]">Showing {PAGE_CAP} items (MRP-set first). Use the search above to find any item across the whole catalogue.</p>
       )}
       <MrpMaster rows={rows} editable={editable} />
     </>
