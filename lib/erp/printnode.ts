@@ -68,6 +68,21 @@ function fitText(s: string, font: string, maxDots: number): string {
   const max = Math.max(3, Math.floor(maxDots / w));
   return s.length > max ? s.slice(0, Math.max(1, max - 1)) + "." : s;
 }
+// Word-wrap to as many lines as the full text needs (no dropping) — hard-breaking
+// any single word wider than the line. Used to auto-fit the whole product name.
+function wrapAll(s: string, font: string, maxDots: number): string[] {
+  const cw = F_WIDTH[font] || 16;
+  const maxChars = Math.max(4, Math.floor(maxDots / cw));
+  const out: string[] = [];
+  let cur = "";
+  for (const word of s.split(/\s+/).filter(Boolean)) {
+    const test = cur ? cur + " " + word : word;
+    if (test.length > maxChars && cur) { out.push(cur); cur = word; } else cur = test;
+  }
+  if (cur) out.push(cur);
+  return out.flatMap((l) => (l.length > maxChars ? (l.match(new RegExp(`.{1,${maxChars}}`, "g")) ?? [l]) : [l]));
+}
+
 // TSPL TEXT has no auto-wrap, so word-wrap the name to at most `maxLines` lines.
 function wrapText(s: string, font: string, maxDots: number, maxLines: number): string[] {
   const cw = F_WIDTH[font] || 16;
@@ -124,7 +139,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrN = qr.modules.size;
   const QUIET = 4;
   const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
-  const maxBox = Math.min(zoneH - downShift - Math.round(4 * dp), Math.floor(Wd * 0.5));
+  // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
+  // text of width (it's still a big, easily-scanned code with its quiet zone).
+  const maxBox = Math.min(zoneH - downShift - Math.round(4 * dp), Math.floor(Wd * 0.5), Math.round(28 * dp));
   const modDots = opts.qrMM != null
     ? Math.max(2, Math.floor((opts.qrMM * dp) / qrTotal))
     : Math.max(2, Math.floor(maxBox / qrTotal));
@@ -141,15 +158,25 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const big = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40);
   const med = h >= (hires ? 30 : 38) || (!!opts.large && h >= 26);
   const skuF = big ? "5" : med ? "4" : "3";
-  const nameF = big ? "5" : med ? "4" : "3";
   const qtyF = big ? "4" : med ? "3" : "2";
 
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
-  // Fit the name to at most 2 lines — but drop to 1 line if 2 wouldn't fit the zone.
-  let nameLines = wrapText(esc(l.name), nameF, textW, 2);
+  // Show the FULL product name: pick the biggest font at which the whole name
+  // fits the allowed line count (3 lines on big labels, 2 otherwise) — instead of
+  // silently dropping words like "SPL".
+  const maxNameLines = big ? 3 : 2;
+  const nameFonts = big ? ["5", "4", "3"] : med ? ["4", "3", "2"] : ["3", "2"];
+  let nameF = nameFonts[nameFonts.length - 1];
+  let nameLines = wrapAll(esc(l.name), nameF, textW);
+  for (const f of nameFonts) {
+    const lines = wrapAll(esc(l.name), f, textW);
+    if (lines.length <= maxNameLines) { nameF = f; nameLines = lines; break; }
+  }
+  nameLines = nameLines.slice(0, maxNameLines);
+  // If it still overflows the zone height, drop trailing lines (last resort).
   const heightOf = (nl: number) => lh(skuF) + nl * lh(nameF) + 2 * lh(qtyF);
-  if (heightOf(nameLines.length) > zoneH && nameLines.length > 1) nameLines = nameLines.slice(0, 1);
+  while (nameLines.length > 1 && heightOf(nameLines.length) > zoneH) nameLines = nameLines.slice(0, -1);
 
   // Centre the text block against the QR, then clamp so it stays inside the zone.
   const contentH = heightOf(nameLines.length);
