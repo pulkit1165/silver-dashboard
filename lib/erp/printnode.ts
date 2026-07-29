@@ -109,12 +109,13 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const pos = opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (pos === "bottom" ? 0.34 : 0.04));
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.90 : 0.72));
+    : Math.round(Hd * (pos === "bottom" ? 0.32 : 0.05));
+  // Content zone kept comfortably clear of the pre-printed address band so it
+  // never overprints it — at EITHER resolution (203 dpi rounds the QR a touch
+  // bigger, so we leave margin for that too).
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.88 : 0.62));
   const zoneH = Math.max(25, bottom - top);
-  // Nudge the whole block a few mm DOWN (was clipping at the top edge) and a bit
-  // RIGHT, while still clearing the pre-printed address band at the bottom.
-  const downShift = Math.round(5 * dp);
+  const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
   const qrX = opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp);
 
   // QR rendered as a BITMAP (like BarTender) with a built-in 4-module quiet zone,
@@ -123,7 +124,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrN = qr.modules.size;
   const QUIET = 4;
   const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
-  const maxBox = Math.min(zoneH - downShift, Math.floor(Wd * 0.5));
+  const maxBox = Math.min(zoneH - downShift - Math.round(4 * dp), Math.floor(Wd * 0.5));
   const modDots = opts.qrMM != null
     ? Math.max(2, Math.floor((opts.qrMM * dp) / qrTotal))
     : Math.max(2, Math.floor(maxBox / qrTotal));
