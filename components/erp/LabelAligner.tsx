@@ -6,14 +6,16 @@ export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number };
 export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
-function QrGlyph() {
+// `bg` = the label colour under the QR (white panel on red stock, green on green
+// stock) so the quiet zone matches the print (the QR prints black on that colour).
+function QrGlyph({ bg = "#fff" }: { bg?: string }) {
   return (
     <svg viewBox="0 0 21 21" className="h-full w-full" shapeRendering="crispEdges">
-      <rect width="21" height="21" fill="#fff" />
+      <rect width="21" height="21" fill={bg} />
       {[[0, 0], [14, 0], [0, 14]].map(([x, y], i) => (
         <g key={i}>
           <rect x={x} y={y} width="7" height="7" fill="#000" />
-          <rect x={x + 1} y={y + 1} width="5" height="5" fill="#fff" />
+          <rect x={x + 1} y={y + 1} width="5" height="5" fill={bg} />
           <rect x={x + 2} y={y + 2} width="3" height="3" fill="#000" />
         </g>
       ))}
@@ -126,7 +128,7 @@ export default function LabelAligner({
           {/* live preview */}
           <div>
             <div className="mb-1 text-xs font-bold uppercase text-[var(--muted)]">Print preview (actual size) — tap an attribute to select</div>
-            <div className="relative overflow-hidden rounded-[5px] border-2 border-[var(--border)] shadow-inner" style={{ width: px(w), height: px(h), background: pos === "bottom" ? "#c62128" : "#fff" }}>
+            <div className="relative overflow-hidden rounded-[5px] border-2 border-[var(--border)] shadow-inner" style={{ width: px(w), height: px(h), background: pos === "bottom" ? "#c62128" : "#8cc63f" }}>
               {/* pre-printed artwork — drawn to match the physical stock so the team
                   aligns against the real red frame + banner (or the green footer). */}
               {pos === "bottom" ? (
@@ -141,12 +143,15 @@ export default function LabelAligner({
                   <div className="absolute rounded-[7px] bg-white" style={{ left: px(w * 0.045), right: px(w * 0.045), top: px(h * 0.28), bottom: px(h * 0.05) }} />
                 </>
               ) : (
-                <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-center bg-[#eef07a] font-bold leading-tight text-[#c1121f]" style={{ height: px(h * 0.30), fontSize: Math.max(4, px(1.5)) }}>
-                  <span>SILVER IND. 50, OSWAL IND. COMPLEX</span><span>G.T. ROAD, LUDHIANA-141010</span>
+                // Green stock: whole label is green, address pre-printed as a black footer.
+                <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-end text-center font-extrabold leading-tight text-black" style={{ height: px(h * 0.36), paddingBottom: px(h * 0.04) }}>
+                  <span style={{ fontSize: Math.max(5, px(1.9)) }}>SILVER IND. 50, OSWAL IND. COMPLEX</span>
+                  <span style={{ fontSize: Math.max(5, px(1.9)) }}>G.T.ROAD, LUDHIANA-141010</span>
+                  <span className="font-semibold" style={{ fontSize: Math.max(3, px(1.05)) }}>CUS. CARE : Mail: silverup.ldh@gmail.com PH. NO. 0161-5196409</span>
                 </div>
               )}
               {/* QR */}
-              <div className="absolute cursor-pointer" onClick={() => setSel("qr")} style={{ left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph /></div>
+              <div className="absolute cursor-pointer" onClick={() => setSel("qr")} style={{ left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
               {/* text attributes — each independently placed */}
               <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" onClick={() => setSel("code")} style={{ left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), ...selStyle("code") }}>{sample.code}</div>
               <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
