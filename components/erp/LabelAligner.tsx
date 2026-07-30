@@ -126,12 +126,20 @@ export default function LabelAligner({
           {/* live preview */}
           <div>
             <div className="mb-1 text-xs font-bold uppercase text-[var(--muted)]">Print preview (actual size) — tap an attribute to select</div>
-            <div className="relative overflow-hidden rounded-[3px] border-2 border-[var(--border)] bg-white shadow-inner" style={{ width: px(w), height: px(h) }}>
-              {/* pre-printed background band */}
+            <div className="relative overflow-hidden rounded-[5px] border-2 border-[var(--border)] shadow-inner" style={{ width: px(w), height: px(h), background: pos === "bottom" ? "#c62128" : "#fff" }}>
+              {/* pre-printed artwork — drawn to match the physical stock so the team
+                  aligns against the real red frame + banner (or the green footer). */}
               {pos === "bottom" ? (
-                <div className="absolute inset-x-0 top-0 flex flex-col items-center justify-center bg-[#e11d2a] font-bold leading-tight text-white" style={{ height: px(h * 0.30), fontSize: Math.max(5, px(1.9)) }}>
-                  <span>SILVER UP</span><span style={{ fontSize: Math.max(4, px(1.4)) }}>SILVER INDUSTRIES 50, OSWAL AGRO…</span>
-                </div>
+                <>
+                  {/* red top banner (company name + address) */}
+                  <div className="absolute inset-x-0 top-0 flex flex-col items-center justify-center text-center leading-tight text-white" style={{ height: px(h * 0.26) }}>
+                    <span className="font-extrabold" style={{ fontSize: Math.max(6, px(2.4)), letterSpacing: "0.04em" }}>SILVER UP</span>
+                    <span className="font-bold" style={{ fontSize: Math.max(4, px(1.55)) }}>SILVER INDUSTRIES, 50, Oswal Agro Ind. Complex</span>
+                    <span style={{ fontSize: Math.max(3, px(1.05)) }}>G.T. Road, Ludhiana-141010 PB · info@silverup.com</span>
+                  </div>
+                  {/* white content panel — the red shows as a border all around it */}
+                  <div className="absolute rounded-[7px] bg-white" style={{ left: px(w * 0.045), right: px(w * 0.045), top: px(h * 0.28), bottom: px(h * 0.05) }} />
+                </>
               ) : (
                 <div className="absolute inset-x-0 bottom-0 flex flex-col items-center justify-center bg-[#eef07a] font-bold leading-tight text-[#c1121f]" style={{ height: px(h * 0.30), fontSize: Math.max(4, px(1.5)) }}>
                   <span>SILVER IND. 50, OSWAL IND. COMPLEX</span><span>G.T. ROAD, LUDHIANA-141010</span>
