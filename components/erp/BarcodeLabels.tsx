@@ -61,6 +61,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [pnBusy, setPnBusy] = useState(false);
   const [pnLoading, setPnLoading] = useState(false);
   const [pnMsg, setPnMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Print engine: PrintNode (default) or our self-hosted bridge (an agent on each
+  // ERP PC). The bridge lists printers agents have heartbeated; jobs go via a queue.
+  const [engine, setEngine] = useState<"printnode" | "bridge">("printnode");
+  const [brPrinters, setBrPrinters] = useState<{ id: string; pc: string; name: string; online: boolean }[]>([]);
+  const [brPrinterId, setBrPrinterId] = useState<string | null>(null);
+  useEffect(() => { try { const e = localStorage.getItem("erp_print_engine"); if (e === "bridge" || e === "printnode") setEngine(e); } catch { /* default */ } }, []);
   // Print-quality knobs for the QR (printer/media specific). Darkness = TSPL
   // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
   const [density, setDensity] = useState(8);
@@ -88,6 +94,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         setPnPrinterId((prev) => prev ?? (online?.id ?? d.printers[0]?.id ?? null));
       }
     } catch { /* PrintNode not configured */ }
+    // Bridge printers (agents that have heartbeated).
+    try {
+      const rb = await fetch("/api/erp/print/printers", { cache: "no-store" });
+      const db = await rb.json();
+      if (db.ok && Array.isArray(db.printers)) {
+        setBrPrinters(db.printers);
+        const on = db.printers.find((p: { online: boolean }) => p.online);
+        setBrPrinterId((prev) => prev ?? (on?.id ?? db.printers[0]?.id ?? null));
+      }
+    } catch { /* bridge not configured */ }
     finally { setPnLoading(false); }
   }, []);
   // load once + re-check status every 15s so online/offline stays live
@@ -244,6 +260,62 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       } catch { /* retry */ }
     }
     setPnMsg({ ok: false, text: `⚠ Sent to PrintNode but the printer didn't confirm printing — it may be asleep/offline or out of labels. Check it and reprint.` });
+  }
+
+  // Print via our own bridge: enqueue jobs, then poll the queue for done/failed.
+  async function printToBridge() {
+    if (!brPrinterId || printable.length === 0) return;
+    setPnBusy(true); setPnMsg(null);
+    try {
+      const r = await fetch("/api/erp/labels/bridge", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          printerId: brPrinterId, w: dims.w, h: dims.h,
+          layout: {
+            pos: contentPos, density, speed,
+            offsetXmm: layouts[sizeId]?.offsetX ?? 0,
+            offsetYmm: layouts[sizeId]?.offsetY ?? 0,
+            qrMM: layouts[sizeId]?.qrMM ?? 0,
+            elements: layouts[sizeId]?.elements ?? {},
+          },
+          labels: printable.map((l) => ({
+            sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
+            masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
+            lot: l.lot, rack: l.rack, pkd: l.pkd,
+          })),
+        }),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setPnMsg({ ok: true, text: `Queued ${d.queued} label${d.queued === 1 ? "" : "s"} — printing…` });
+        fetch("/api/erp/labels/log-print", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ skuCodes: [...new Set(printable.map((l) => l.sku_code))], labelCount: printable.length }),
+        }).catch(() => {});
+        verifyBridge(d.ids || []);
+      } else setPnMsg({ ok: false, text: d.error || "Print failed." });
+    } catch (e) { setPnMsg({ ok: false, text: String(e) }); }
+    finally { setPnBusy(false); }
+  }
+
+  async function verifyBridge(ids: number[]) {
+    if (!ids.length) return;
+    for (const wait of [1800, 2500, 4000]) {
+      await new Promise((res) => setTimeout(res, wait));
+      try {
+        const r = await fetch("/api/erp/labels/bridge/status", {
+          method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ids }),
+        });
+        const d = await r.json();
+        if (!d.ok) continue;
+        const vals = Object.values(d.statuses || {}) as { status: string }[];
+        const failed = vals.filter((v) => v.status === "failed").length;
+        const done = vals.filter((v) => v.status === "done").length;
+        if (failed) { setPnMsg({ ok: false, text: `✕ ${failed} label${failed === 1 ? "" : "s"} failed at the printer (agent error). Check the printer/agent.` }); return; }
+        if (done >= ids.length) { setPnMsg({ ok: true, text: `✓ Printed ${ids.length} label${ids.length === 1 ? "" : "s"} — confirmed by the agent.` }); return; }
+      } catch { /* retry */ }
+    }
+    setPnMsg({ ok: false, text: `⚠ Queued but no confirmation yet — is the print agent running on that PC? It'll print as soon as the agent picks it up.` });
   }
 
   // Exact-size PDF (one label per page, page = the die-cut). Printing this at
@@ -473,24 +545,46 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {/* Direct print to a TSC label printer via PrintNode — the reliable path */}
       {roll && (
         <div className="no-print rounded-xl border-2 border-[var(--accent)] bg-[var(--accent-bg)] p-3">
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="mb-2 flex flex-wrap items-center gap-2">
             <span className="text-sm font-extrabold text-[var(--accent-strong)]">🏷️ Print to label printer</span>
+            <div className="ml-1 inline-flex overflow-hidden rounded-lg border border-[var(--border)] text-xs font-bold">
+              <button onClick={() => { setEngine("printnode"); try { localStorage.setItem("erp_print_engine", "printnode"); } catch { /* ignore */ } }}
+                className={`px-2.5 py-1 ${engine === "printnode" ? "bg-[var(--accent)] text-white" : "bg-white hover:bg-[var(--surface-2)]"}`}>PrintNode</button>
+              <button onClick={() => { setEngine("bridge"); try { localStorage.setItem("erp_print_engine", "bridge"); } catch { /* ignore */ } }}
+                className={`px-2.5 py-1 ${engine === "bridge" ? "bg-[var(--accent)] text-white" : "bg-white hover:bg-[var(--surface-2)]"}`}>Direct (our bridge)</button>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm font-semibold">
               Printer
-              <select value={pnPrinterId ?? ""} onChange={(e) => setPnPrinterId(Number(e.target.value) || null)}
-                className="rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-sm">
-                {pnPrinters.length === 0 && <option value="">No printers found</option>}
-                {pnPrinters.map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.state !== "online"}>
-                    {p.state === "online" ? "🟢" : "🔴"} {p.computer} · {p.name}{p.state !== "online" ? " (offline)" : ""}
-                  </option>
-                ))}
-              </select>
+              {engine === "printnode" ? (
+                <select value={pnPrinterId ?? ""} onChange={(e) => setPnPrinterId(Number(e.target.value) || null)}
+                  className="rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-sm">
+                  {pnPrinters.length === 0 && <option value="">No printers found</option>}
+                  {pnPrinters.map((p) => (
+                    <option key={p.id} value={p.id} disabled={p.state !== "online"}>
+                      {p.state === "online" ? "🟢" : "🔴"} {p.computer} · {p.name}{p.state !== "online" ? " (offline)" : ""}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select value={brPrinterId ?? ""} onChange={(e) => setBrPrinterId(e.target.value || null)}
+                  className="rounded-lg border border-[var(--border)] bg-white px-2 py-1 text-sm">
+                  {brPrinters.length === 0 && <option value="">No agents online</option>}
+                  {brPrinters.map((p) => (
+                    <option key={p.id} value={p.id} disabled={!p.online}>
+                      {p.online ? "🟢" : "🔴"} {p.pc} · {p.name}{!p.online ? " (offline)" : ""}
+                    </option>
+                  ))}
+                </select>
+              )}
             </label>
             {(() => {
-              const sel = pnPrinters.find((p) => p.id === pnPrinterId);
-              if (!sel) return null;
-              const on = sel.state === "online";
+              const on = engine === "printnode"
+                ? pnPrinters.find((p) => p.id === pnPrinterId)?.state === "online"
+                : !!brPrinters.find((p) => p.id === brPrinterId)?.online;
+              const has = engine === "printnode" ? pnPrinters.some((p) => p.id === pnPrinterId) : brPrinters.some((p) => p.id === brPrinterId);
+              if (!has) return null;
               return (
                 <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-bold ${on ? "bg-[var(--accent-2-bg)] text-[var(--accent-2)]" : "bg-[var(--danger-bg)] text-[var(--danger)]"}`}>
                   <span className={`h-2 w-2 rounded-full ${on ? "bg-[var(--accent-2)]" : "bg-[var(--danger)]"}`} />{on ? "Online" : "Offline"}
@@ -518,17 +612,21 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               </select>
             </label>
             {(() => {
-              const selOffline = !!pnPrinterId && pnPrinters.find((p) => p.id === pnPrinterId)?.state !== "online";
+              const hasPrinter = engine === "printnode" ? !!pnPrinterId : !!brPrinterId;
+              const offline = engine === "printnode"
+                ? (!!pnPrinterId && pnPrinters.find((p) => p.id === pnPrinterId)?.state !== "online")
+                : (!!brPrinterId && !brPrinters.find((p) => p.id === brPrinterId)?.online);
               return (
-                <button onClick={printToTsc} disabled={pnBusy || !pnPrinterId || printable.length === 0 || selOffline}
-                  title={selOffline ? "This printer is offline — wake the PC/printer first" : ""}
+                <button onClick={engine === "bridge" ? printToBridge : printToTsc}
+                  disabled={pnBusy || !hasPrinter || printable.length === 0 || offline}
+                  title={offline ? "This printer is offline — start the PC/agent/printer first" : ""}
                   className="ml-auto rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">
-                  {pnBusy ? "Printing…" : selOffline ? "Printer offline" : `Print ${printable.length} to printer`}
+                  {pnBusy ? "Printing…" : offline ? "Printer offline" : `Print ${printable.length} to printer`}
                 </button>
               );
             })()}
           </div>
-          {pnPrinters.length > 0 && (
+          {engine === "printnode" && pnPrinters.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
               {pnPrinters.map((p) => (
                 <span key={p.id} className="inline-flex items-center gap-1.5 font-semibold text-[var(--muted)]">
@@ -536,6 +634,18 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
                   {p.computer} · {p.name} — <span className={p.state === "online" ? "text-[var(--accent-2)]" : "text-[var(--danger)]"}>{p.state === "online" ? "online" : "offline"}</span>
                 </span>
               ))}
+            </div>
+          )}
+          {engine === "bridge" && (
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+              {brPrinters.length === 0
+                ? <span className="font-semibold text-[var(--muted)]">No print agents online — start the agent on the ERP PC (see <code>agent/README.md</code>).</span>
+                : brPrinters.map((p) => (
+                  <span key={p.id} className="inline-flex items-center gap-1.5 font-semibold text-[var(--muted)]">
+                    <span className={`h-2 w-2 rounded-full ${p.online ? "bg-[var(--accent-2)]" : "bg-[var(--danger)]"}`} />
+                    {p.pc} · {p.name} — <span className={p.online ? "text-[var(--accent-2)]" : "text-[var(--danger)]"}>{p.online ? "online" : "offline"}</span>
+                  </span>
+                ))}
             </div>
           )}
           {pnMsg && <div className={`mt-2 text-sm font-bold ${pnMsg.ok ? "text-[var(--accent-2)]" : "text-[var(--danger)]"}`}>{pnMsg.ok ? "✓ " : "✕ "}{pnMsg.text}</div>}

@@ -1,0 +1,9 @@
+{
+  "baseUrl": "https://silver-dashboard-eight.vercel.app",
+  "token": "PASTE_THE_SAME_VALUE_AS_PRINT_AGENT_TOKEN_ON_VERCEL",
+  "pc": "",
+  "printers": [],
+  "printerFilter": "TSC",
+  "pollMs": 1000,
+  "heartbeatMs": 10000
+}
