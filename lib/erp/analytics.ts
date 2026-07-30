@@ -101,17 +101,21 @@ export async function salesByCategory(range?: Range, limit = 12): Promise<CatRow
     const sql = getRawSql();
     const rows = await sql<{ category: string; revenue: string; units: string }[]>`
       SELECT
-        COALESCE(a.data->>'ITEMCATEG', 'UNCATEGORIZED') AS category,
+        COALESCE(a.categ, 'UNCATEGORIZED') AS category,
         ROUND(SUM((s.data->>'AMOUNT')::numeric - COALESCE((s.data->>'DISCAMT')::numeric, 0))) AS revenue,
         SUM((s.data->>'QUANTITY')::numeric) AS units
       FROM oracle_raw s
-      LEFT JOIN oracle_raw a
-        ON a.source_table = 'A_LABELPRINT'
-        AND a.data->>'ITEMID' = s.data->>'ITEMID'
+      LEFT JOIN (
+        -- one category per item — A_LABELPRINT has many rows per ITEMID, so a
+        -- direct join fans out the sale lines and inflates revenue. Dedupe first.
+        SELECT DISTINCT ON (data->>'ITEMID') data->>'ITEMID' AS itemid, data->>'ITEMCATEG' AS categ
+          FROM oracle_raw WHERE source_table = 'A_LABELPRINT'
+         ORDER BY data->>'ITEMID', (data->>'RN')::numeric DESC
+      ) a ON a.itemid = s.data->>'ITEMID'
       WHERE s.source_table = 'VW_SALE_GST_D'
         AND (s.data->>'TRDATE')::timestamptz >= ${r.from}::date::timestamp AT TIME ZONE 'Asia/Kolkata'
         AND (s.data->>'TRDATE')::timestamptz <  (${r.to}::date + interval '1 day')::timestamp AT TIME ZONE 'Asia/Kolkata'
-      GROUP BY COALESCE(a.data->>'ITEMCATEG', 'UNCATEGORIZED')
+      GROUP BY COALESCE(a.categ, 'UNCATEGORIZED')
       ORDER BY revenue DESC
       LIMIT ${limit}
     `;
