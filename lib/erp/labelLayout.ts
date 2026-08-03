@@ -33,7 +33,7 @@ function ensure(): Promise<void> {
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 
 // Keep only known keys, coerce to numbers, drop empties so the JSON stays small.
-const EL_KEYS = ["qr", "code", "name", "qty", "mrp"] as const;
+const EL_KEYS = ["qr", "code", "name", "qty", "mrp", "extras"] as const;
 function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const src = raw as Record<string, ElOverride>;

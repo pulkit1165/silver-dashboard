@@ -252,7 +252,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += lh(qtyF);
   { const { font, mag } = emFont("mrp", qtyF); rows.push(`TEXT ${textX + emx("mrp")},${cy + emy("mrp")},"${font}",0,${mag},${mag},"${fitText(esc(mrpStr), font, fw(mag))}"`); }
   cy += lh(qtyF);
-  for (const e of extras) { rows.push(`TEXT ${textX},${cy},"${exF}",0,1,1,"${fitText(esc(e), exF, textW)}"`); cy += lh(exF); }
+  // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
+  // as one "extras" element from the aligner.
+  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { rows.push(`TEXT ${textX + emx("extras")},${ey},"${font}",0,${mag},${mag},"${fitText(esc(e), font, fw(mag))}"`); ey += lh(font) * mag; } }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.

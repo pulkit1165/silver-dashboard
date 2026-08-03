@@ -26,7 +26,7 @@ function QrGlyph({ bg = "#fff" }: { bg?: string }) {
   );
 }
 
-type ElKey = "all" | "qr" | "code" | "name" | "qty" | "mrp";
+type ElKey = "all" | "qr" | "code" | "name" | "qty" | "mrp" | "extras";
 const TABS: { key: ElKey; label: string }[] = [
   { key: "all", label: "Whole label" },
   { key: "qr", label: "QR code" },
@@ -34,6 +34,7 @@ const TABS: { key: ElKey; label: string }[] = [
   { key: "name", label: "Name" },
   { key: "qty", label: "Qty" },
   { key: "mrp", label: "MRP" },
+  { key: "extras", label: "Attributes" },
 ];
 // Approx TSPL bitmap-font heights (mm) so the preview font tracks the size control.
 const FONT_MM: Record<number, number> = { 1: 1.7, 2: 2.1, 3: 2.6, 4: 3.2, 5: 3.9, 6: 7.6, 7: 11.4 };
@@ -70,7 +71,7 @@ export default function LabelAligner({
   const zoneBot = h * (pos === "bottom" ? 0.92 : 0.62);
   const zoneH = zoneBot - zoneTop;
   const big = h >= 54, med = h >= 38;
-  const defFont: Record<string, number> = { code: big ? 5 : med ? 4 : 3, name: big ? 5 : med ? 4 : 3, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2 };
+  const defFont: Record<string, number> = { code: big ? 5 : med ? 4 : 3, name: big ? 5 : med ? 4 : 3, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: big ? 3 : 2 };
   const fontOf = (k: string) => (els[k]?.f && els[k]!.f! >= 1 ? els[k]!.f! : defFont[k]);
   const lhmm = (k: string) => FONT_MM[fontOf(k)] + 0.8;
 
@@ -159,8 +160,9 @@ export default function LabelAligner({
               <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), ...selStyle("qty") }}>{sample.qty}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), ...selStyle("mrp") }}>{sample.mrp}</div>
-              {/* auto attributes printed under MRP (fit as many as the label allows) */}
-              <div className="absolute font-mono leading-tight text-black" style={{ left: px(textXa), top: px(mrpYa + lhmm("mrp")), fontSize: px(FONT_MM[big ? 3 : 2]) }}>
+              {/* attributes printed under MRP — move & resize as one "Attributes" element */}
+              <div className="absolute cursor-pointer font-mono leading-tight text-black" onClick={() => setSel("extras")}
+                style={{ left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), ...selStyle("extras") }}>
                 <div>(Incl. of All Taxes)</div>
                 <div>Lot No:</div>
                 <div>PKD: {todayStr}</div>
