@@ -204,7 +204,13 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // white zone. Short names / big labels land on a bigger tier; when there's a lot
   // to show, the text steps down a tier so nothing is dropped or overprints the band.
   const fitRoom = zoneH - Math.round(1.5 * dp);
-  const nameCap = big ? 2 : med ? 2 : 1;
+  // If the name carries MANUAL line breaks (operator-set, saved per SKU) we honour
+  // them exactly (up to 3 lines); otherwise we auto-wrap to the label width.
+  const rawName = String(l.name ?? "");
+  const manualSegs = rawName.split(/\r?\n/).map((s) => esc(s)).filter((s) => s.length > 0).slice(0, 3);
+  const useManual = manualSegs.length > 1;
+  const nameCap = useManual ? manualSegs.length : (big ? 2 : med ? 2 : 1);
+  const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
     : med
@@ -215,15 +221,30 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     Math.floor((fitRoom - (lh(t[0]) + 2 * lh(t[2]) + allExtras.length * lh(t[3]))) / lh(t[1]));
   let chosen: [string, string, string, string] | null = null;
   let nameLines: string[] = [];
-  for (const t of tiers) { // pass 1: full name (≤ cap) + all extras
-    const wrapped = wrapAll(esc(l.name), t[1], textW);
-    const need = Math.min(wrapped.length || 1, nameCap);
-    if (tierNL(t) >= need) { chosen = t; nameLines = wrapped.slice(0, need); break; }
+  if (useManual) {
+    // Operator-set line breaks win. Prefer the largest tier that fits the N name
+    // lines AND all extras; else the largest that fits the N name lines (extras then
+    // gated to what's left); else the smallest tier with as many name lines as fit.
+    const N = manualSegs.length;
+    const core = (t: [string, string, string, string]) => lh(t[0]) + N * lh(t[1]) + 2 * lh(t[2]);
+    for (const t of tiers) { if (core(t) + allExtras.length * lh(t[3]) <= fitRoom) { chosen = t; nameLines = manualSegs; break; } }
+    if (!chosen) for (const t of tiers) { if (core(t) <= fitRoom) { chosen = t; nameLines = manualSegs; break; } }
+    if (!chosen) {
+      chosen = tiers[tiers.length - 1];
+      const maxN = Math.max(1, Math.floor((fitRoom - lh(chosen[0]) - 2 * lh(chosen[2])) / lh(chosen[1])));
+      nameLines = manualSegs.slice(0, maxN);
+    }
+  } else {
+    for (const t of tiers) { // pass 1: full name (≤ cap) + all extras
+      const wrapped = linesFor(t[1]);
+      const need = Math.min(wrapped.length || 1, nameCap);
+      if (tierNL(t) >= need) { chosen = t; nameLines = wrapped.slice(0, need); break; }
+    }
+    if (!chosen) for (const t of tiers) { // pass 2: ≥ 1 name line + all extras
+      if (tierNL(t) >= 1) { chosen = t; nameLines = linesFor(t[1]).slice(0, Math.min(tierNL(t), nameCap)); break; }
+    }
+    if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = linesFor(chosen[1]).slice(0, 1); } // pass 3: smallest, gate extras
   }
-  if (!chosen) for (const t of tiers) { // pass 2: ≥ 1 name line + all extras
-    if (tierNL(t) >= 1) { chosen = t; nameLines = wrapAll(esc(l.name), t[1], textW).slice(0, Math.min(tierNL(t), nameCap)); break; }
-  }
-  if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = wrapAll(esc(l.name), chosen[1], textW).slice(0, 1); } // pass 3: smallest, gate extras
   const [skuF, nameF, qtyF, exF] = chosen;
 
   const baseH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);

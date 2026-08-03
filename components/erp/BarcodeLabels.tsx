@@ -83,6 +83,20 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   useEffect(() => {
     fetch("/api/erp/labels/layout").then((r) => r.json()).then((d) => { if (d.ok) setLayouts(d.layouts || {}); }).catch(() => {});
   }, []);
+  // Per-SKU print name overrides (with manual line breaks). Shared across PCs.
+  const [labelNames, setLabelNames] = useState<Record<string, string>>({});
+  const [nameEdit, setNameEdit] = useState<{ code: string; value: string } | null>(null);
+  useEffect(() => {
+    fetch("/api/erp/labels/names").then((r) => r.json()).then((d) => { if (d.ok) setLabelNames(d.names || {}); }).catch(() => {});
+  }, []);
+  async function saveLabelNameEdit() {
+    if (!nameEdit) return;
+    const code = nameEdit.code, value = nameEdit.value;
+    await fetch("/api/erp/labels/names", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ skuCode: code, name: value }) }).catch(() => {});
+    const clean = value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).slice(0, 3).join("\n");
+    setLabelNames((m) => { const c = { ...m }; if (clean) c[code] = clean; else delete c[code]; return c; });
+    setNameEdit(null);
+  }
   const loadPrinters = useCallback(async () => {
     setPnLoading(true);
     try {
@@ -193,7 +207,8 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const t = (type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single") as LabelType;
     const qrToken = t === "master" ? l.qrTokenMaster : l.qrTokenSingle;
     const qrSvg = t === "master" ? l.qrSvgMaster : l.qrSvgSingle;
-    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
+    const name = labelNames[l.sku_code] ?? l.name; // per-SKU print name (with manual line breaks)
+    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
   });
 
   const labelStyle = (roll || a4) ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
@@ -368,7 +383,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             </div>
             <div className="bl-body">
               <div className="bl-sku">{l.sku_code}</div>
-              <div className="bl-name">{l.name}</div>
+              <div className="bl-name">{String(l.name).split("\n").map((ln, i) => <div key={i}>{ln}</div>)}</div>
               <div className="bl-qty">
                 {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
                 {" · "}MRP.Rs.{l.price.toFixed(0)}/-
@@ -696,6 +711,19 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         ))}
       </div>
 
+      {/* Per-SKU print name / line-break editor for the selected parts. */}
+      {chosen.length > 0 && (
+        <div className="no-print flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold uppercase text-[var(--muted)]">✎ Name / line breaks:</span>
+          {chosen.map((i) => (
+            <button key={i.id} onClick={() => setNameEdit({ code: i.sku_code, value: labelNames[i.sku_code] ?? (labels[i.id]?.name ?? i.name) })}
+              className={`rounded-lg border px-2 py-1 text-xs font-bold hover:bg-[var(--surface-2)] ${labelNames[i.sku_code] ? "border-[var(--accent)] text-[var(--accent-strong)]" : "border-[var(--border)] bg-white"}`}>
+              ✎ {i.sku_code}{labelNames[i.sku_code] ? " ✓" : ""}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* On-screen preview (inline). In print this is hidden — the body-level
           portal below is what actually prints. */}
       <div className={`print-area ${roll ? "roll" : a4 ? "a4sheet" : ""}`}>{renderSheet()}</div>
@@ -705,6 +733,25 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       {mounted && createPortal(
         <div className={`labels-print-portal print-area ${roll ? "roll" : a4 ? "a4sheet" : ""}`}>{renderSheet()}</div>,
         document.body,
+      )}
+
+      {nameEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setNameEdit(null)}>
+          <div className="w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-lg font-extrabold">✎ Print name · {nameEdit.code}</h2>
+              <button onClick={() => setNameEdit(null)} className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-sm font-bold hover:bg-[var(--surface-2)]">✕</button>
+            </div>
+            <p className="mb-2 text-xs text-[var(--muted)]">Type the name as it should print. Press <b>Enter</b> to break to a new line (up to 3). Blank = use the original name. Saved for this part, every size.</p>
+            <textarea value={nameEdit.value} rows={3} autoFocus
+              onChange={(e) => setNameEdit((v) => v ? { ...v, value: e.target.value } : v)}
+              className="w-full resize-none rounded-lg border border-[var(--border)] bg-white p-2 font-mono text-sm leading-tight" />
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setNameEdit((v) => v ? { ...v, value: "" } : v)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:bg-[var(--surface-2)]">Clear</button>
+              <button onClick={saveLabelNameEdit} className="rounded-lg bg-[var(--accent-2)] px-4 py-2 text-sm font-bold text-white hover:opacity-90">Save</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {alignOpen && (
