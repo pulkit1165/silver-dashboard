@@ -165,7 +165,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * 0.5), Math.round(28 * dp));
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round(28 * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   const modDots = qrSzMM > 0
@@ -209,7 +209,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const rawName = String(l.name ?? "");
   const manualSegs = rawName.split(/\r?\n/).map((s) => esc(s)).filter((s) => s.length > 0).slice(0, 3);
   const useManual = manualSegs.length > 1;
-  const nameCap = useManual ? manualSegs.length : (big ? 2 : med ? 2 : 1);
+  const nameCap = useManual ? manualSegs.length : 2;
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
@@ -245,7 +245,22 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     }
     if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = linesFor(chosen[1]).slice(0, 1); } // pass 3: smallest, gate extras
   }
-  const [skuF, nameF, qtyF, exF] = chosen;
+  const [skuF, nameF0, qtyF, exF0] = chosen;
+
+  // Width-fit so text is never CUT mid-string on narrow (small) labels: shrink the
+  // NAME font until the full name fits nameCap lines, and the ATTRIBUTE font until
+  // the widest line ("(Incl. of All Taxes)") fits the text column beside the QR.
+  let nameF = nameF0;
+  if (!useManual) {
+    let wr = wrapAll(esc(rawName), nameF, textW);
+    while (Number(nameF) > 1 && wr.length > nameCap) { nameF = String(Number(nameF) - 1); wr = wrapAll(esc(rawName), nameF, textW); }
+    nameLines = wr.slice(0, nameCap);
+  } else {
+    const wN = nameLines.reduce((m, s) => Math.max(m, s.length), 1);
+    while (Number(nameF) > 1 && wN * (F_WIDTH[nameF] || 16) > textW) nameF = String(Number(nameF) - 1);
+  }
+  let exF = exF0;
+  { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
 
   const baseH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
   let nEx = 0;
