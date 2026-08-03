@@ -53,6 +53,8 @@ export default function LabelAligner({
 
   const SCALE = Math.max(4, Math.min(11, Math.floor(560 / w))); // px per mm
   const px = (mm: number) => mm * SCALE;
+  const now = new Date();
+  const todayStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getFullYear()).slice(2)}`;
   const r1 = (v: number) => Math.round(v * 10) / 10;
   const setEl = (k: string, patch: ElOverride) =>
     setEls((m) => ({ ...m, [k]: { ...m[k], ...patch } }));
@@ -157,6 +159,13 @@ export default function LabelAligner({
               <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), ...selStyle("qty") }}>{sample.qty}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), ...selStyle("mrp") }}>{sample.mrp}</div>
+              {/* auto attributes printed under MRP (fit as many as the label allows) */}
+              <div className="absolute font-mono leading-tight text-black" style={{ left: px(textXa), top: px(mrpYa + lhmm("mrp")), fontSize: px(FONT_MM[big ? 3 : 2]) }}>
+                <div>(Incl. of All Taxes)</div>
+                <div>Lot No:</div>
+                <div>PKD: {todayStr}</div>
+                <div>Rack No:</div>
+              </div>
             </div>
             <p className="mt-1 text-[10px] text-[var(--muted-2)]">Position &amp; QR size match the print; on-screen font is only an approximation.</p>
           </div>

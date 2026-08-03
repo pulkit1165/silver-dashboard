@@ -148,11 +148,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (pos === "bottom" ? 0.36 : 0.08)); // more top margin so the SKU code isn't clipped
-  // Content zone kept comfortably clear of the pre-printed address band so it
-  // never overprints it — at EITHER resolution (203 dpi rounds the QR a touch
-  // bigger, so we leave margin for that too).
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.92 : 0.62));
+    : Math.round(Hd * (red ? 0.30 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
+  // Content zone kept comfortably clear of the pre-printed address band so it never
+  // overprints it. The red 85×55 white panel is large, so we use more of it (more
+  // room for the Lot/PKD/Rack lines). 203 dpi rounds the QR a touch bigger — margin covers it.
+  const bottom = Math.round(Hd * (red ? 0.94 : pos === "bottom" ? 0.92 : 0.63));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
   const qrX = (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp)) + ox;
@@ -184,39 +184,51 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // are physically ~⅔ the size, so bump each label up a tier to compensate.
   const big = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40);
   const med = h >= (hires ? 30 : 38) || (!!opts.large && h >= 26);
-  const skuF = big ? "5" : med ? "4" : "3";
-  const qtyF = big ? "4" : med ? "3" : "2";
-
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
-  // Show the FULL product name: pick the biggest font at which the whole name
-  // fits the allowed line count (3 lines on big labels, 2 otherwise) — instead of
-  // silently dropping words like "SPL".
-  const maxNameLines = big ? 3 : 2;
-  const nameFonts = big ? ["5", "4", "3"] : med ? ["4", "3", "2"] : ["3", "2"];
-  let nameF = nameFonts[nameFonts.length - 1];
-  let nameLines = wrapAll(esc(l.name), nameF, textW);
-  for (const f of nameFonts) {
-    const lines = wrapAll(esc(l.name), f, textW);
-    if (lines.length <= maxNameLines) { nameF = f; nameLines = lines; break; }
-  }
-  nameLines = nameLines.slice(0, maxNameLines);
-  // If it still overflows the zone height, drop trailing lines (last resort).
-  const heightOf = (nl: number) => lh(skuF) + nl * lh(nameF) + 2 * lh(qtyF);
-  while (nameLines.length > 1 && heightOf(nameLines.length) > zoneH) nameLines = nameLines.slice(0, -1);
 
-  // Extra attributes (like the reference labels): "(Incl. of All Taxes)", Lot,
-  // Rack, PKD — appended below MRP at a small font. Only as many as fit the zone,
-  // so big labels carry them all and small labels stay minimal.
-  const exF = big ? "3" : "2";
-  const allExtras: string[] = ["(Incl. of All Taxes)"];
-  if (l.lot) allExtras.push(`Lot: ${l.lot}`);
-  if (l.rack) allExtras.push(`Rack: ${l.rack}`);
-  if (l.pkd) allExtras.push(`PKD: ${l.pkd}`);
-  const baseH = heightOf(nameLines.length);
+  // Extra attributes printed below MRP (like the reference label), in this order:
+  //   (Incl. of All Taxes) · Lot No · PKD (packed date) · Rack No.
+  // Lot/Rack show their value if the SKU has one, else the field stays blank;
+  // PKD defaults to TODAY (the print date) unless a date is supplied.
+  const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
+  const allExtras: string[] = [
+    "(Incl. of All Taxes)",
+    `Lot No: ${esc(l.lot ?? "")}`.trimEnd(),
+    `PKD: ${l.pkd ? esc(l.pkd) : today}`,
+    `Rack No: ${esc(l.rack ?? "")}`.trimEnd(),
+  ];
+
+  // Auto-fit: pick the LARGEST font tier [code, name, qty/mrp, extras] at which the
+  // code + qty + MRP + all four attribute lines + the (wrapped) name all fit the
+  // white zone. Short names / big labels land on a bigger tier; when there's a lot
+  // to show, the text steps down a tier so nothing is dropped or overprints the band.
+  const fitRoom = zoneH - Math.round(1.5 * dp);
+  const nameCap = big ? 2 : med ? 2 : 1;
+  const tiers: [string, string, string, string][] = big
+    ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
+    : med
+    ? [["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
+    : [["3", "3", "2", "1"], ["2", "2", "1", "1"], ["2", "1", "1", "1"]];
+  // max name lines a tier allows once code + qty + mrp + ALL extras are reserved
+  const tierNL = (t: [string, string, string, string]) =>
+    Math.floor((fitRoom - (lh(t[0]) + 2 * lh(t[2]) + allExtras.length * lh(t[3]))) / lh(t[1]));
+  let chosen: [string, string, string, string] | null = null;
+  let nameLines: string[] = [];
+  for (const t of tiers) { // pass 1: full name (≤ cap) + all extras
+    const wrapped = wrapAll(esc(l.name), t[1], textW);
+    const need = Math.min(wrapped.length || 1, nameCap);
+    if (tierNL(t) >= need) { chosen = t; nameLines = wrapped.slice(0, need); break; }
+  }
+  if (!chosen) for (const t of tiers) { // pass 2: ≥ 1 name line + all extras
+    if (tierNL(t) >= 1) { chosen = t; nameLines = wrapAll(esc(l.name), t[1], textW).slice(0, Math.min(tierNL(t), nameCap)); break; }
+  }
+  if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = wrapAll(esc(l.name), chosen[1], textW).slice(0, 1); } // pass 3: smallest, gate extras
+  const [skuF, nameF, qtyF, exF] = chosen;
+
+  const baseH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
   let nEx = 0;
-  // leave ~3mm breathing room so the block never fills to the top/bottom edges
-  while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= zoneH - Math.round(3 * dp)) nEx++;
+  while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
 
   // Centre the whole block (text + extras) against the QR, then clamp to the zone.
