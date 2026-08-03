@@ -18,8 +18,13 @@ export default function LiveSync() {
     let timer: ReturnType<typeof setTimeout>;
 
     const poll = async () => {
+      // Don't poll a backgrounded tab at all — idle PCs left open all day/night
+      // were the main cost. We resume the instant the tab is focused again.
+      if (document.hidden) { timer = setTimeout(poll, 20000); return; }
       try {
-        const r = await fetch("/api/erp/live", { cache: "no-store" });
+        // NOT no-store: let the shared edge cache serve concurrent devices so many
+        // polls collapse into one function invocation.
+        const r = await fetch("/api/erp/live");
         const d = await r.json();
         setOnline(true);
         if (last.current === null) last.current = d.v;
@@ -30,12 +35,12 @@ export default function LiveSync() {
       } catch {
         setOnline(false);
       }
-      if (!stopped) timer = setTimeout(poll, document.hidden ? 15000 : 5000);
+      if (!stopped) timer = setTimeout(poll, 15000); // was 5s — 15s still feels live
     };
     poll();
 
     const onVis = () => {
-      if (!document.hidden) { clearTimeout(timer); poll(); }
+      if (!document.hidden) { clearTimeout(timer); poll(); } // catch up immediately on focus
     };
     document.addEventListener("visibilitychange", onVis);
     return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVis); };

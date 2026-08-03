@@ -4,6 +4,6 @@
   "pc": "",
   "printers": [],
   "printerFilter": "TSC",
-  "pollMs": 1000,
-  "heartbeatMs": 10000
+  "pollMs": 2500,
+  "heartbeatMs": 30000
 }

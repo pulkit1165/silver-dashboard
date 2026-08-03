@@ -30,8 +30,8 @@ function loadConfig() {
     pc: file.pc || process.env.SILVER_PC || os.hostname(),
     printers: Array.isArray(file.printers) ? file.printers : [],
     printerFilter: file.printerFilter != null ? String(file.printerFilter) : "TSC",
-    pollMs: Number(file.pollMs) || 1000,
-    heartbeatMs: Number(file.heartbeatMs) || 10000,
+    pollMs: Number(file.pollMs) || 2500,      // label print tolerates a couple of seconds; keeps API calls (and cost) low
+    heartbeatMs: Number(file.heartbeatMs) || 30000,
   };
   if (!c.baseUrl || !c.token) {
     console.error("[agent] Missing baseUrl or token. Edit config.json (copy config.example.json).");

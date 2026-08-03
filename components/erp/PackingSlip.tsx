@@ -186,6 +186,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     }, 800);
     let tick = 0;
     const poller = setInterval(async () => {
+      if (document.hidden) return; // don't poll a backgrounded packing tab (cost)
       // keep the "Open slip" dropdown fresh so slips created on another device show up
       if (tick++ % 3 === 0) refreshList();
       const id = slipIdRef.current;
@@ -203,7 +204,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
           }
         }
       } catch { /* ignore */ }
-    }, 1500);
+    }, 2500);
     return () => { clearInterval(saver); clearInterval(poller); };
   }, []);
 
