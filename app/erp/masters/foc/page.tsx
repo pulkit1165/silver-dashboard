@@ -1,4 +1,5 @@
 import PageHeader from "@/components/PageHeader";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import ListFilters from "@/components/erp/ListFilters";
 import PartyPctMaster from "@/components/erp/PartyPctMaster";
 import { getCustomersWithPct } from "@/lib/erp/party-masters";
@@ -24,6 +25,7 @@ export default async function FocMasterPage({
       <PageHeader
         title="FOC Disc%"
         subtitle="Party-level free-of-cost discount % — applied LAST, on top of every other discount (party Disc%, OGL, and any item net rate). Versioned: latest value is live, every prior value kept."
+        right={editable ? <UploadMasterLink master="party-foc" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <PartyPctMaster rows={rows} kind="foc" label="FOC%" editable={editable} />

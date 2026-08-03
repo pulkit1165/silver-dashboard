@@ -17,7 +17,7 @@
 // This module is pure data + string helpers (no server-only imports) so the
 // client can import the metadata list too.
 
-export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "item-rates";
+export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "party-ogl" | "party-foc" | "item-rates" | "item-net-rate";
 
 /** Collapse a header to a comparison key: lowercase, strip non-alphanumerics. */
 export const norm = (k: string) => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -107,6 +107,8 @@ export const MASTERS: Record<MasterKey, MasterConfig> = {
       { col: "pincode", type: "text", aliases: ["pincode", "pin", "zip", "postalcode"] },
       { col: "pos_state_code", type: "text", aliases: ["posstatecode", "placeofsupply", "pos"] },
       { col: "discount_pct", type: "num", aliases: ["discount", "discountpct", "disc", "standingdiscount", "discpercent", "discountpercent"] },
+      { col: "ogl_pct", type: "num", aliases: ["ogl", "oglpct", "oglpercent", "oglper"] },
+      { col: "foc_pct", type: "num", aliases: ["foc", "focpct", "focpercent", "focper", "focdisc"] },
       { col: "credit_limit", type: "num", aliases: ["creditlimit", "credit", "limit"] },
       { col: "payment_terms", type: "text", aliases: ["paymentterms", "terms", "payment", "paymentterm"] },
     ],
@@ -114,7 +116,7 @@ export const MASTERS: Record<MasterKey, MasterConfig> = {
       { table: "sales_orders", col: "customer_id" },
       { table: "invoices", col: "customer_id" },
     ],
-    sampleColumns: ["code", "name", "gst", "state_code", "phone", "discount_pct", "credit_limit"],
+    sampleColumns: ["code", "name", "gst", "state_code", "phone", "discount_pct", "ogl_pct", "foc_pct", "credit_limit"],
   },
 
   vendors: {
@@ -229,6 +231,66 @@ export const MASTERS: Record<MasterKey, MasterConfig> = {
       { col: "selling_price", type: "num", aliases: ["sellingprice", "netrate", "net", "rate", "sp", "price", "netprice", "amount"], required: true },
     ],
     sampleColumns: ["sku_code", "selling_price"],
+  },
+
+  "party-ogl": {
+    key: "party-ogl",
+    label: "Party-wise OGL %",
+    table: "customers",
+    keyCol: "code",
+    altKeyCol: "name",
+    keyAliases: [...CODE_ALIASES, "name", "customername", "partyname", "party", "acntdesc"],
+    keyLabel: "Customer code or name",
+    permission: "rates",
+    entity: "customer",
+    action: "customer.ogl",
+    kind: "rate",
+    rateCol: "ogl_pct",
+    rateResetValue: 0,
+    fields: [
+      { col: "ogl_pct", type: "num", aliases: ["ogl", "oglpct", "oglpercent", "oglper", "percent", "pct", "rate"], required: true },
+    ],
+    sampleColumns: ["code", "ogl_pct"],
+  },
+
+  "party-foc": {
+    key: "party-foc",
+    label: "FOC Disc %",
+    table: "customers",
+    keyCol: "code",
+    altKeyCol: "name",
+    keyAliases: [...CODE_ALIASES, "name", "customername", "partyname", "party", "acntdesc"],
+    keyLabel: "Customer code or name",
+    permission: "rates",
+    entity: "customer",
+    action: "customer.foc",
+    kind: "rate",
+    rateCol: "foc_pct",
+    rateResetValue: 0,
+    fields: [
+      { col: "foc_pct", type: "num", aliases: ["foc", "focpct", "focpercent", "focper", "focdisc", "percent", "pct", "rate"], required: true },
+    ],
+    sampleColumns: ["code", "foc_pct"],
+  },
+
+  "item-net-rate": {
+    key: "item-net-rate",
+    label: "Item Net Rate (global)",
+    table: "skus",
+    keyCol: "sku_code",
+    altKeyCol: "name",
+    keyAliases: [...ITEM_CODE_ALIASES, "name", "itemname", "description", "particulars"],
+    keyLabel: "Item code or name",
+    permission: "rates",
+    entity: "sku",
+    action: "sku.net_rate",
+    kind: "rate",
+    rateCol: "item_net_rate",
+    rateResetValue: 0,
+    fields: [
+      { col: "item_net_rate", type: "num", aliases: ["itemnetrate", "netrate", "net", "rate", "sp", "netprice", "amount"], required: true },
+    ],
+    sampleColumns: ["sku_code", "item_net_rate"],
   },
 };
 

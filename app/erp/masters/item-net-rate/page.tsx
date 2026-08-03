@@ -1,4 +1,5 @@
 import PageHeader from "@/components/PageHeader";
+import UploadMasterLink from "@/components/erp/UploadMasterLink";
 import ListFilters from "@/components/erp/ListFilters";
 import NetRateMaster from "@/components/erp/NetRateMaster";
 import { getSkusWithNetRate } from "@/lib/erp/pricing-masters";
@@ -22,6 +23,7 @@ export default async function ItemNetRatePage({
       <PageHeader
         title="Item Net Rate Master"
         subtitle="Global per-SKU net rate. When set, it OVERRIDES the party discount % for that SKU on new sales orders (the sales screen shows Net-rate = Y). Versioned like MRP — the most recent value is live, every prior value is kept with a previous-value column."
+        right={editable ? <UploadMasterLink master="item-net-rate" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
       {!sp.q && rows.length >= PAGE_CAP && (
