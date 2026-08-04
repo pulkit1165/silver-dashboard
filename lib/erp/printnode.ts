@@ -107,7 +107,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 // `elements` lets the operator position/size EACH attribute independently (from
 // the visual aligner): key = qr|code|name|qty|mrp, dx/dy = mm nudge from the auto
 // position, f = font 1–5 (text), sz = QR size in mm. Absent/0 = keep auto.
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
 export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride> };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
@@ -278,19 +278,25 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // height so moving/resizing one attribute doesn't shift the others.
   const rows: string[] = [];
   const fw = (mag: number) => Math.max(4 * dp, Math.floor(textW / mag)); // width budget shrinks as text magnifies
-  { const { font, mag } = emFont("code", skuF); rows.push(`TEXT ${textX + emx("code")},${cy + emy("code")},"${font}",0,${mag},${mag},"${fitText(esc(l.sku_code), font, fw(mag))}"`); }
+  // Emit a text line; if the element is BOLD (aligner toggle) overstrike it (print
+  // again +1 dot across) to thicken the strokes — TSPL's built-in fonts have no bold.
+  const emit = (k: string, x: number, y: number, font: string, mag: number, text: string) => {
+    rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
+    if (el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
+  };
+  { const { font, mag } = emFont("code", skuF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText(esc(l.sku_code), font, fw(mag))); }
   cy += lh(skuF);
-  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { rows.push(`TEXT ${textX + emx("name")},${ny},"${font}",0,${mag},${mag},"${fitText(nl, font, fw(mag))}"`); ny += lh(font) * mag; } }
+  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag; } }
   cy += nameLines.length * lh(nameF);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
-  { const { font, mag } = emFont("qty", qtyF); rows.push(`TEXT ${textX + emx("qty")},${cy + emy("qty")},"${font}",0,${mag},${mag},"${fitText(esc(qtyStr), font, fw(mag))}"`); }
+  { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + emx("qty"), cy + emy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
   cy += lh(qtyF);
-  { const { font, mag } = emFont("mrp", qtyF); rows.push(`TEXT ${textX + emx("mrp")},${cy + emy("mrp")},"${font}",0,${mag},${mag},"${fitText(esc(mrpStr), font, fw(mag))}"`); }
+  { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + emx("mrp"), cy + emy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
   cy += lh(qtyF);
   // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
   // as one "extras" element from the aligner.
-  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { rows.push(`TEXT ${textX + emx("extras")},${ey},"${font}",0,${mag},${mag},"${fitText(esc(e), font, fw(mag))}"`); ey += lh(font) * mag; } }
+  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { emit("extras", textX + emx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag; } }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.

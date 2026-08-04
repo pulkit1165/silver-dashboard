@@ -6,7 +6,7 @@ import { getSql } from "./db";
 // the whole content block; qrMM overrides the QR size (0 = auto). `elements` holds
 // per-attribute overrides (qr|code|name|qty|mrp → dx/dy mm, f = font, sz = QR mm).
 
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
 export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
 
 let ensured: Promise<void> | null = null;
@@ -44,7 +44,8 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
     const dx = cl(n(e.dx), -40, 40), dy = cl(n(e.dy), -40, 40);
     const f = Math.round(cl(n(e.f), 0, 7));
     const sz = cl(n(e.sz), 0, 60);
-    if (dx || dy || f || sz) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}) };
+    const b = e.b ? 1 : 0;
+    if (dx || dy || f || sz || b) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}), ...(b ? { b } : {}) };
   }
   return Object.keys(out).length ? out : undefined;
 }

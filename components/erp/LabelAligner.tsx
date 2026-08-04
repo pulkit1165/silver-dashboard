@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
 export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
@@ -59,6 +59,14 @@ export default function LabelAligner({
   const r1 = (v: number) => Math.round(v * 10) / 10;
   const setEl = (k: string, patch: ElOverride) =>
     setEls((m) => ({ ...m, [k]: { ...m[k], ...patch } }));
+  // Bold: per text element, or all text at once from the "Whole label" tab.
+  const TEXT_KEYS = ["code", "name", "qty", "mrp", "extras"];
+  const isBold = sel === "all" ? TEXT_KEYS.every((k) => els[k]?.b) : !!els[sel]?.b;
+  const toggleBold = () => {
+    const on = !isBold;
+    if (sel === "all") setEls((m) => { const c = { ...m }; for (const k of TEXT_KEYS) c[k] = { ...c[k], b: on ? 1 : 0 }; return c; });
+    else if (sel !== "qr") setEl(sel, { b: on ? 1 : 0 });
+  };
 
   // Nudge / size act on whichever attribute is selected.
   const nudge = (axis: "dx" | "dy", d: number) => {
@@ -156,13 +164,13 @@ export default function LabelAligner({
               {/* QR */}
               <div className="absolute cursor-pointer" onClick={() => setSel("qr")} style={{ left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
               {/* text attributes — each independently placed */}
-              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" onClick={() => setSel("code")} style={{ left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), ...selStyle("code") }}>{sample.code}</div>
-              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), ...selStyle("qty") }}>{sample.qty}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), ...selStyle("mrp") }}>{sample.mrp}</div>
+              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" onClick={() => setSel("code")} style={{ left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
+              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), fontWeight: els.name?.b ? 900 : undefined, maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
               {/* attributes printed under MRP — move & resize as one "Attributes" element */}
               <div className="absolute cursor-pointer font-mono leading-tight text-black" onClick={() => setSel("extras")}
-                style={{ left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), ...selStyle("extras") }}>
+                style={{ left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
                 <div>(Incl. of All Taxes)</div>
                 <div>Lot No:</div>
                 <div>PKD: {todayStr}</div>
@@ -218,6 +226,13 @@ export default function LabelAligner({
             )}
             {sel === "all" && (
               <p className="text-xs text-[var(--muted)]">Moves <b>every</b> attribute together. To move just one (QR, Name…), pick it in the tabs above.</p>
+            )}
+
+            {sel !== "qr" && (
+              <button onClick={toggleBold}
+                className={`rounded-lg border px-3 py-2 text-sm font-bold ${isBold ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
+                {isBold ? "✓ Bold" : "Bold"}{sel === "all" ? " (all text)" : ""}
+              </button>
             )}
 
             <div className="flex gap-2">
