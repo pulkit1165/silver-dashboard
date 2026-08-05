@@ -119,10 +119,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const hires = dpi >= 280;
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   // Operator alignment nudge (from the visual aligner), in mm → dots.
-  const ox = Math.round((opts.offsetXmm ?? 0) * dp);
-  const oy = Math.round((opts.offsetYmm ?? 0) * dp);
+  // LOCKED sizes use a FIXED layout that ignores ALL aligner customisation (offsets,
+  // per-element moves/sizes) — only we can change them here in code. This keeps the
+  // big green 95×70 and the 70×40 medium green consistent no matter what an operator
+  // does in the 🎯 Align tool.
+  const lockedSize = (w === 95 && h === 70) || (w === 70 && h === 40);
+  const ox = lockedSize ? 0 : Math.round((opts.offsetXmm ?? 0) * dp);
+  const oy = lockedSize ? 0 : Math.round((opts.offsetYmm ?? 0) * dp);
   // Per-element overrides (from the visual aligner). dx/dy in mm → dots; f = font.
-  const el = opts.elements || {};
+  const el = lockedSize ? {} : (opts.elements || {});
   const emx = (k: string) => Math.round(((el[k]?.dx) || 0) * dp);
   const emy = (k: string) => Math.round(((el[k]?.dy) || 0) * dp);
   // Maps an override font level to a TSPL font + magnification. Levels 1–5 are the
