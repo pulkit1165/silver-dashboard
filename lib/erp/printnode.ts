@@ -194,7 +194,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrRnow = Math.min(Wd, qrLnow + qrPx);
   let textX: number, textW: number;
   if (fillBig) {
-    textX = Math.round(4 * dp);
+    textX = Math.round(1.5 * dp); // flush to the left edge
     // name/text spans left→ up to the QR's left edge (or full width above the QR)
     textW = Math.max(6 * dp, qrLnow - textX - Math.round(3 * dp));
   } else {
