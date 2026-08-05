@@ -212,7 +212,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const rawName = String(l.name ?? "");
   const manualSegs = rawName.split(/\r?\n/).map((s) => esc(s)).filter((s) => s.length > 0).slice(0, 3);
   const useManual = manualSegs.length > 1;
-  const nameCap = useManual ? manualSegs.length : (bigLbl ? 3 : 2); // big label allows a 3rd name line so long names stay readable, not shrunk/cut
+  const nameCap = useManual ? manualSegs.length : (bigLbl ? 4 : 2); // big label allows up to 4 name lines so very long names stay a readable size, not shrunk tiny or cut
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
@@ -252,24 +252,28 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // Big label (95×70): keep the main text large (~6mm) BUT never at the cost of
     // Lot/PKD. Use font 5 only if the name fits in ≤2 lines; otherwise step down so
     // the FULL name (≤3 lines) AND the key attribute lines (Incl/Lot/PKD) all fit.
+    // Longer names step down a font AND get more lines (font 5 ≤2 lines, 4 ≤3, 3 ≤4,
+    // 2 ≤4) — so a 6-word name stays ~3mm over 4 lines instead of shrinking to 2mm.
+    // The CODE line always renders at font 5, so we reserve lh("5") for it here.
     const bigTiers: { f: [string, string, string, string]; maxL: number }[] = [
       { f: ["5", "5", "3", "2"], maxL: 2 },
       { f: ["4", "4", "3", "2"], maxL: 3 },
-      { f: ["3", "3", "2", "2"], maxL: 3 },
+      { f: ["3", "3", "2", "2"], maxL: 4 },
+      { f: ["2", "2", "2", "1"], maxL: 4 },
     ];
     const KEEP = 3; // (Incl. of All Taxes) + Lot No + PKD must fit
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) { // prefer: name fully shown + the 3 key attributes fit
       const wr = wrapAll(esc(rawName), t.f[1], textW);
       if (wr.length > t.maxL) continue;
-      if (lh(t.f[0]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) + KEEP * lh(t.f[3]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
+      if (lh("5") + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) + KEEP * lh(t.f[3]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
     }
     if (!bc) for (const t of bigTiers) { // fallback: at least fit the name (extras gated after)
       const wr = wrapAll(esc(rawName), t.f[1], textW);
-      if (wr.length <= t.maxL && lh(t.f[0]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
+      if (wr.length <= t.maxL && lh("5") + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
     }
-    chosen = bc ?? (["3", "3", "2", "2"] as [string, string, string, string]);
-    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, 3);
+    chosen = bc ?? (["2", "2", "2", "1"] as [string, string, string, string]);
+    if (!bc) nameLines = wrapAll(esc(rawName), "2", textW).slice(0, 4);
   }
   const [skuF, nameF0, qtyF, exF0] = chosen;
 
