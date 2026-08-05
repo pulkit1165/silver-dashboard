@@ -123,7 +123,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // per-element moves/sizes) — only we can change them here in code. This keeps the
   // big green 95×70 and the 70×40 medium green consistent no matter what an operator
   // does in the 🎯 Align tool.
-  const lockedSize = (w === 95 && h === 70) || (w === 70 && h === 40);
+  // ALL sizes are locked: the barcode + text placement is fixed per size and the
+  // 🎯 Align tool can no longer shift anything. The ONLY way to control how a name
+  // reads is the Barcode Master's line breaks (Line 1/2/3); everything else auto-fits
+  // (breaks to more lines / steps the font down) so the FULL name always prints.
+  const lockedSize = true;
   const ox = lockedSize ? 0 : Math.round((opts.offsetXmm ?? 0) * dp);
   const oy = lockedSize ? 0 : Math.round((opts.offsetYmm ?? 0) * dp);
   // Per-element overrides (from the visual aligner). dx/dy in mm → dots; f = font.
@@ -239,7 +243,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const rawName = String(l.name ?? "");
   const manualSegs = rawName.split(/\r?\n/).map((s) => esc(s)).filter((s) => s.length > 0).slice(0, 3);
   const useManual = manualSegs.length > 1;
-  const nameCap = useManual ? manualSegs.length : (bigLbl ? 4 : 2); // big label allows up to 4 name lines so very long names stay a readable size, not shrunk tiny or cut
+  // Allow enough name lines that the FULL name always fits (it breaks to more lines
+  // / steps the font down rather than ever truncating). Big label up to 4, others up to 3.
+  const nameCap = useManual ? manualSegs.length : (bigLbl ? 4 : 3);
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]

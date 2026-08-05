@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import LabelAligner, { type Layout } from "./LabelAligner";
+import LabelSizePicker from "./LabelSizePicker";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
@@ -450,6 +451,20 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         <style dangerouslySetInnerHTML={{ __html: `.a4-tile { margin: 0 ${sheetGap}mm ${sheetGap}mm 0 !important; } @media print { @page { size: A4 ${landscape ? "landscape" : "portrait"}; margin: ${sheetMargin}mm; } }` }} />
       )}
 
+      {/* visual size picker — pick the stock by its look */}
+      {(roll || a4) && (
+        <div className="no-print rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
+          <LabelSizePicker value={sizeId} onChange={(v) => {
+            setSizeId(v);
+            const sel = pnPrinters.find((p) => p.id === pnPrinterId);
+            if (sel && v !== "custom") {
+              sizeByComputer.current[sel.computer] = v;
+              try { localStorage.setItem("erp_label_size_by_computer", JSON.stringify(sizeByComputer.current)); } catch { /* ignore */ }
+            }
+          }} />
+        </div>
+      )}
+
       {/* toolbar */}
       <div className="no-print flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
         <button onClick={() => setSelected(new Set(items.map((i) => i.id)))} className={btn}>Select all</button>
@@ -500,10 +515,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           </label>
         )}
         {roll && (
-          <button onClick={() => setAlignOpen(true)} title="Visually align this size's print (up/down/left/right + QR size), saved & shared"
+          <a href="/erp/masters/label" title="Control how each part's name breaks into lines"
             className="rounded-lg border border-[var(--accent)] px-3 py-1.5 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]">
-            🎯 Align{(layouts[sizeId]?.offsetX || layouts[sizeId]?.offsetY || layouts[sizeId]?.qrMM) ? " ✓" : ""}
-          </button>
+            🏷️ Label text (line breaks)
+          </a>
         )}
         {(roll || a4) && sizeId === "custom" && (
           <span className="flex items-center gap-1 text-sm font-semibold">
