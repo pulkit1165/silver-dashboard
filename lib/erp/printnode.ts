@@ -165,7 +165,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrTotal = qrN + QUIET * 2; // modules incl. quiet zone
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round(28 * dp));
+  const bigLbl = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40); // 95×70 (& 85×55) = big
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((bigLbl ? 40 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   const modDots = qrSzMM > 0
@@ -182,7 +183,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
   // 70×40 = medium (was tiny), 50×30 = small. On a 300 dpi head the bitmap fonts
   // are physically ~⅔ the size, so bump each label up a tier to compensate.
-  const big = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40);
+  const big = bigLbl;
   const med = h >= (hires ? 30 : 38) || (!!opts.large && h >= 26);
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
@@ -267,11 +268,20 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
 
-  // Centre the whole block (text + extras) against the QR, then clamp to the zone.
   const contentH = baseH + extras.length * lh(exF);
-  let cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2));
-  if (cy + contentH > bottom) cy = bottom - contentH;
-  if (cy < top) cy = top;
+  // On the BIG label (95×70) spread the lines DOWN the whole zone so the content
+  // fills the sticker like the reference label, instead of a compact block at the
+  // top. Smaller labels stay compact & centred against the QR.
+  const totalLines = 1 + nameLines.length + 2 + extras.length;
+  const spread = big ? Math.max(0, Math.min(Math.round(5 * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
+  let cy;
+  if (big) {
+    cy = top;
+  } else {
+    cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2)); // centre against the QR
+    if (cy + contentH > bottom) cy = bottom - contentH;
+    if (cy < top) cy = top;
+  }
 
   // Each attribute is placed at its auto position, then nudged/resized by its own
   // override (dx/dy/font from the aligner). Base cy still advances by the auto font
@@ -284,19 +294,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
     if (el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
   };
-  { const { font, mag } = emFont("code", skuF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText(esc(l.sku_code), font, fw(mag))); }
-  cy += lh(skuF);
-  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag; } }
-  cy += nameLines.length * lh(nameF);
+  // `CODE:` prefix to match the reference label. `spread` (big label only) is added
+  // after every line so the whole block fills the sticker top-to-bottom.
+  { const { font, mag } = emFont("code", skuF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText((big || med ? "CODE:" : "") + esc(l.sku_code), font, fw(mag))); }
+  cy += lh(skuF) + spread;
+  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
+  cy += nameLines.length * (lh(nameF) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
   { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + emx("qty"), cy + emy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
-  cy += lh(qtyF);
+  cy += lh(qtyF) + spread;
   { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + emx("mrp"), cy + emy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
-  cy += lh(qtyF);
+  cy += lh(qtyF) + spread;
   // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
   // as one "extras" element from the aligner.
-  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { emit("extras", textX + emx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag; } }
+  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { emit("extras", textX + emx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
