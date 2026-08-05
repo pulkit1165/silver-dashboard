@@ -91,6 +91,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   }, []);
   // Per-SKU print name overrides (with manual line breaks). Shared across PCs.
   const [labelNames, setLabelNames] = useState<Record<string, string>>({});
+  // Label Master (structured Line 1/2/3 + units/lot/rack per SKU) — takes precedence on print.
+  const [labelMaster, setLabelMaster] = useState<Record<string, { line1: string; line2: string; line3: string; units: string; lot: string; rack: string }>>({});
+  useEffect(() => {
+    fetch("/api/erp/labels/master").then((r) => r.json()).then((d) => { if (d.ok) setLabelMaster(d.master || {}); }).catch(() => {});
+  }, []);
   const [nameEdit, setNameEdit] = useState<{ code: string; value: string } | null>(null);
   useEffect(() => {
     fetch("/api/erp/labels/names").then((r) => r.json()).then((d) => { if (d.ok) setLabelNames(d.names || {}); }).catch(() => {});
@@ -213,8 +218,14 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const t = (type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single") as LabelType;
     const qrToken = t === "master" ? l.qrTokenMaster : l.qrTokenSingle;
     const qrSvg = t === "master" ? l.qrSvgMaster : l.qrSvgSingle;
-    const name = labelNames[l.sku_code] ?? l.name; // per-SKU print name (with manual line breaks)
-    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
+    // Precedence: Label Master (structured lines) → per-SKU name override → SKU name.
+    const m = labelMaster[l.sku_code];
+    const masterName = m ? [m.line1, m.line2, m.line3].filter(Boolean).join("\n") : "";
+    const name = masterName || labelNames[l.sku_code] || l.name;
+    const lot = m?.lot || l.lot;
+    const rack = m?.rack || l.rack;
+    const unit = m?.units || l.unit;
+    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, lot, rack, unit, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
   });
 
   const labelStyle = (roll || a4) ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
