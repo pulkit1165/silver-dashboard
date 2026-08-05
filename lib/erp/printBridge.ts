@@ -10,7 +10,10 @@ import { getSql } from "./db";
 //      app can list "online" bridge printers just like PrintNode's printer list.
 // Because the agent polls outbound, there's no tunnel / port-forward / changing URL.
 
-export type BridgePrinter = { id: string; pc: string; name: string; online: boolean; lastSeen: string };
+export type BridgePrinter = {
+  id: string; pc: string; name: string; online: boolean; lastSeen: string;
+  code: string; labelSize: string; locked: boolean;
+};
 export type BridgeJob = { id: number; name: string; tspl_b64: string };
 
 const ONLINE_SECS = 40; // a printer is "online" if its agent heartbeat is this fresh
@@ -26,6 +29,12 @@ function ensure(): Promise<void> {
         name text NOT NULL,
         last_seen timestamptz NOT NULL DEFAULT now()
       )`;
+      // Operator-set config: a friendly code (rename), the label size this printer
+      // is loaded with, and a lock so only that size may print to it.
+      await sql`ALTER TABLE print_printers
+        ADD COLUMN IF NOT EXISTS code text DEFAULT '',
+        ADD COLUMN IF NOT EXISTS label_size text DEFAULT '',
+        ADD COLUMN IF NOT EXISTS locked boolean DEFAULT false`;
       await sql`CREATE TABLE IF NOT EXISTS print_jobs (
         id bigserial PRIMARY KEY,
         printer_id text NOT NULL,
@@ -60,16 +69,36 @@ export async function heartbeat(pc: string, names: string[]): Promise<void> {
   }
 }
 
-// App → list online bridge printers for the printer dropdown.
+// App → list online bridge printers for the printer dropdown / manager.
 export async function listBridgePrinters(): Promise<BridgePrinter[]> {
   try {
     await ensure();
     const rows = (await getSql()`SELECT id, pc, name, last_seen,
+        COALESCE(code, '') AS code, COALESCE(label_size, '') AS label_size, COALESCE(locked, false) AS locked,
         (last_seen > now() - (${ONLINE_SECS} || ' seconds')::interval) AS online
-      FROM print_printers ORDER BY pc, name`) as unknown as
-      { id: string; pc: string; name: string; last_seen: string; online: boolean }[];
-    return rows.map((r) => ({ id: r.id, pc: r.pc, name: r.name, online: !!r.online, lastSeen: String(r.last_seen) }));
+      FROM print_printers ORDER BY code NULLS LAST, pc, name`) as unknown as
+      { id: string; pc: string; name: string; last_seen: string; online: boolean; code: string; label_size: string; locked: boolean }[];
+    return rows.map((r) => ({
+      id: r.id, pc: r.pc, name: r.name, online: !!r.online, lastSeen: String(r.last_seen),
+      code: r.code ?? "", labelSize: r.label_size ?? "", locked: !!r.locked,
+    }));
   } catch { return []; }
+}
+
+// App → operator sets a printer's code (rename), label size, and lock.
+export async function setPrinterConfig(
+  id: string, cfg: { code?: string; labelSize?: string; locked?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  await ensure();
+  const sql = getSql();
+  const patch: Record<string, string | boolean> = {};
+  if (typeof cfg.code === "string") patch.code = cfg.code.trim();
+  if (typeof cfg.labelSize === "string") patch.label_size = cfg.labelSize.trim();
+  if (typeof cfg.locked === "boolean") patch.locked = cfg.locked;
+  const cols = Object.keys(patch);
+  if (cols.length === 0) return { ok: false, error: "Nothing to update." };
+  const [row] = (await sql`UPDATE print_printers SET ${sql(patch, ...cols)} WHERE id=${id} RETURNING id`) as unknown as { id: string }[];
+  return row ? { ok: true } : { ok: false, error: "Printer not found." };
 }
 
 // App → enqueue one job per label (already-built TSPL, base64).

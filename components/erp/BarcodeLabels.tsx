@@ -64,9 +64,15 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Print engine: PrintNode (default) or our self-hosted bridge (an agent on each
   // ERP PC). The bridge lists printers agents have heartbeated; jobs go via a queue.
   const [engine, setEngine] = useState<"printnode" | "bridge">("printnode");
-  const [brPrinters, setBrPrinters] = useState<{ id: string; pc: string; name: string; online: boolean }[]>([]);
+  const [brPrinters, setBrPrinters] = useState<{ id: string; pc: string; name: string; online: boolean; code?: string; labelSize?: string; locked?: boolean }[]>([]);
   const [brPrinterId, setBrPrinterId] = useState<string | null>(null);
   useEffect(() => { try { const e = localStorage.getItem("erp_print_engine"); if (e === "bridge" || e === "printnode") setEngine(e); } catch { /* default */ } }, []);
+  // A bridge printer locked to a size forces that size the moment it's selected.
+  useEffect(() => {
+    if (engine !== "bridge") return;
+    const p = brPrinters.find((x) => x.id === brPrinterId);
+    if (p?.locked && p.labelSize) setSizeId(p.labelSize);
+  }, [engine, brPrinterId, brPrinters]);
   // Print-quality knobs for the QR (printer/media specific). Darkness = TSPL
   // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
   const [density, setDensity] = useState(8);
@@ -280,6 +286,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Print via our own bridge: enqueue jobs, then poll the queue for done/failed.
   async function printToBridge() {
     if (!brPrinterId || printable.length === 0) return;
+    // Enforce the printer↔size lock.
+    const bp = brPrinters.find((x) => x.id === brPrinterId);
+    if (bp?.locked && bp.labelSize && sizeId !== bp.labelSize) {
+      setPnMsg({ ok: false, text: `🔒 ${bp.code || bp.name} is locked to ${LABEL_SIZES.find((s) => s.id === bp.labelSize)?.label ?? bp.labelSize} — select that size or unlock the printer.` });
+      return;
+    }
     setPnBusy(true); setPnMsg(null);
     try {
       const r = await fetch("/api/erp/labels/bridge", {
@@ -588,7 +600,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
                   {brPrinters.length === 0 && <option value="">No agents online</option>}
                   {brPrinters.map((p) => (
                     <option key={p.id} value={p.id} disabled={!p.online}>
-                      {p.online ? "🟢" : "🔴"} {p.pc} · {p.name}{!p.online ? " (offline)" : ""}
+                      {p.online ? "🟢" : "🔴"} {p.code ? `${p.code} · ` : ""}{p.pc} · {p.name}
+                      {p.locked && p.labelSize ? ` 🔒 ${LABEL_SIZES.find((s) => s.id === p.labelSize)?.label ?? p.labelSize}` : ""}
+                      {!p.online ? " (offline)" : ""}
                     </option>
                   ))}
                 </select>
