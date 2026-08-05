@@ -166,7 +166,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
   const bigLbl = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40); // 95×70 (& 85×55) = big
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((bigLbl ? 40 : 28) * dp));
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   const modDots = qrSzMM > 0
@@ -245,6 +245,20 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
       if (tierNL(t) >= 1) { chosen = t; nameLines = linesFor(t[1]).slice(0, Math.min(tierNL(t), nameCap)); break; }
     }
     if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = linesFor(chosen[1]).slice(0, 1); } // pass 3: smallest, gate extras
+  }
+  if (big && !useManual) {
+    // Big label (95×70): main text ~6mm tall (font 5) like the reference. Fit
+    // CODE + name (≤2 lines) + qty + MRP WITHOUT reserving the attribute lines; the
+    // extras then fill whatever's left, so the big text is never sacrificed for them.
+    const bigTiers: [string, string, string, string][] = [["5", "5", "3", "2"], ["4", "4", "3", "2"], ["3", "3", "2", "2"]];
+    let bc: [string, string, string, string] | null = null;
+    for (const t of bigTiers) {
+      const wr = wrapAll(esc(rawName), t[1], textW);
+      const need = Math.min(wr.length || 1, 2);
+      if (lh(t[0]) + need * lh(t[1]) + 2 * lh(t[2]) <= fitRoom) { bc = t; nameLines = wr.slice(0, need); break; }
+    }
+    chosen = bc ?? (["3", "3", "2", "2"] as [string, string, string, string]);
+    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, 2);
   }
   const [skuF, nameF0, qtyF, exF0] = chosen;
 
