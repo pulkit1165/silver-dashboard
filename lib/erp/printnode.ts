@@ -178,7 +178,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   if (qrY < top) qrY = top;
   qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy)); // apply the operator's vertical nudge (clamped to the label)
   const textX = qrX + qrPx + Math.round(2 * dp); // quiet zone already inside the box
-  const textW = Math.max(4 * dp, Wd - textX - pad);
+  // Reserve a healthy right margin on the big label so long names can't run off the
+  // right edge (the big green stock is a touch narrower than the nominal 95mm).
+  const textW = Math.max(4 * dp, Wd - textX - (bigLbl ? Math.round(11 * dp) : pad));
 
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
   // 70×40 = medium (was tiny), 50×30 = small. On a 300 dpi head the bitmap fonts
@@ -310,7 +312,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   };
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
-  { const { font, mag } = emFont("code", skuF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText((big || med ? "CODE:" : "") + esc(l.sku_code), font, fw(mag))); }
+  // CODE line: shrink its font if needed so the full code is never truncated.
+  const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
+  let codeF = skuF;
+  while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
+  { const { font, mag } = emFont("code", codeF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
   cy += lh(skuF) + spread;
   { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
   cy += nameLines.length * (lh(nameF) + spread);
