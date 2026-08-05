@@ -176,14 +176,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // QR position (final, incl. aligner nudge). On the BIG label the QR is parked in
   // the BOTTOM-RIGHT corner and ALL text is left-aligned across the rest — matches
   // the reference and never squeezes the name. Other sizes: QR on the left, centred.
-  const qrX = (fillBig
+  // The big green uses a FIXED reference layout, so it ignores the saved aligner
+  // nudges (which were pushing the text off the left edge); other sizes honour them.
+  const qrX = fillBig
     ? Wd - qrPx - Math.round(4 * dp)
-    : (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp))) + ox + emx("qr");
+    : (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp)) + ox + emx("qr");
   let qrY = fillBig
     ? bottom - qrPx
     : top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
   qrY = Math.max(top, Math.min(bottom - qrPx, qrY));
-  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy + emy("qr"))); // vertical nudge, clamped to the label
+  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + (fillBig ? 0 : oy + emy("qr")))); // vertical nudge (not on the big green)
 
   // Text column. Big label: LEFT-aligned, full width up to the QR (bottom-right), so
   // the whole name fits and reads left-aligned. Other sizes: right of the left QR.
@@ -349,21 +351,25 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
     if (el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
   };
+  // On the big green the text is a FIXED left-aligned block, so ignore the saved
+  // per-element X/Y nudges (they were shoving it back to the middle); other sizes keep them.
+  const tdx = (k: string) => (fillBig ? 0 : emx(k));
+  const tdy = (k: string) => (fillBig ? 0 : emy(k));
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
-  { const { font, mag } = emFont("code", codeF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
+  { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
   cy += lh(codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
-  { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
+  { const { font, mag } = emFont("name", nameF); let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
   cy += nameLines.length * (lh(nameF) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
-  { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + emx("qty"), cy + emy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
+  { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + tdx("qty"), cy + tdy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
   cy += lh(qtyF) + spread;
-  { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + emx("mrp"), cy + emy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
+  { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + tdx("mrp"), cy + tdy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
   cy += lh(qtyF) + spread;
   // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
   // as one "extras" element from the aligner.
-  { const { font, mag } = emFont("extras", exF); let ey = cy + emy("extras"); for (const e of extras) { emit("extras", textX + emx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
+  { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
