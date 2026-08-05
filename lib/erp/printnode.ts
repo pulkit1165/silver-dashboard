@@ -249,18 +249,27 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = linesFor(chosen[1]).slice(0, 1); } // pass 3: smallest, gate extras
   }
   if (big && !useManual) {
-    // Big label (95×70): main text ~6mm tall (font 5) like the reference. Fit
-    // CODE + name (≤2 lines) + qty + MRP WITHOUT reserving the attribute lines; the
-    // extras then fill whatever's left, so the big text is never sacrificed for them.
-    const bigTiers: [string, string, string, string][] = [["5", "5", "3", "2"], ["4", "4", "3", "2"], ["3", "3", "2", "2"]];
+    // Big label (95×70): keep the main text large (~6mm) BUT never at the cost of
+    // Lot/PKD. Use font 5 only if the name fits in ≤2 lines; otherwise step down so
+    // the FULL name (≤3 lines) AND the key attribute lines (Incl/Lot/PKD) all fit.
+    const bigTiers: { f: [string, string, string, string]; maxL: number }[] = [
+      { f: ["5", "5", "3", "2"], maxL: 2 },
+      { f: ["4", "4", "3", "2"], maxL: 3 },
+      { f: ["3", "3", "2", "2"], maxL: 3 },
+    ];
+    const KEEP = 3; // (Incl. of All Taxes) + Lot No + PKD must fit
     let bc: [string, string, string, string] | null = null;
-    for (const t of bigTiers) {
-      const wr = wrapAll(esc(rawName), t[1], textW);
-      const need = Math.min(wr.length || 1, nameCap);
-      if (lh(t[0]) + need * lh(t[1]) + 2 * lh(t[2]) <= fitRoom) { bc = t; nameLines = wr.slice(0, need); break; }
+    for (const t of bigTiers) { // prefer: name fully shown + the 3 key attributes fit
+      const wr = wrapAll(esc(rawName), t.f[1], textW);
+      if (wr.length > t.maxL) continue;
+      if (lh(t.f[0]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) + KEEP * lh(t.f[3]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
+    }
+    if (!bc) for (const t of bigTiers) { // fallback: at least fit the name (extras gated after)
+      const wr = wrapAll(esc(rawName), t.f[1], textW);
+      if (wr.length <= t.maxL && lh(t.f[0]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
     }
     chosen = bc ?? (["3", "3", "2", "2"] as [string, string, string, string]);
-    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, nameCap);
+    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, 3);
   }
   const [skuF, nameF0, qtyF, exF0] = chosen;
 
@@ -279,7 +288,13 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let exF = exF0;
   { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
 
-  const baseH = lh(skuF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
+  // CODE line: on the big label keep it prominent (~6mm, font 5) regardless of the
+  // name font; shrink only if the full code wouldn't fit the width. Never truncated.
+  const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
+  let codeF = bigLbl ? "5" : skuF;
+  while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
+
+  const baseH = lh(codeF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
   let nEx = 0;
   while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
@@ -312,12 +327,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   };
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
-  // CODE line: shrink its font if needed so the full code is never truncated.
-  const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
-  let codeF = skuF;
-  while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
   { const { font, mag } = emFont("code", codeF); emit("code", textX + emx("code"), cy + emy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
-  cy += lh(skuF) + spread;
+  cy += lh(codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
   { const { font, mag } = emFont("name", nameF); let ny = cy + emy("name"); for (const nl of nameLines) { emit("name", textX + emx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
   cy += nameLines.length * (lh(nameF) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
