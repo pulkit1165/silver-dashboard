@@ -155,7 +155,6 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const bottom = Math.round(Hd * (red ? 0.94 : pos === "bottom" ? 0.92 : 0.63));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
-  const qrX = (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp)) + ox;
 
   // QR rendered as a BITMAP (like BarTender) with a built-in 4-module quiet zone,
   // sized to the biggest module that fits the zone height and ~half the width.
@@ -166,6 +165,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
   const bigLbl = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40); // 95×70 (& 85×55) = big
+  const fillBig = bigLbl && !red; // the big GREEN (95×70) gets the QR-right / text-left fill layout; the red keeps QR-left
   const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
@@ -173,23 +173,30 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     ? Math.max(2, Math.floor((qrSzMM * dp) / qrTotal))
     : Math.max(2, Math.floor(maxBox / qrTotal));
   const qrPx = qrTotal * modDots; // full QR box (black symbol + quiet zone)
-  let qrY = top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
-  if (qrY + qrPx > bottom) qrY = bottom - qrPx; // clamp above the band
-  if (qrY < top) qrY = top;
-  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy)); // apply the operator's vertical nudge (clamped to the label)
-  // Text column. On the big label it takes the WIDER clear band beside the QR's
-  // ACTUAL position (incl. any aligner move) — so if the QR is on the right, the
-  // name gets the full LEFT width (more letters per line), and vice-versa. This
-  // stops long names being squeezed into a narrow sliver next to a moved QR.
+  // QR position (final, incl. aligner nudge). On the BIG label the QR is parked in
+  // the BOTTOM-RIGHT corner and ALL text is left-aligned across the rest — matches
+  // the reference and never squeezes the name. Other sizes: QR on the left, centred.
+  const qrX = (fillBig
+    ? Wd - qrPx - Math.round(4 * dp)
+    : (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp))) + ox + emx("qr");
+  let qrY = fillBig
+    ? bottom - qrPx
+    : top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
+  qrY = Math.max(top, Math.min(bottom - qrPx, qrY));
+  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy + emy("qr"))); // vertical nudge, clamped to the label
+
+  // Text column. Big label: LEFT-aligned, full width up to the QR (bottom-right), so
+  // the whole name fits and reads left-aligned. Other sizes: right of the left QR.
   const rMar = Math.round((bigLbl ? 4 : 2) * dp);
-  const qrLnow = Math.max(0, qrX + emx("qr"));
-  const qrRnow = qrLnow + qrPx;
-  const leftBand = qrLnow - Math.round(4 * dp);        // clear width left of the QR
-  const rightBand = Wd - qrRnow - rMar;                // clear width right of the QR
+  // Big: QR on the right — clamp its left edge on-label so the text width is sane.
+  // Non-big: QR on the left at its actual x.
+  const qrLnow = fillBig ? Math.max(Math.round(30 * dp), Math.min(qrX, Wd - qrPx)) : Math.max(0, qrX);
+  const qrRnow = Math.min(Wd, qrLnow + qrPx);
   let textX: number, textW: number;
-  if (bigLbl && leftBand > rightBand) {
+  if (fillBig) {
     textX = Math.round(4 * dp);
-    textW = Math.max(6 * dp, leftBand - Math.round(2 * dp));
+    // name/text spans left→ up to the QR's left edge (or full width above the QR)
+    textW = Math.max(6 * dp, qrLnow - textX - Math.round(3 * dp));
   } else {
     textX = qrRnow + Math.round(2 * dp);
     textW = Math.max(4 * dp, Wd - textX - rMar);
@@ -369,7 +376,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // The 50×30 stock is 2-UP (two labels across per row) — print the QR+text twice,
   // offset by one label pitch, so BOTH die-cuts get their own barcode + text.
   const twoUp = w === 50 && h === 30;
-  const colGap = 2;                        // mm between the two columns (tunable)
+  // Gap between the two die-cuts on the 50x30 2-up roll. These labels are
+  // butt-cut (no gap), so 0 makes the right column mirror the (perfect) left one
+  // exactly; a +2mm gap pushed the right label off its die-cut edge. Tune if your
+  // roll actually has a physical gap between the two columns.
+  const colGap = 0;
   const columns = twoUp ? 2 : 1;
   const pitch = Math.round((w + colGap) * dp);
   const sizeW = twoUp ? 2 * w + colGap : w;
@@ -390,8 +401,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const buf: Buffer[] = [Buffer.from(head, "ascii")];
   for (let c = 0; c < columns; c++) {
     const xOff = c * pitch;
-    const qbx = Math.max(0, Math.min(WdFull - bmp.sideDots, qrX + xOff + emx("qr")));
-    const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY + emy("qr")));
+    const qbx = Math.max(0, Math.min(WdFull - bmp.sideDots, qrX + xOff)); // qrX already includes the aligner nudge
+    const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY));
     buf.push(Buffer.from(`BITMAP ${qbx},${qby},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
     buf.push(bmp.bytes);
     const colRows = rows.map((r) => r.replace(/^TEXT (\d+),/, (_m, x) => `TEXT ${Number(x) + xOff},`));
