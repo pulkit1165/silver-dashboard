@@ -177,10 +177,23 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   if (qrY + qrPx > bottom) qrY = bottom - qrPx; // clamp above the band
   if (qrY < top) qrY = top;
   qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy)); // apply the operator's vertical nudge (clamped to the label)
-  const textX = qrX + qrPx + Math.round(2 * dp); // quiet zone already inside the box
-  // Reserve a healthy right margin on the big label so long names can't run off the
-  // right edge (the big green stock is a touch narrower than the nominal 95mm).
-  const textW = Math.max(4 * dp, Wd - textX - (bigLbl ? Math.round(5 * dp) : pad));
+  // Text column. On the big label it takes the WIDER clear band beside the QR's
+  // ACTUAL position (incl. any aligner move) — so if the QR is on the right, the
+  // name gets the full LEFT width (more letters per line), and vice-versa. This
+  // stops long names being squeezed into a narrow sliver next to a moved QR.
+  const rMar = Math.round((bigLbl ? 4 : 2) * dp);
+  const qrLnow = Math.max(0, qrX + emx("qr"));
+  const qrRnow = qrLnow + qrPx;
+  const leftBand = qrLnow - Math.round(4 * dp);        // clear width left of the QR
+  const rightBand = Wd - qrRnow - rMar;                // clear width right of the QR
+  let textX: number, textW: number;
+  if (bigLbl && leftBand > rightBand) {
+    textX = Math.round(4 * dp);
+    textW = Math.max(6 * dp, leftBand - Math.round(2 * dp));
+  } else {
+    textX = qrRnow + Math.round(2 * dp);
+    textW = Math.max(4 * dp, Wd - textX - rMar);
+  }
 
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
   // 70×40 = medium (was tiny), 50×30 = small. On a 300 dpi head the bitmap fonts
@@ -360,6 +373,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const columns = twoUp ? 2 : 1;
   const pitch = Math.round((w + colGap) * dp);
   const sizeW = twoUp ? 2 * w + colGap : w;
+  // Full print width in dots. For 2-up this spans BOTH die-cuts (~102mm); the QR
+  // clamp must use this, not the single-label Wd, or column 2 gets pulled back
+  // onto the first label (→ both barcodes on one sticker).
+  const WdFull = Math.round(sizeW * dp);
   const head = [
     `SIZE ${sizeW} mm, ${h} mm`,
     `GAP 3 mm, 0 mm`,
@@ -373,7 +390,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const buf: Buffer[] = [Buffer.from(head, "ascii")];
   for (let c = 0; c < columns; c++) {
     const xOff = c * pitch;
-    const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX + xOff + emx("qr")));
+    const qbx = Math.max(0, Math.min(WdFull - bmp.sideDots, qrX + xOff + emx("qr")));
     const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY + emy("qr")));
     buf.push(Buffer.from(`BITMAP ${qbx},${qby},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
     buf.push(bmp.bytes);
