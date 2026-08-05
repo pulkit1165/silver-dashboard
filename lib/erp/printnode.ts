@@ -210,7 +210,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const rawName = String(l.name ?? "");
   const manualSegs = rawName.split(/\r?\n/).map((s) => esc(s)).filter((s) => s.length > 0).slice(0, 3);
   const useManual = manualSegs.length > 1;
-  const nameCap = useManual ? manualSegs.length : 2;
+  const nameCap = useManual ? manualSegs.length : (bigLbl ? 3 : 2); // big label allows a 3rd name line so long names stay readable, not shrunk/cut
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
@@ -254,11 +254,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) {
       const wr = wrapAll(esc(rawName), t[1], textW);
-      const need = Math.min(wr.length || 1, 2);
+      const need = Math.min(wr.length || 1, nameCap);
       if (lh(t[0]) + need * lh(t[1]) + 2 * lh(t[2]) <= fitRoom) { bc = t; nameLines = wr.slice(0, need); break; }
     }
     chosen = bc ?? (["3", "3", "2", "2"] as [string, string, string, string]);
-    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, 2);
+    if (!bc) nameLines = wrapAll(esc(rawName), "3", textW).slice(0, nameCap);
   }
   const [skuF, nameF0, qtyF, exF0] = chosen;
 
