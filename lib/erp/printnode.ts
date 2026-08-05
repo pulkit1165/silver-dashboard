@@ -180,7 +180,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const textX = qrX + qrPx + Math.round(2 * dp); // quiet zone already inside the box
   // Reserve a healthy right margin on the big label so long names can't run off the
   // right edge (the big green stock is a touch narrower than the nominal 95mm).
-  const textW = Math.max(4 * dp, Wd - textX - (bigLbl ? Math.round(11 * dp) : pad));
+  const textW = Math.max(4 * dp, Wd - textX - (bigLbl ? Math.round(5 * dp) : pad));
 
   // Fonts scale with height (with a "large" bump). 85×55 & 95×70 = big,
   // 70×40 = medium (was tiny), 50×30 = small. On a 300 dpi head the bitmap fonts
