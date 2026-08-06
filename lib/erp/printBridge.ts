@@ -153,6 +153,35 @@ export async function jobStatuses(ids: number[]): Promise<Record<number, { statu
   return out;
 }
 
+// App → recent jobs for the Print Queue monitor.
+export type JobRow = {
+  id: number; printer_id: string; name: string; pc: string; status: string;
+  error: string | null; created_at: string; done_at: string | null; created_by: string | null;
+};
+export async function listRecentJobs(limit = 60): Promise<JobRow[]> {
+  try {
+    await ensure();
+    const rows = (await getSql()`SELECT id, printer_id, name, pc, status, error, created_at, done_at, created_by
+      FROM print_jobs ORDER BY id DESC LIMIT ${limit}`) as unknown as JobRow[];
+    return rows.map((r) => ({ ...r, id: Number(r.id) }));
+  } catch { return []; }
+}
+export async function queueCounts(): Promise<Record<string, number>> {
+  try {
+    await ensure();
+    const rows = (await getSql()`SELECT status, count(*)::int AS n FROM print_jobs GROUP BY status`) as unknown as { status: string; n: number }[];
+    const out: Record<string, number> = { queued: 0, printing: 0, done: 0, failed: 0 };
+    for (const r of rows) out[r.status] = Number(r.n);
+    return out;
+  } catch { return { queued: 0, printing: 0, done: 0, failed: 0 }; }
+}
+// App → re-queue a failed/stuck job so an agent picks it up again.
+export async function retryJob(id: number): Promise<void> {
+  await ensure();
+  await getSql()`UPDATE print_jobs SET status='queued', error=null, claimed_at=null, done_at=null
+    WHERE id=${id} AND status IN ('failed','printing')`;
+}
+
 // Requeue jobs stuck in 'printing' longer than `secs` (agent died mid-print).
 export async function requeueStale(secs = 120): Promise<number> {
   await ensure();
