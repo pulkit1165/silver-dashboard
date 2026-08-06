@@ -358,9 +358,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const fw = (mag: number) => Math.max(4 * dp, Math.floor(textW / mag)); // width budget shrinks as text magnifies
   // Emit a text line; if the element is BOLD (aligner toggle) overstrike it (print
   // again +1 dot across) to thicken the strokes — TSPL's built-in fonts have no bold.
+  // The big green prints ALL text bold (overstruck) so long names at the smaller
+  // font stay heavy and readable; other sizes bold only where the aligner set it.
   const emit = (k: string, x: number, y: number, font: string, mag: number, text: string) => {
     rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
-    if (el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
+    if (fillBig || el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
   };
   // On the big green the text is a FIXED left-aligned block, so ignore the saved
   // per-element X/Y nudges (they were shoving it back to the middle); other sizes keep them.
