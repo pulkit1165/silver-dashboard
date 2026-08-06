@@ -1,56 +1,32 @@
-# ============================================================================
-#  Silver ERP - Print Agent (pure PowerShell, no Node.js needed).
-#  Double-click "Install - Silver Print Agent.bat" to set this up. It self-installs
-#  to %LOCALAPPDATA%\SilverPrintAgent, saves your token, auto-starts on login, and
-#  then runs quietly: polls the ERP, prints label jobs raw to the TSC printer.
-# ============================================================================
+# Silver ERP - Print Agent (pure PowerShell). Installed & started by install.bat.
+# Reads its token from config.json, then loops forever: heartbeat the printers,
+# pull label jobs, print them raw. Self-heals (never exits) and logs to agent.log.
 
-$ErrorActionPreference = "Stop"
-$BaseUrl  = "https://silver-dashboard-eight.vercel.app"
-$Filter   = "TSC"       # only serve printers whose name contains this
-$PollMs   = 2500
-$HbEvery  = 12          # heartbeat every N polls (~30s)
-$InstallDir = Join-Path $env:LOCALAPPDATA "SilverPrintAgent"
-$CfgFile    = Join-Path $InstallDir "config.json"
-$SelfInstalled = Join-Path $InstallDir "SilverPrintAgent.ps1"
+$ErrorActionPreference = "Continue"
+$BaseUrl = "https://silver-dashboard-eight.vercel.app"
+$Filter  = "TSC"
+$Dir     = Join-Path $env:LOCALAPPDATA "SilverPrintAgent"
+$LogFile = Join-Path $Dir "agent.log"
 
-# ── first-run setup (no config yet) ─────────────────────────────────────────
-if (-not (Test-Path $CfgFile)) {
-  Write-Host ""
-  Write-Host "  Silver ERP - Print Agent  -  first-time setup" -ForegroundColor Green
-  Write-Host "  --------------------------------------------"
-  $token = Read-Host "  Paste the PRINT_AGENT_TOKEN and press Enter"
-  if ([string]::IsNullOrWhiteSpace($token)) { Write-Host "  No token entered. Aborting." -ForegroundColor Red; Start-Sleep 4; exit 1 }
-
-  New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
-  Copy-Item -Path $PSCommandPath -Destination $SelfInstalled -Force
-  @{ token = $token.Trim() } | ConvertTo-Json | Set-Content -Path $CfgFile -Encoding UTF8
-
-  # auto-start on login (per-user, hidden, no admin needed)
-  $runCmd = "powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$SelfInstalled`""
-  Set-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "SilverPrintAgent" -Value $runCmd
-
-  # launch the installed copy hidden, right now
-  Start-Process powershell -WindowStyle Hidden -ArgumentList "-NoProfile","-ExecutionPolicy","Bypass","-File","`"$SelfInstalled`""
-
-  Write-Host ""
-  Write-Host "  Installed. The agent is now running in the background and will" -ForegroundColor Green
-  Write-Host "  auto-start every time this PC logs in."
-  Write-Host ""
-  Write-Host "  Next: open the ERP -> Print Barcode Labels, switch to"
-  Write-Host "  'Direct (our bridge)', and this PC's TSC printer will appear."
-  Write-Host ""
-  Read-Host "  Press Enter to close"
-  exit 0
+function Log([string]$m) {
+  $line = (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  " + $m
+  try { Add-Content -Path $LogFile -Value $line -ErrorAction SilentlyContinue } catch {}
+  Write-Host $line
 }
 
-# ── running instance ────────────────────────────────────────────────────────
-$cfg   = Get-Content $CfgFile -Raw | ConvertFrom-Json
-$Token = $cfg.token
-$Pc    = $env:COMPUTERNAME
+# keep the log from growing forever
+try { if ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt 200kb)) { Clear-Content $LogFile } } catch {}
 
-# Win32 raw-print helper (sends TSPL bytes straight to the spooler, datatype RAW).
-Add-Type -TypeDefinition @"
+$cfg = Get-Content (Join-Path $Dir "config.json") -Raw | ConvertFrom-Json
+$Token = ("" + $cfg.token).Trim()
+$Pc    = $env:COMPUTERNAME
+Log "=== agent starting on $Pc (base $BaseUrl) ==="
+if ([string]::IsNullOrWhiteSpace($Token)) { Log "NO TOKEN in config.json - stopping"; exit 1 }
+
+# Win32 raw-print helper. If it fails to compile we still heartbeat (printing off).
+$RawOk = $true
+try {
+  Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
 public class RawPrinter {
@@ -69,10 +45,9 @@ public class RawPrinter {
     try {
       DOCINFOW di = new DOCINFOW(); di.pDocName = "Silver Label"; di.pDataType = "RAW";
       if (!StartDocPrinter(hp, 1, ref di)) throw new Exception("StartDocPrinter failed (" + Marshal.GetLastWin32Error() + ")");
-      try {
-        StartPagePrinter(hp);
+      try { StartPagePrinter(hp);
         IntPtr p = Marshal.AllocHGlobal(bytes.Length);
-        try { Marshal.Copy(bytes, 0, p, bytes.Length); int written; if (!WritePrinter(hp, p, bytes.Length, out written)) throw new Exception("WritePrinter failed (" + Marshal.GetLastWin32Error() + ")"); }
+        try { Marshal.Copy(bytes, 0, p, bytes.Length); int w; if (!WritePrinter(hp, p, bytes.Length, out w)) throw new Exception("WritePrinter failed (" + Marshal.GetLastWin32Error() + ")"); }
         finally { Marshal.FreeHGlobal(p); }
         EndPagePrinter(hp);
       } finally { EndDocPrinter(hp); }
@@ -80,33 +55,41 @@ public class RawPrinter {
   }
 }
 "@
+} catch { $RawOk = $false; Log ("Add-Type failed (printing disabled): " + $_.Exception.Message) }
 
 function Post($path, $body) {
   $json = $body | ConvertTo-Json -Compress
   return Invoke-RestMethod -Uri "$BaseUrl$path" -Method Post -Body $json -ContentType "application/json" -Headers @{ "x-agent-token" = $Token } -TimeoutSec 20
 }
-function DetectPrinters() {
-  try { return @(Get-Printer | Where-Object { $_.Name -like "*$Filter*" } | Select-Object -ExpandProperty Name) } catch { return @() }
-}
+
+# Force TLS 1.2 (older Windows defaults to TLS 1.0 and fails HTTPS to Vercel).
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 $tick = 0
 while ($true) {
   try {
-    if ($tick % $HbEvery -eq 0) {
-      $printers = DetectPrinters
+    if ($tick % 12 -eq 0) {
+      $printers = @(Get-Printer | Where-Object { $_.Name -like "*$Filter*" } | Select-Object -ExpandProperty Name)
       Post "/api/erp/print/agent/heartbeat" @{ pc = $Pc; printers = $printers } | Out-Null
+      Log ("heartbeat OK  printers=[" + ($printers -join ", ") + "]")
     }
     $r = Post "/api/erp/print/agent/pull" @{ pc = $Pc; limit = 10 }
     foreach ($j in @($r.jobs)) {
       try {
+        if (-not $RawOk) { throw "raw printing unavailable on this PC" }
         $bytes = [Convert]::FromBase64String($j.tspl_b64)
         [RawPrinter]::Send($j.name, $bytes)
         Post "/api/erp/print/agent/ack" @{ id = $j.id; ok = $true } | Out-Null
+        Log ("printed job " + $j.id + " -> " + $j.name)
       } catch {
         try { Post "/api/erp/print/agent/ack" @{ id = $j.id; ok = $false; error = "$_" } | Out-Null } catch {}
+        Log ("job " + $j.id + " FAILED: " + $_)
       }
     }
-  } catch { Start-Sleep -Milliseconds 3000 }
-  Start-Sleep -Milliseconds $PollMs
+  } catch {
+    Log ("loop error: " + $_.Exception.Message)
+    Start-Sleep -Seconds 3
+  }
+  Start-Sleep -Milliseconds 2500
   $tick++
 }
