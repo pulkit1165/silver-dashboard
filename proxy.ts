@@ -16,9 +16,12 @@ export async function proxy(req: NextRequest) {
   // Meta WhatsApp Cloud API webhook — authenticated by the X-Hub signature /
   // verify token inside the route, so it must bypass the session gate too.
   const isWhatsappWebhook = pathname === "/api/whatsapp/webhook";
+  // Self-hosted print agent — machines authenticate with x-agent-token (validated
+  // in the route), not a login session, so these must bypass the session gate.
+  const isPrintAgent = pathname.startsWith("/api/erp/print/agent/");
 
   if (!session) {
-    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook) return NextResponse.next();
+    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook || isPrintAgent) return NextResponse.next();
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
