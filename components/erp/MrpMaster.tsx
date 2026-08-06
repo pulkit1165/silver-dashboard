@@ -189,8 +189,10 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
             </select>
           </label>
           <label className="flex min-w-[160px] flex-1 flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-            Quick filter
-            <input value={quick} onChange={(e) => setQuick(e.target.value)} placeholder="Filter loaded rows…" className={selCls} />
+            Search parts <span className="font-normal text-[var(--muted-2)]">(press Enter to search all {rows.length}+)</span>
+            <input value={quick} onChange={(e) => setQuick(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" && quick.trim()) router.push(`/erp/masters/mrp?q=${encodeURIComponent(quick.trim())}`); }}
+              placeholder="Type a code/name, Enter to search all…" className={selCls} />
           </label>
         </div>
       </section>
@@ -248,7 +250,12 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
               </tr>
             </thead>
             <tbody>
-              {view.length === 0 && <tr><td colSpan={8} className="!py-6 text-center text-[var(--muted)]">No items match.</td></tr>}
+              {view.length === 0 && (
+                <tr><td colSpan={8} className="!py-6 text-center text-[var(--muted)]">
+                  No loaded item matches{quick.trim() ? ` "${quick.trim()}"` : ""}.
+                  {quick.trim() && <button type="button" onClick={() => router.push(`/erp/masters/mrp?q=${encodeURIComponent(quick.trim())}`)} className="ml-2 rounded-lg bg-[var(--accent)] px-3 py-1 text-xs font-bold text-white">🔍 Search all parts for &quot;{quick.trim()}&quot; →</button>}
+                </td></tr>
+              )}
               {view.map((s) => {
                 const st = edit[s.id];
                 return (
