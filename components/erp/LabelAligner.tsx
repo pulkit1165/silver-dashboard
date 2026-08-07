@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
 export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
@@ -59,6 +59,27 @@ export default function LabelAligner({
   const r1 = (v: number) => Math.round(v * 10) / 10;
   const setEl = (k: string, patch: ElOverride) =>
     setEls((m) => ({ ...m, [k]: { ...m[k], ...patch } }));
+
+  // ── Drag-to-move (trackpad/mouse): drag any element in the preview to reposition ──
+  const dragRef = useRef<{ k: string; sx: number; sy: number; dx0: number; dy0: number } | null>(null);
+  const onDragStart = (k: string) => (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    setSel(k as ElKey);
+    dragRef.current = k === "all"
+      ? { k, sx: e.clientX, sy: e.clientY, dx0: ox, dy0: oy }
+      : { k, sx: e.clientX, sy: e.clientY, dx0: els[k]?.dx || 0, dy0: els[k]?.dy || 0 };
+  };
+  const onDragMove = (e: React.PointerEvent) => {
+    const d = dragRef.current; if (!d) return;
+    const dx = r1(d.dx0 + (e.clientX - d.sx) / SCALE);
+    const dy = r1(d.dy0 + (e.clientY - d.sy) / SCALE);
+    if (d.k === "all") { setOx(dx); setOy(dy); } else setEl(d.k, { dx, dy });
+  };
+  const onDragEnd = () => { dragRef.current = null; };
+  // pointer props applied to each draggable preview element
+  const drag = (k: string) => ({ onPointerDown: onDragStart(k), onPointerMove: onDragMove, onPointerUp: onDragEnd });
+  const dragStyle = { touchAction: "none" as const, cursor: "move" as const };
   // Bold: per text element, or all text at once from the "Whole label" tab.
   const TEXT_KEYS = ["code", "name", "qty", "mrp", "extras"];
   const isBold = sel === "all" ? TEXT_KEYS.every((k) => els[k]?.b) : !!els[sel]?.b;
@@ -145,8 +166,8 @@ export default function LabelAligner({
         <div className="flex flex-wrap items-start gap-6">
           {/* live preview */}
           <div>
-            <div className="mb-1 text-xs font-bold uppercase text-[var(--muted)]">Print preview (actual size) — tap an attribute to select</div>
-            <div className="relative overflow-hidden rounded-[5px] border-2 border-[var(--border)] shadow-inner" style={{ width: px(w), height: px(h), background: pos === "bottom" ? "#c62128" : "#8cc63f" }}>
+            <div className="mb-1 text-xs font-bold uppercase text-[var(--muted)]">Print preview (actual size) — drag any attribute to move it</div>
+            <div className="relative overflow-hidden rounded-[5px] border-2 border-[var(--border)] shadow-inner" {...drag("all")} style={{ ...dragStyle, width: px(w), height: px(h), background: pos === "bottom" ? "#c62128" : "#8cc63f" }}>
               {/* pre-printed artwork — drawn to match the physical stock so the team
                   aligns against the real red frame + banner (or the green footer). */}
               {pos === "bottom" ? (
@@ -169,15 +190,15 @@ export default function LabelAligner({
                 </div>
               )}
               {/* QR */}
-              <div className="absolute cursor-pointer" onClick={() => setSel("qr")} style={{ left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
+              <div className="absolute cursor-pointer" {...drag("qr")} style={{ ...dragStyle, left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
               {/* text attributes — each independently placed */}
-              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" onClick={() => setSel("code")} style={{ left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
-              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
+              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" {...drag("code")} style={{ ...dragStyle, left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
+              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" {...drag("name")} style={{ ...dragStyle, left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("qty")} style={{ ...dragStyle, left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("mrp")} style={{ ...dragStyle, left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
               {/* attributes printed under MRP — move & resize as one "Attributes" element */}
-              <div className="absolute cursor-pointer font-mono leading-tight text-black" onClick={() => setSel("extras")}
-                style={{ left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
+              <div className="absolute cursor-pointer font-mono leading-tight text-black" {...drag("extras")}
+                style={{ ...dragStyle, left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
                 <div>(Incl. of All Taxes)</div>
                 <div>Lot No:</div>
                 <div>PKD: {todayStr}</div>
@@ -229,6 +250,21 @@ export default function LabelAligner({
                     </button>
                   ))}
                 </div>
+                {/* exact size in mm — snaps to the nearest font level */}
+                <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold normal-case text-[var(--muted)]">
+                  or exact mm
+                  <input type="number" min={1} max={12} step={0.1}
+                    value={FONT_MM[fontOf(sel)]}
+                    onChange={(e) => {
+                      const mm = Number(e.target.value);
+                      if (!Number.isFinite(mm) || mm <= 0) return;
+                      const f = ([1, 2, 3, 4, 5, 6, 7] as number[]).reduce((best, k) =>
+                        Math.abs(FONT_MM[k] - mm) < Math.abs(FONT_MM[best] - mm) ? k : best, 1);
+                      setEl(sel, { f });
+                    }}
+                    className="w-16 rounded-md border border-[var(--border)] px-2 py-1 text-center text-xs font-bold text-[var(--ink)]" />
+                  mm
+                </label>
               </div>
             )}
             {sel === "all" && (

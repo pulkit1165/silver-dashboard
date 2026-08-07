@@ -5,7 +5,7 @@ import { getPurchaseOrders, getVendors } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { aiAvailable } from "@/lib/erp/ai";
-import { getSql } from "@/lib/erp/db";
+import { getRawSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ export default async function PurchasePage({
   let oracleNote: string | null = null;
   if (tab === "oracle") {
     try {
-      const db = getSql();
+      const db = getRawSql();
       const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 18);
       oracleRows = await db`
         SELECT

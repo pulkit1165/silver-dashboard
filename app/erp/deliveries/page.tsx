@@ -2,7 +2,7 @@ import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import { getDeliveryOrders } from "@/lib/erp/queries";
-import { getSql } from "@/lib/erp/db";
+import { getRawSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 const TAG: Record<string, string> = { open: "n", packed: "n", verified: "g", dispatched: "g" };
@@ -32,7 +32,7 @@ export default async function DeliveryOrdersPage({
   let oracleNote: string | null = null;
   if (tab === "oracle") {
     try {
-      const db = getSql();
+      const db = getRawSql();
       const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 18);
       oracleRows = await db`
         SELECT

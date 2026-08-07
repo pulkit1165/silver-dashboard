@@ -79,18 +79,13 @@ const SYNC_TABLES = [
 const PAGE = 500, PAGE_DELAY = 400, TABLE_DELAY = 3000;
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+// Keyless rows get a content-hash key computed in SQL ("" sentinel) —
+// identical to lib/erp/oracle-sync.ts so backfill and daily sync upsert
+// the same keys instead of duplicating each other.
 function rowKey(row, def, snapDate, idx) {
   if (def.snapshot) return `SNAP_${snapDate}_${idx}`;
   if (def.keyCol && row[def.keyCol]) return String(row[def.keyCol]);
-  const parts = [];
-  for (const c of ["TRMID","ITEMID","ITEMCODE","PARTYID","SERIES","A_CODE","B_CODE"]) {
-    if (row[c]) parts.push(row[c]);
-  }
-  const d = row[def.dateCol ?? "TRDATE"] ?? row["TRDATE"];
-  if (d) parts.push(d);
-  // Always include global idx as tiebreaker to prevent duplicate-key errors
-  parts.push(String(idx));
-  return parts.length ? parts.join("|") : `IDX_${snapDate}_${idx}`;
+  return "";
 }
 
 function fiscalYear(row, def) {
@@ -166,11 +161,19 @@ for (const def of tables) {
     }));
 
     try {
+      // "RN" (ROWNUM pagination artifact) stripped from storage and hash.
       await db.unsafe(`
+        WITH src AS (
+          SELECT r.source_table,
+                 COALESCE(NULLIF(r.source_key, ''), 'H_' || md5((r.data - 'RN')::text)) AS source_key,
+                 r.fy::smallint AS fy,
+                 r.data - 'RN' AS data
+          FROM jsonb_to_recordset('${JSON.stringify(batch).replace(/'/g,"''")}'::jsonb)
+            AS r(source_table text, source_key text, fy int, data jsonb)
+        )
         INSERT INTO oracle_raw (source_table, source_key, fy, data)
-        SELECT r.source_table, r.source_key, r.fy::smallint, r.data::jsonb
-        FROM jsonb_to_recordset('${JSON.stringify(batch).replace(/'/g,"''")}'::jsonb)
-          AS r(source_table text, source_key text, fy int, data jsonb)
+        SELECT DISTINCT ON (source_table, source_key) source_table, source_key, fy, data
+        FROM src
         ON CONFLICT (source_table, source_key)
         DO UPDATE SET data = EXCLUDED.data, synced_at = NOW(),
                       fy   = COALESCE(EXCLUDED.fy, oracle_raw.fy)

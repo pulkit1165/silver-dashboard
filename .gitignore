@@ -42,3 +42,13 @@ next-env.d.ts
 
 # local ERP database
 /.data/
+
+# cloud-sync (iCloud/Dropbox/Drive) conflict copies — junk, never commit.
+# Matches "name 2.ts", "route 3.tsx", "backfill 9.mjs", etc.
+* [0-9].*
+* [0-9][0-9].*
+*(conflicted copy*
+* copy.*
+* copy [0-9].*
+.icloud
+*.icloud

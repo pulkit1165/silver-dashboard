@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { SYNC_TABLES, syncTable, logSync, finishLog } from "@/lib/erp/oracle-sync";
+import { SYNC_TABLES, syncTable, logSync, finishLog, pruneSnapshots } from "@/lib/erp/oracle-sync";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300; // 5 min — Vercel Pro allows this for cron routes
@@ -72,6 +72,12 @@ async function runSync(
     }
   }
 
+  // Retention is opt-in: snapshots are kept forever unless
+  // SNAPSHOT_RETENTION_DAYS is set (data may be required historically).
+  let snapshotsPruned = 0;
+  const retentionDays = Number(process.env.SNAPSHOT_RETENTION_DAYS ?? 0);
+  try { snapshotsPruned = await pruneSnapshots(retentionDays); } catch { /* non-fatal */ }
+
   const errors = results.filter(r => r.error);
   const durationMs = Date.now() - started;
 
@@ -84,6 +90,7 @@ async function runSync(
     ok: errors.length === 0,
     mode, fromDate, toDate,
     totalUpserted,
+    snapshotsPruned,
     durationMs,
     results,
   });

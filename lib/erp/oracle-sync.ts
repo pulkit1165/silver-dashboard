@@ -1,5 +1,5 @@
 import "server-only";
-import { getSql } from "./db";
+import { getRawSql } from "./db";
 
 // ── Oracle table definitions ────────────────────────────────────────────────
 // keyCol  : column that uniquely identifies a row (used as upsert key).
@@ -59,16 +59,14 @@ const TABLE_DELAY = 2000;  // ms between tables
 
 type Row = Record<string, string | null>;
 
+// Keyless rows get a content-hash key computed in SQL ("" sentinel here) so
+// re-syncs are idempotent regardless of row order or pagination. Caveat: two
+// Oracle rows with byte-identical content collapse into one — all synced views
+// carry line identifiers (TRDETID/SRNO/TRSNO), so this doesn't occur in practice.
 function rowKey(row: Row, def: TableDef, snapDate: string, idx: number): string {
   if (def.snapshot) return `SNAP_${snapDate}_${idx}`;
   if (def.keyCol && row[def.keyCol]) return String(row[def.keyCol]);
-  const parts: string[] = [];
-  for (const c of ["TRMID", "ITEMID", "ITEMCODE", "PARTYID", "SERIES", "A_CODE", "B_CODE"]) {
-    if (row[c]) parts.push(row[c]!);
-  }
-  const d = row[def.dateCol ?? "TRDATE"] ?? row["TRDATE"];
-  if (d) parts.push(d);
-  return parts.length ? parts.join("|") : `IDX_${snapDate}_${idx}`;
+  return "";
 }
 
 function fiscalYear(row: Row, def: TableDef): number | null {
@@ -123,7 +121,7 @@ export async function syncTable(
   def: TableDef,
   opts: { fromDate?: string; toDate?: string } = {}
 ): Promise<SyncResult> {
-  const db = getSql();
+  const db = getRawSql();
   const snapDate = opts.toDate ?? new Date().toISOString().slice(0, 10);
   let upserted = 0, pages = 0, offset = 0;
 
@@ -154,11 +152,21 @@ export async function syncTable(
         data:         row,
       }));
 
+      // "RN" is the ROWNUM pagination artifact — stripped from storage and hash.
+      // DISTINCT ON guards against two identical rows in one batch (ON CONFLICT
+      // cannot update the same row twice within one INSERT).
       await db`
+        WITH src AS (
+          SELECT r.source_table,
+                 COALESCE(NULLIF(r.source_key, ''), 'H_' || md5((r.data - 'RN')::text)) AS source_key,
+                 r.fy::smallint AS fy,
+                 r.data - 'RN' AS data
+          FROM jsonb_to_recordset(${JSON.stringify(batch)}::jsonb)
+            AS r(source_table text, source_key text, fy int, data jsonb)
+        )
         INSERT INTO oracle_raw (source_table, source_key, fy, data)
-        SELECT r.source_table, r.source_key, r.fy::smallint, r.data::jsonb
-        FROM jsonb_to_recordset(${JSON.stringify(batch)}::jsonb)
-          AS r(source_table text, source_key text, fy int, data jsonb)
+        SELECT DISTINCT ON (source_table, source_key) source_table, source_key, fy, data
+        FROM src
         ON CONFLICT (source_table, source_key)
         DO UPDATE SET data = EXCLUDED.data, synced_at = NOW(),
                       fy   = COALESCE(EXCLUDED.fy, oracle_raw.fy)
@@ -176,6 +184,27 @@ export async function syncTable(
   return { table: def.name, label: def.label, upserted, pages };
 }
 
+// ── Retention ────────────────────────────────────────────────────────────────
+
+/**
+ * Snapshot tables (pend bills, pending SOs, DO status, bank ledger) insert a
+ * full copy every sync (~2.7k rows/day). Deleting old copies is OPT-IN:
+ * set SNAPSHOT_RETENTION_DAYS to enable — unset/0 keeps every snapshot
+ * forever (owner's call: historical snapshots may be needed).
+ * Returns number of rows deleted.
+ */
+export async function pruneSnapshots(days: number): Promise<number> {
+  if (!days || days <= 0) return 0;
+  const db = getRawSql();
+  const rows = await db`
+    DELETE FROM oracle_raw
+    WHERE source_key LIKE 'SNAP_%'
+      AND synced_at < NOW() - make_interval(days => ${days})
+    RETURNING id
+  `;
+  return rows.length;
+}
+
 // ── Log helpers ──────────────────────────────────────────────────────────────
 
 export async function logSync(
@@ -184,7 +213,7 @@ export async function logSync(
   fromDate: string | null,
   toDate: string | null
 ): Promise<number> {
-  const db = getSql();
+  const db = getRawSql();
   const [row] = await db<[{ id: number }]>`
     INSERT INTO oracle_sync_log (mode, source_table, from_date, to_date)
     VALUES (${mode}, ${table}, ${fromDate}, ${toDate})
@@ -199,7 +228,7 @@ export async function finishLog(
   durationMs: number,
   error?: string
 ): Promise<void> {
-  const db = getSql();
+  const db = getRawSql();
   await db`
     UPDATE oracle_sync_log
     SET rows_upserted = ${rowsUpserted},

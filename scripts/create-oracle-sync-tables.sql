@@ -13,7 +13,8 @@ CREATE TABLE IF NOT EXISTS oracle_raw (
 
 CREATE INDEX IF NOT EXISTS oracle_raw_table_idx  ON oracle_raw(source_table);
 CREATE INDEX IF NOT EXISTS oracle_raw_fy_idx     ON oracle_raw(source_table, fy);
-CREATE INDEX IF NOT EXISTS oracle_raw_data_gin   ON oracle_raw USING gin(data jsonb_path_ops);
+-- No GIN index on data: queries extract with ->> (never @>), so it was 53 MB
+-- of never-scanned weight that also slowed every upsert. Dropped 2026-07-29.
 
 CREATE TABLE IF NOT EXISTS oracle_sync_log (
   id           SERIAL PRIMARY KEY,
