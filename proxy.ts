@@ -19,9 +19,11 @@ export async function proxy(req: NextRequest) {
   // Self-hosted print agent — machines authenticate with x-agent-token (validated
   // in the route), not a login session, so these must bypass the session gate.
   const isPrintAgent = pathname.startsWith("/api/erp/print/agent/");
+  // Public agent installer download (no secrets — the token is entered separately).
+  const isAgentDownload = pathname.startsWith("/agent/");
 
   if (!session) {
-    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook || isPrintAgent) return NextResponse.next();
+    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook || isPrintAgent || isAgentDownload) return NextResponse.next();
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }
