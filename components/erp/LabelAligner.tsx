@@ -139,9 +139,14 @@ export default function LabelAligner({
     setSaving(true);
     try {
       const body = { sizeId, offsetX: ox, offsetY: oy, qrMM: 0, elements: els };
-      await fetch("/api/erp/labels/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch("/api/erp/labels/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const d = await r.json().catch(() => ({}));
+      // Only treat it as saved if the server actually persisted it — otherwise the
+      // setting would appear to work this session but vanish on reload (per-SKU redo).
+      if (!r.ok || !d.ok) { alert("Could not save this alignment — it was NOT stored. " + (d.error || `Server error ${r.status}.`) + "\nYou may not have permission to edit labels."); return; }
       onSaved({ offsetX: ox, offsetY: oy, qrMM: 0, elements: els });
-    } finally { setSaving(false); }
+    } catch { alert("Could not save this alignment — network error. It was NOT stored."); }
+    finally { setSaving(false); }
   }
 
   const NudgeBtn = ({ label, on }: { label: string; on: () => void }) => (

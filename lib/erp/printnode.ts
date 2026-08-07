@@ -161,6 +161,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   };
   const pad = Math.round(2 * dp);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.6 * dp);
+  // Effective line height for an element, honouring its override magnification
+  // (equals lh(def) when there's no size override, so untweaked labels are unchanged).
+  const elh = (k: string, def: string) => { const { font, mag } = emFont(k, def); return (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp); };
 
   // ── White printable zone ─────────────────────────────────────────────────
   // The pre-printed address sits on one end (~30% of the label); we print into
@@ -346,6 +349,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let exF = exF0;
   { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
 
+  // If the aligner forced a NAME size (exact mm or a size level), re-wrap the FULL
+  // name at that exact size so long names flow onto more lines instead of being
+  // truncated — the operator never has to add per-SKU line breaks just to fit.
+  if (!useManual && (el.name?.mm || el.name?.f)) {
+    const nf = emFont("name", nameF);
+    const availW = Math.max(1, Math.floor(textW / nf.mag)); // magnified glyphs are wider
+    const rew = wrapAll(esc(rawName), nf.font, availW);
+    if (rew.length) nameLines = rew.slice(0, 6);
+  }
+
   // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
   // the full code wouldn't fit the width. Never truncated.
@@ -353,12 +366,12 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let codeF = fillBig ? (heroSmall ? String(Math.max(2, Number(nameF) - 1)) : nameF) : skuF; // big green: code as big as the name
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
-  const baseH = lh(codeF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
+  const baseH = elh("code", codeF) + nameLines.length * elh("name", nameF) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
-  while (nEx < allExtras.length && baseH + (nEx + 1) * lh(exF) <= fitRoom) nEx++;
+  while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
 
-  const contentH = baseH + extras.length * lh(exF);
+  const contentH = baseH + extras.length * elh("extras", exF);
   // On the BIG label (95×70) spread the lines DOWN the whole zone so the content
   // fills the sticker like the reference label, instead of a compact block at the
   // top. Smaller labels stay compact & centred against the QR.
@@ -397,9 +410,6 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const tdy = (k: string) => emy(k); // per-element vertical nudge from the aligner
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
-  // Effective line height for an element, accounting for its override magnification
-  // (equals lh(def) when there's no size override, so untweaked labels are unchanged).
-  const elh = (k: string, def: string) => { const { font, mag } = emFont(k, def); return (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp); };
   { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
   cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
   { const { font, mag } = emFont("name", nameF); let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp) + spread; } }
