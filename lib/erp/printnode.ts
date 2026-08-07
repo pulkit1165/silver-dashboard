@@ -154,7 +154,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // white area. The 50×30 has extra room below → give it a taller zone (bigger QR).
   const red = w === 85 && h === 55;
   const tiny = w === 50 && h === 30;
-  const heroSmall = w === 70 && h === 40; // 70×40 gets the big-name "hero" fill (like the big green)
+  // All the small/medium greens get the big-name "hero" fill (like the big green):
+  // 70×40, 65×35 and the 50×30 (2-up). QR on the right replaces the old 1D barcode.
+  const heroSmall = (w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30);
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
@@ -177,7 +179,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // The big GREEN (95×70) and the 70×40 get the QR-right / text-left "hero" fill
   // layout (big bold name); the red keeps its QR-left layout.
   const fillBig = !red && ((w === 95 && h === 70) || heroSmall);
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? 20 : bigLbl ? 32 : 28) * dp));
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? Math.min(20, h * 0.5) : bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   const modDots = qrSzMM > 0
