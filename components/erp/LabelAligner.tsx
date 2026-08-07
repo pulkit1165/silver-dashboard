@@ -51,6 +51,8 @@ export default function LabelAligner({
   const [els, setEls] = useState<Record<string, ElOverride>>(initial.elements ? JSON.parse(JSON.stringify(initial.elements)) : {});
   const [sel, setSel] = useState<ElKey>("qr");
   const [saving, setSaving] = useState(false);
+  // free-text draft for the "exact mm" box so typing isn't snapped back mid-keystroke
+  const [mmDraft, setMmDraft] = useState<{ k: string; v: string } | null>(null);
 
   const SCALE = Math.max(4, Math.min(11, Math.floor(560 / w))); // px per mm
   const px = (mm: number) => mm * SCALE;
@@ -64,6 +66,7 @@ export default function LabelAligner({
   const dragRef = useRef<{ k: string; sx: number; sy: number; dx0: number; dy0: number } | null>(null);
   const onDragStart = (k: string) => (e: React.PointerEvent) => {
     e.preventDefault();
+    e.stopPropagation(); // don't let a child drag bubble to the "all" background handler
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setSel(k as ElKey);
     dragRef.current = k === "all"
@@ -254,9 +257,11 @@ export default function LabelAligner({
                 <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold normal-case text-[var(--muted)]">
                   or exact mm
                   <input type="number" min={1} max={12} step={0.1}
-                    value={FONT_MM[fontOf(sel)]}
+                    value={mmDraft && mmDraft.k === sel ? mmDraft.v : String(FONT_MM[fontOf(sel)])}
                     onChange={(e) => {
-                      const mm = Number(e.target.value);
+                      const v = e.target.value;
+                      setMmDraft({ k: sel, v });
+                      const mm = Number(v);
                       if (!Number.isFinite(mm) || mm <= 0) return;
                       const f = ([1, 2, 3, 4, 5, 6, 7] as number[]).reduce((best, k) =>
                         Math.abs(FONT_MM[k] - mm) < Math.abs(FONT_MM[best] - mm) ? k : best, 1);
