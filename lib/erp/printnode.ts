@@ -107,7 +107,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 // `elements` lets the operator position/size EACH attribute independently (from
 // the visual aligner): key = qr|code|name|qty|mrp, dx/dy = mm nudge from the auto
 // position, f = font 1–5 (text), sz = QR size in mm. Absent/0 = keep auto.
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
 export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride> };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
@@ -137,7 +137,23 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Maps an override font level to a TSPL font + magnification. Levels 1–5 are the
   // native fonts; 6 = XXL (biggest font at 2×), 7 = 3× — TSPL has no font >5, so
   // we scale via the TEXT x/y-multiplier instead.
+  // Printed height (mm) of a base font at 1× on this head. Magnification (1–3×)
+  // multiplies it, so {font 1–5}×{mag 1–3} gives a fine ladder of real sizes.
+  const baseMM = (bf: number) => (F_HEIGHT[String(bf)] || 24) / dp;
   const emFont = (k: string, def: string): { font: string; mag: number } => {
+    // Exact mm target from the aligner wins: pick the (font, magnification) whose
+    // printed height is closest to the requested mm — real continuous-ish sizing.
+    const mm = el[k]?.mm;
+    if (mm && mm > 0) {
+      let best = { font: def, mag: 1, err: Infinity };
+      for (const bf of [1, 2, 3, 4, 5]) {
+        for (let mag = 1; mag <= 3; mag++) {
+          const err = Math.abs(baseMM(bf) * mag - mm);
+          if (err < best.err) best = { font: String(bf), mag, err };
+        }
+      }
+      return { font: best.font, mag: best.mag };
+    }
     const f = el[k]?.f;
     if (f && f >= 1 && f <= 5) return { font: String(f), mag: 1 };
     if (f && f >= 6) return { font: "5", mag: Math.min(3, f - 4) };
@@ -381,16 +397,19 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const tdy = (k: string) => emy(k); // per-element vertical nudge from the aligner
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
+  // Effective line height for an element, accounting for its override magnification
+  // (equals lh(def) when there's no size override, so untweaked labels are unchanged).
+  const elh = (k: string, def: string) => { const { font, mag } = emFont(k, def); return (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp); };
   { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
-  cy += lh(codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
-  { const { font, mag } = emFont("name", nameF); let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += lh(font) * mag + spread; } }
-  cy += nameLines.length * (lh(nameF) + spread);
+  cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
+  { const { font, mag } = emFont("name", nameF); let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp) + spread; } }
+  cy += nameLines.length * (elh("name", nameF) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
   { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + tdx("qty"), cy + tdy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
-  cy += lh(qtyF) + spread;
+  cy += elh("qty", qtyF) + spread;
   { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + tdx("mrp"), cy + tdy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
-  cy += lh(qtyF) + spread;
+  cy += elh("mrp", qtyF) + spread;
   // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
   // as one "extras" element from the aligner.
   { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }

@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
 export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
@@ -112,7 +112,9 @@ export default function LabelAligner({
   const codeDef = hero ? (heroSmall ? Math.max(2, nameDef - 1) : nameDef) : nameDef;
   const defFont: Record<string, number> = { code: codeDef, name: nameDef, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: big ? 3 : 2 };
   const fontOf = (k: string) => (els[k]?.f && els[k]!.f! >= 1 ? els[k]!.f! : defFont[k]);
-  const lhmm = (k: string) => FONT_MM[fontOf(k)] + 0.8;
+  // Effective text height (mm): an exact mm override wins, else the size level's mm.
+  const mmOf = (k: string) => (els[k]?.mm && els[k]!.mm! > 0 ? els[k]!.mm! : FONT_MM[fontOf(k)]);
+  const lhmm = (k: string) => mmOf(k) + 0.8;
 
   const autoQr = hero ? Math.min(heroSmall ? Math.min(20, h * 0.5) : 32, zoneH) : Math.max(8, Math.min(zoneH - 3, w * 0.5, 28));
   const qrSize = els.qr?.sz && els.qr.sz > 0 ? els.qr.sz : autoQr;
@@ -146,7 +148,10 @@ export default function LabelAligner({
     <button onClick={on} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--border)] bg-white text-lg font-bold hover:bg-[var(--surface-2)] active:bg-[var(--accent-bg)]">{label}</button>
   );
 
-  const curFont = sel !== "all" && sel !== "qr" ? fontOf(sel) : 0;
+  // Highlight the size button nearest the element's current mm (buttons set exact mm).
+  const curFont = sel !== "all" && sel !== "qr"
+    ? ([1, 2, 3, 4, 5, 6, 7] as number[]).reduce((b, k) => Math.abs(FONT_MM[k] - mmOf(sel)) < Math.abs(FONT_MM[b] - mmOf(sel)) ? k : b, 1)
+    : 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
@@ -195,13 +200,13 @@ export default function LabelAligner({
               {/* QR */}
               <div className="absolute cursor-pointer" {...drag("qr")} style={{ ...dragStyle, left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
               {/* text attributes — each independently placed */}
-              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" {...drag("code")} style={{ ...dragStyle, left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
-              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" {...drag("name")} style={{ ...dragStyle, left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("qty")} style={{ ...dragStyle, left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("mrp")} style={{ ...dragStyle, left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
+              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" {...drag("code")} style={{ ...dragStyle, left: px(codeB.left), top: px(codeB.top), fontSize: px(mmOf("code")), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
+              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" {...drag("name")} style={{ ...dragStyle, left: px(nameB.left), top: px(nameB.top), fontSize: px(mmOf("name")), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("qty")} style={{ ...dragStyle, left: px(qtyB.left), top: px(qtyB.top), fontSize: px(mmOf("qty")), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("mrp")} style={{ ...dragStyle, left: px(mrpB.left), top: px(mrpB.top), fontSize: px(mmOf("mrp")), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
               {/* attributes printed under MRP — move & resize as one "Attributes" element */}
               <div className="absolute cursor-pointer font-mono leading-tight text-black" {...drag("extras")}
-                style={{ ...dragStyle, left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(FONT_MM[fontOf("extras")]), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
+                style={{ ...dragStyle, left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(mmOf("extras")), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
                 <div>(Incl. of All Taxes)</div>
                 <div>Lot No:</div>
                 <div>PKD: {todayStr}</div>
@@ -244,28 +249,26 @@ export default function LabelAligner({
             )}
             {sel !== "qr" && sel !== "all" && (
               <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
-                Text size {els[sel]?.f ? "" : "(auto)"}
+                Text size {els[sel]?.f || els[sel]?.mm ? "" : "(auto)"}
                 <div className="flex gap-1">
                   {[1, 2, 3, 4, 5, 6].map((f) => (
-                    <button key={f} onClick={() => setEl(sel, { f })}
+                    <button key={f} onClick={() => setEl(sel, { f, mm: FONT_MM[f] })}
                       className={`flex-1 rounded-md border py-1.5 text-xs font-bold ${curFont === f ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
                       {["", "XS", "S", "M", "L", "XL", "XXL"][f]}
                     </button>
                   ))}
                 </div>
-                {/* exact size in mm — snaps to the nearest font level */}
+                {/* exact size in mm — the printer picks the closest achievable height */}
                 <label className="mt-2 flex items-center gap-2 text-[11px] font-semibold normal-case text-[var(--muted)]">
                   or exact mm
-                  <input type="number" min={1} max={12} step={0.1}
-                    value={mmDraft && mmDraft.k === sel ? mmDraft.v : String(FONT_MM[fontOf(sel)])}
+                  <input type="number" min={1} max={14} step={0.1}
+                    value={mmDraft && mmDraft.k === sel ? mmDraft.v : String(mmOf(sel))}
                     onChange={(e) => {
                       const v = e.target.value;
                       setMmDraft({ k: sel, v });
                       const mm = Number(v);
                       if (!Number.isFinite(mm) || mm <= 0) return;
-                      const f = ([1, 2, 3, 4, 5, 6, 7] as number[]).reduce((best, k) =>
-                        Math.abs(FONT_MM[k] - mm) < Math.abs(FONT_MM[best] - mm) ? k : best, 1);
-                      setEl(sel, { f });
+                      setEl(sel, { mm: Math.round(mm * 10) / 10 });
                     }}
                     className="w-16 rounded-md border border-[var(--border)] px-2 py-1 text-center text-xs font-bold text-[var(--ink)]" />
                   mm

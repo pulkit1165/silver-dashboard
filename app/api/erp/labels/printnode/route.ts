@@ -45,7 +45,7 @@ export async function POST(req: Request) {
     ...(Number.isFinite(Number(lay.offsetXmm)) ? { offsetXmm: Number(lay.offsetXmm) } : {}),
     ...(Number.isFinite(Number(lay.offsetYmm)) ? { offsetYmm: Number(lay.offsetYmm) } : {}),
     ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
-    ...(lay.elements && typeof lay.elements === "object" ? { elements: lay.elements as Record<string, { dx?: number; dy?: number; f?: number; sz?: number }> } : {}),
+    ...(lay.elements && typeof lay.elements === "object" ? { elements: lay.elements as Record<string, { dx?: number; dy?: number; f?: number; sz?: number; mm?: number; b?: number }> } : {}),
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
   };
