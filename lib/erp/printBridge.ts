@@ -181,6 +181,19 @@ export async function retryJob(id: number): Promise<void> {
   await getSql()`UPDATE print_jobs SET status='queued', error=null, claimed_at=null, done_at=null
     WHERE id=${id} AND status IN ('failed','printing')`;
 }
+// App → cancel a job before it prints (only ones not yet done).
+export async function cancelJob(id: number): Promise<void> {
+  await ensure();
+  await getSql()`UPDATE print_jobs SET status='canceled', done_at=now()
+    WHERE id=${id} AND status IN ('queued','printing','failed')`;
+}
+// App → cancel ALL pending jobs (e.g. a wrong batch) before they print.
+export async function cancelAllQueued(): Promise<number> {
+  await ensure();
+  const rows = (await getSql()`UPDATE print_jobs SET status='canceled', done_at=now()
+    WHERE status IN ('queued','printing') RETURNING id`) as unknown as { id: number }[];
+  return rows.length;
+}
 
 // Requeue jobs stuck in 'printing' longer than `secs` (agent died mid-print).
 export async function requeueStale(secs = 120): Promise<number> {

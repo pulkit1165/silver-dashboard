@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { listRecentJobs, listBridgePrinters, queueCounts, retryJob } from "@/lib/erp/printBridge";
+import { listRecentJobs, listBridgePrinters, queueCounts, retryJob, cancelJob, cancelAllQueued } from "@/lib/erp/printBridge";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +19,11 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   if (!canWrite(user.role, "labels")) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   const b = await req.json().catch(() => ({}));
+  const action = String(b.action || "retry");
+  if (action === "cancel-all") { const n = await cancelAllQueued(); return NextResponse.json({ ok: true, canceled: n }); }
   const id = Number(b.id);
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
-  await retryJob(id);
+  if (action === "cancel") await cancelJob(id);
+  else await retryJob(id);
   return NextResponse.json({ ok: true });
 }
