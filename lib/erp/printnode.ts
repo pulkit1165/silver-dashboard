@@ -127,7 +127,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // 🎯 Align tool can no longer shift anything. The ONLY way to control how a name
   // reads is the Barcode Master's line breaks (Line 1/2/3); everything else auto-fits
   // (breaks to more lines / steps the font down) so the FULL name always prints.
-  const lockedSize = true;
+  const lockedSize = false; // aligner nudges (offsets/per-element) are honoured again, on top of each size's layout
   const ox = lockedSize ? 0 : Math.round((opts.offsetXmm ?? 0) * dp);
   const oy = lockedSize ? 0 : Math.round((opts.offsetYmm ?? 0) * dp);
   // Per-element overrides (from the visual aligner). dx/dy in mm → dots; f = font.
@@ -191,14 +191,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // the reference and never squeezes the name. Other sizes: QR on the left, centred.
   // The big green uses a FIXED reference layout, so it ignores the saved aligner
   // nudges (which were pushing the text off the left edge); other sizes honour them.
-  const qrX = fillBig
+  const qrX = (fillBig
     ? Wd - qrPx - Math.round(4 * dp)
-    : (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp)) + ox + emx("qr");
+    : (opts.leftMM != null ? Math.max(0, Math.round(opts.leftMM * dp)) : Math.round(5 * dp))) + ox + emx("qr");
   let qrY = fillBig
     ? bottom - qrPx
     : top + downShift + Math.max(0, Math.round(((zoneH - downShift) - qrPx) / 2));
-  qrY = Math.max(top, Math.min(bottom - qrPx, qrY));
-  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + (fillBig ? 0 : oy + emy("qr")))); // vertical nudge (not on the big green)
+  if (!fillBig) qrY = Math.max(top, Math.min(bottom - qrPx, qrY));
+  qrY = Math.max(0, Math.min(Hd - qrPx, qrY + oy + emy("qr"))); // aligner vertical nudge, clamped to the label
 
   // Text column. Big label: LEFT-aligned, full width up to the QR (bottom-right), so
   // the whole name fits and reads left-aligned. Other sizes: right of the left QR.
@@ -209,7 +209,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrRnow = Math.min(Wd, qrLnow + qrPx);
   let textX: number, textW: number;
   if (fillBig) {
-    textX = Math.round((heroSmall ? 4 : 1.5) * dp); // 70×40 needs more left margin so text isn't clipped off the edge
+    textX = Math.round((heroSmall ? 4 : 1.5) * dp) + ox; // hero left margin + aligner nudge
     // name/text spans left→ up to the QR's left edge (or full width above the QR)
     textW = Math.max(6 * dp, qrLnow - textX - Math.round(3 * dp));
   } else {
@@ -377,8 +377,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   };
   // On the big green the text is a FIXED left-aligned block, so ignore the saved
   // per-element X/Y nudges (they were shoving it back to the middle); other sizes keep them.
-  const tdx = (k: string) => (fillBig ? 0 : emx(k));
-  const tdy = (k: string) => (fillBig ? 0 : emy(k));
+  const tdx = (k: string) => emx(k); // per-element horizontal nudge from the aligner
+  const tdy = (k: string) => emy(k); // per-element vertical nudge from the aligner
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
   { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }

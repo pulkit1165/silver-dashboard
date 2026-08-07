@@ -75,22 +75,29 @@ export default function LabelAligner({
   };
 
   // ── Auto layout mirrors buildTSPL so the preview matches the print ──────────
-  const zoneTop = h * (pos === "bottom" ? 0.36 : 0.08);
-  const zoneBot = h * (pos === "bottom" ? 0.92 : 0.62);
+  // The green sizes (95×70, 70×40, 65×35, 50×30) use the "hero" fill: big bold name
+  // on the LEFT, QR bottom-RIGHT. The red keeps QR-left. Custom = compact QR-left.
+  const bigGreen = w === 95 && h === 70;
+  const heroSmall = pos === "top" && ((w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30));
+  const hero = bigGreen || heroSmall;
+  const zoneTop = h * (pos === "bottom" ? 0.36 : heroSmall ? 0.05 : bigGreen ? 0.07 : 0.08);
+  const zoneBot = h * (pos === "bottom" ? 0.92 : heroSmall ? 0.72 : bigGreen ? 0.63 : 0.62);
   const zoneH = zoneBot - zoneTop;
   const big = h >= 54, med = h >= 38;
-  const defFont: Record<string, number> = { code: big ? 5 : med ? 4 : 3, name: big ? 5 : med ? 4 : 3, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: big ? 3 : 2 };
+  const nameDef = big ? 5 : med ? 4 : 3;
+  const codeDef = hero ? (heroSmall ? Math.max(2, nameDef - 1) : nameDef) : nameDef;
+  const defFont: Record<string, number> = { code: codeDef, name: nameDef, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: big ? 3 : 2 };
   const fontOf = (k: string) => (els[k]?.f && els[k]!.f! >= 1 ? els[k]!.f! : defFont[k]);
   const lhmm = (k: string) => FONT_MM[fontOf(k)] + 0.8;
 
-  const autoQr = Math.max(8, Math.min(zoneH - 3, w * 0.5, 28));
+  const autoQr = hero ? Math.min(heroSmall ? Math.min(20, h * 0.5) : 32, zoneH) : Math.max(8, Math.min(zoneH - 3, w * 0.5, 28));
   const qrSize = els.qr?.sz && els.qr.sz > 0 ? els.qr.sz : autoQr;
-  const qrXa = 5 + ox;
-  const qrYa = zoneTop + Math.max(0, (zoneH - qrSize) / 2) + oy;
-  const textXa = qrXa + qrSize + 2;
+  const qrXa = (hero ? w - qrSize - 4 : 5) + ox;
+  const qrYa = (hero ? zoneBot - qrSize : zoneTop + Math.max(0, (zoneH - qrSize) / 2)) + oy;
+  const textXa = (hero ? (heroSmall ? 4 : 1.5) : qrXa + qrSize + 2 - ox) + ox;
 
-  // Stacked auto y-positions for the text block (base cy advances by auto height).
-  let ty = qrYa;
+  // Stacked auto y-positions for the text block (starts at the top on hero labels).
+  let ty = hero ? zoneTop + 1 : qrYa;
   const codeYa = ty; ty += lhmm("code");
   const nameYa = ty; ty += lhmm("name") * 1.7; // name ~ up to 2 lines
   const qtyYa = ty; ty += lhmm("qty");
@@ -165,7 +172,7 @@ export default function LabelAligner({
               <div className="absolute cursor-pointer" onClick={() => setSel("qr")} style={{ left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
               {/* text attributes — each independently placed */}
               <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" onClick={() => setSel("code")} style={{ left: px(codeB.left), top: px(codeB.top), fontSize: px(FONT_MM[fontOf("code")]), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
-              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), fontWeight: els.name?.b ? 900 : undefined, maxWidth: px(w - nameB.left - 1), ...selStyle("name") }}>{sample.name}</div>
+              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" onClick={() => setSel("name")} style={{ left: px(nameB.left), top: px(nameB.top), fontSize: px(FONT_MM[fontOf("name")]), fontWeight: els.name?.b ? 900 : undefined, maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("qty")} style={{ left: px(qtyB.left), top: px(qtyB.top), fontSize: px(FONT_MM[fontOf("qty")]), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
               <div className="absolute cursor-pointer font-mono leading-none text-black" onClick={() => setSel("mrp")} style={{ left: px(mrpB.left), top: px(mrpB.top), fontSize: px(FONT_MM[fontOf("mrp")]), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
               {/* attributes printed under MRP — move & resize as one "Attributes" element */}

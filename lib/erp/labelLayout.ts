@@ -73,3 +73,10 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
     ON CONFLICT (size_id) DO UPDATE SET offset_x=${ox}, offset_y=${oy}, qr_mm=${qr}, elements=${elsJson}::jsonb,
       updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
 }
+
+// Wipe all saved alignments so every size falls back to its built-in (current) layout.
+export async function clearAllLayouts(): Promise<number> {
+  await ensure();
+  const rows = (await getSql()`DELETE FROM label_layouts RETURNING size_id`) as unknown as { size_id: string }[];
+  return rows.length;
+}

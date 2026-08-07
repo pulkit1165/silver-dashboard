@@ -515,9 +515,15 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           </label>
         )}
         {roll && (
-          <a href="/erp/masters/label" title="Control how each part's name breaks into lines"
+          <button onClick={() => setAlignOpen(true)} title="Fine-tune this size's alignment (nudge / resize), on top of the current layout"
             className="rounded-lg border border-[var(--accent)] px-3 py-1.5 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]">
-            🏷️ Label text (line breaks)
+            🎯 Align{(layouts[sizeId]?.offsetX || layouts[sizeId]?.offsetY || layouts[sizeId]?.qrMM || (layouts[sizeId]?.elements && Object.keys(layouts[sizeId].elements!).length)) ? " ✓" : ""}
+          </button>
+        )}
+        {roll && (
+          <a href="/erp/masters/label" title="Control how each part's name breaks into lines"
+            className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">
+            🏷️ Label text
           </a>
         )}
         {(roll || a4) && sizeId === "custom" && (
