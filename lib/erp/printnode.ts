@@ -325,10 +325,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let exF = exF0;
   { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
 
-  // CODE line: on the big label keep it prominent (~6mm, font 5) regardless of the
-  // name font; shrink only if the full code wouldn't fit the width. Never truncated.
+  // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
+  // font-step SMALLER than the name (name always reads bigger). Shrink further only if
+  // the full code wouldn't fit the width. Never truncated.
   const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
-  let codeF = bigLbl ? "5" : skuF;
+  let codeF = bigLbl ? String(Math.max(2, Number(nameF) - 1)) : skuF;
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
   const baseH = lh(codeF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
