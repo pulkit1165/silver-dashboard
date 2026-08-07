@@ -5,7 +5,8 @@
 $ErrorActionPreference = "Continue"
 $BaseUrl = "https://silver-dashboard-eight.vercel.app"
 $Filter  = "TSC"
-$Dir     = Join-Path $env:LOCALAPPDATA "SilverPrintAgent"
+# config.json + agent.log live right next to this script (the install folder).
+$Dir     = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { Join-Path $env:LOCALAPPDATA "SilverPrintAgent" }
 $LogFile = Join-Path $Dir "agent.log"
 
 function Log([string]$m) {
