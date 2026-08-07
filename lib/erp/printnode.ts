@@ -207,7 +207,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrRnow = Math.min(Wd, qrLnow + qrPx);
   let textX: number, textW: number;
   if (fillBig) {
-    textX = Math.round(1.5 * dp); // flush to the left edge
+    textX = Math.round((heroSmall ? 4 : 1.5) * dp); // 70×40 needs more left margin so text isn't clipped off the edge
     // name/text spans left→ up to the QR's left edge (or full width above the QR)
     textW = Math.max(6 * dp, qrLnow - textX - Math.round(3 * dp));
   } else {
@@ -297,7 +297,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // 70×40 is short — force fewer attribute lines so the name can stay big (the gate
     // still fills in extras below if there's room).
     const KEEP = heroSmall ? 1 : 3;
-    const codeRes = (nf: string) => lh(String(Math.max(2, Number(nf) - 1))); // code = name−1
+    const codeRes = (nf: string) => heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf); // 70×40 code=name−1; big green code=name
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) { // prefer: name fully shown + the key attributes fit
       const wr = wrapAll(esc(rawName), t.f[1], textW);
@@ -332,7 +332,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
   // the full code wouldn't fit the width. Never truncated.
   const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
-  let codeF = fillBig ? String(Math.max(2, Number(nameF) - 1)) : skuF;
+  let codeF = fillBig ? (heroSmall ? String(Math.max(2, Number(nameF) - 1)) : nameF) : skuF; // big green: code as big as the name
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
   const baseH = lh(codeF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
@@ -345,7 +345,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // fills the sticker like the reference label, instead of a compact block at the
   // top. Smaller labels stay compact & centred against the QR.
   const totalLines = 1 + nameLines.length + 2 + extras.length;
-  const spread = fillBig ? Math.max(0, Math.min(Math.round(5 * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
+  const spread = fillBig ? Math.max(0, Math.min(Math.round((heroSmall ? 5 : 9) * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
   let cy;
   if (fillBig) {
     cy = top;
@@ -366,7 +366,12 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // font stay heavy and readable; other sizes bold only where the aligner set it.
   const emit = (k: string, x: number, y: number, font: string, mag: number, text: string) => {
     rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
-    if (fillBig || el[k]?.b) rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
+    if (fillBig || el[k]?.b) {
+      // Bold = overstrike. On the hero fill labels we overstrike in BOTH directions
+      // (+1 x and +1 y) for a heavier, clearly-bold look.
+      rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
+      if (fillBig) rows.push(`TEXT ${x},${y + 1},"${font}",0,${mag},${mag},"${text}"`);
+    }
   };
   // On the big green the text is a FIXED left-aligned block, so ignore the saved
   // per-element X/Y nudges (they were shoving it back to the middle); other sizes keep them.
