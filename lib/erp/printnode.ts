@@ -154,14 +154,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // white area. The 50×30 has extra room below → give it a taller zone (bigger QR).
   const red = w === 85 && h === 55;
   const tiny = w === 50 && h === 30;
+  const heroSmall = w === 70 && h === 40; // 70×40 gets the big-name "hero" fill (like the big green)
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (red ? 0.30 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
+    : Math.round(Hd * (red ? 0.30 : heroSmall ? 0.05 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
   // Content zone kept comfortably clear of the pre-printed address band so it never
-  // overprints it. The red 85×55 white panel is large, so we use more of it (more
-  // room for the Lot/PKD/Rack lines). 203 dpi rounds the QR a touch bigger — margin covers it.
-  const bottom = Math.round(Hd * (red ? 0.94 : pos === "bottom" ? 0.92 : 0.63));
+  // overprints it. The red 85×55 & 70×40 use more of their white area for big text.
+  const bottom = Math.round(Hd * (red ? 0.94 : heroSmall ? 0.72 : pos === "bottom" ? 0.92 : 0.63));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
 
@@ -174,8 +174,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Cap the QR box at ~28mm so it doesn't dominate the big labels and starve the
   // text of width (it's still a big, easily-scanned code with its quiet zone).
   const bigLbl = h >= (hires ? 44 : 54) || (!!opts.large && h >= 40); // 95×70 (& 85×55) = big
-  const fillBig = bigLbl && !red; // the big GREEN (95×70) gets the QR-right / text-left fill layout; the red keeps QR-left
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((bigLbl ? 32 : 28) * dp));
+  // The big GREEN (95×70) and the 70×40 get the QR-right / text-left "hero" fill
+  // layout (big bold name); the red keeps its QR-left layout.
+  const fillBig = !red && ((w === 95 && h === 70) || heroSmall);
+  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? 20 : bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   const modDots = qrSzMM > 0
@@ -245,7 +247,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const useManual = manualSegs.length > 1;
   // Allow enough name lines that the FULL name always fits (it breaks to more lines
   // / steps the font down rather than ever truncating). Big label up to 4, others up to 3.
-  const nameCap = useManual ? manualSegs.length : (bigLbl ? 4 : 3);
+  const nameCap = useManual ? manualSegs.length : (bigLbl || heroSmall ? 4 : 3);
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
@@ -281,29 +283,30 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     }
     if (!chosen) { chosen = tiers[tiers.length - 1]; nameLines = linesFor(chosen[1]).slice(0, 1); } // pass 3: smallest, gate extras
   }
-  if (big && !useManual) {
-    // Big label (95×70): keep the main text large (~6mm) BUT never at the cost of
-    // Lot/PKD. Use font 5 only if the name fits in ≤2 lines; otherwise step down so
-    // the FULL name (≤3 lines) AND the key attribute lines (Incl/Lot/PKD) all fit.
-    // Longer names step down a font AND get more lines (font 5 ≤2 lines, 4 ≤3, 3 ≤4,
-    // 2 ≤4) — so a 6-word name stays ~3mm over 4 lines instead of shrinking to 2mm.
-    // The CODE line always renders at font 5, so we reserve lh("5") for it here.
+  if (fillBig && !useManual) {
+    // "Hero" fill (95×70 & 70×40): the NAME is the big bold star. Use the largest
+    // font at which the name (≤ maxL lines) + qty + MRP + the key attributes fit;
+    // short names print big, long ones step down a font. The CODE prints one step
+    // below the name, so we reserve the code line at (name font − 1).
     const bigTiers: { f: [string, string, string, string]; maxL: number }[] = [
       { f: ["5", "5", "3", "2"], maxL: 2 },
       { f: ["4", "4", "3", "2"], maxL: 3 },
       { f: ["3", "3", "2", "2"], maxL: 4 },
       { f: ["2", "2", "2", "1"], maxL: 4 },
     ];
-    const KEEP = 3; // (Incl. of All Taxes) + Lot No + PKD must fit
+    // 70×40 is short — force fewer attribute lines so the name can stay big (the gate
+    // still fills in extras below if there's room).
+    const KEEP = heroSmall ? 1 : 3;
+    const codeRes = (nf: string) => lh(String(Math.max(2, Number(nf) - 1))); // code = name−1
     let bc: [string, string, string, string] | null = null;
-    for (const t of bigTiers) { // prefer: name fully shown + the 3 key attributes fit
+    for (const t of bigTiers) { // prefer: name fully shown + the key attributes fit
       const wr = wrapAll(esc(rawName), t.f[1], textW);
       if (wr.length > t.maxL) continue;
-      if (lh("5") + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) + KEEP * lh(t.f[3]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
+      if (codeRes(t.f[1]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) + KEEP * lh(t.f[3]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
     }
     if (!bc) for (const t of bigTiers) { // fallback: at least fit the name (extras gated after)
       const wr = wrapAll(esc(rawName), t.f[1], textW);
-      if (wr.length <= t.maxL && lh("5") + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
+      if (wr.length <= t.maxL && codeRes(t.f[1]) + wr.length * lh(t.f[1]) + 2 * lh(t.f[2]) <= fitRoom) { bc = t.f; nameLines = wr; break; }
     }
     chosen = bc ?? (["2", "2", "2", "1"] as [string, string, string, string]);
     if (!bc) nameLines = wrapAll(esc(rawName), "2", textW).slice(0, 4);
@@ -329,7 +332,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
   // the full code wouldn't fit the width. Never truncated.
   const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
-  let codeF = bigLbl ? String(Math.max(2, Number(nameF) - 1)) : skuF;
+  let codeF = fillBig ? String(Math.max(2, Number(nameF) - 1)) : skuF;
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
   const baseH = lh(codeF) + nameLines.length * lh(nameF) + 2 * lh(qtyF);
@@ -342,9 +345,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // fills the sticker like the reference label, instead of a compact block at the
   // top. Smaller labels stay compact & centred against the QR.
   const totalLines = 1 + nameLines.length + 2 + extras.length;
-  const spread = big ? Math.max(0, Math.min(Math.round(5 * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
+  const spread = fillBig ? Math.max(0, Math.min(Math.round(5 * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
   let cy;
-  if (big) {
+  if (fillBig) {
     cy = top;
   } else {
     cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2)); // centre against the QR
