@@ -349,16 +349,6 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let exF = exF0;
   { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
 
-  // If the aligner forced a NAME size (exact mm or a size level), re-wrap the FULL
-  // name at that exact size so long names flow onto more lines instead of being
-  // truncated — the operator never has to add per-SKU line breaks just to fit.
-  if (!useManual && (el.name?.mm || el.name?.f)) {
-    const nf = emFont("name", nameF);
-    const availW = Math.max(1, Math.floor(textW / nf.mag)); // magnified glyphs are wider
-    const rew = wrapAll(esc(rawName), nf.font, availW);
-    if (rew.length) nameLines = rew.slice(0, 6);
-  }
-
   // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
   // the full code wouldn't fit the width. Never truncated.
@@ -366,7 +356,38 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let codeF = fillBig ? (heroSmall ? String(Math.max(2, Number(nameF) - 1)) : nameF) : skuF; // big green: code as big as the name
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
-  const baseH = elh("code", codeF) + nameLines.length * elh("name", nameF) + elh("qty", qtyF) + elh("mrp", qtyF);
+  // Effective NAME size. Without an aligner override this is just the auto font.
+  // With one, the requested size is a TARGET: use it when the full (wrapped) name +
+  // code + qty + MRP fit the label, but step DOWN for a name too long to fit at that
+  // size — so a long name never overflows and shoves the rest of the label around,
+  // and the operator still never has to add per-SKU line breaks.
+  const nlh = (c: { font: string; mag: number }) => (F_HEIGHT[c.font] || 24) * c.mag + Math.round(0.6 * dp);
+  let nameEff = emFont("name", nameF);
+  if (!useManual && (el.name?.mm || el.name?.f)) {
+    // Descending ladder of real sizes from the requested one down to the smallest.
+    const start = emFont("name", nameF);
+    const cands: { font: string; mag: number }[] = [];
+    const seenH = new Set<number>();
+    for (let bf = Number(start.font); bf >= 1; bf--) {
+      for (let mag = (bf === Number(start.font) ? start.mag : 3); mag >= 1; mag--) {
+        const hh = (F_HEIGHT[String(bf)] || 24) * mag;
+        if (seenH.has(hh)) continue; seenH.add(hh);
+        cands.push({ font: String(bf), mag });
+      }
+    }
+    let picked = cands[0], pickedLines = nameLines;
+    for (const c of cands) {
+      const availW = Math.max(1, Math.floor(textW / c.mag)); // magnified glyphs are wider
+      const wr = wrapAll(esc(rawName), c.font, availW);
+      const need = elh("code", codeF) + wr.length * nlh(c) + elh("qty", qtyF) + elh("mrp", qtyF);
+      picked = c; pickedLines = wr;
+      if (need <= fitRoom) break; // largest size at which the whole name + core fits
+    }
+    nameEff = picked;
+    nameLines = pickedLines.slice(0, 6);
+  }
+
+  const baseH = elh("code", codeF) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
   while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
@@ -412,8 +433,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // after every line so the whole block fills the sticker top-to-bottom.
   { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
   cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
-  { const { font, mag } = emFont("name", nameF); let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += (F_HEIGHT[font] || 24) * mag + Math.round(0.6 * dp) + spread; } }
-  cy += nameLines.length * (elh("name", nameF) + spread);
+  { const { font, mag } = nameEff; let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += nlh({ font, mag }) + spread; } }
+  cy += nameLines.length * (nlh(nameEff) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
   // got cut to "MRP.R." on the bigger labels. Each short line fits fully.
   { const { font, mag } = emFont("qty", qtyF); emit("qty", textX + tdx("qty"), cy + tdy("qty"), font, mag, fitText(esc(qtyStr), font, fw(mag))); }
