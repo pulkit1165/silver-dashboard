@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelLayouts, saveLabelLayout } from "@/lib/erp/labelLayout";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -24,5 +25,11 @@ export async function POST(req: Request) {
     offsetX: Number(b.offsetX) || 0, offsetY: Number(b.offsetY) || 0, qrMM: Number(b.qrMM) || 0,
     elements: (b.elements && typeof b.elements === "object") ? b.elements : undefined,
   }, user.name);
+  // Audit every save so an alignment change (or a later disappearance) is traceable.
+  await logActivity({
+    actor: user.name, actorRole: user.role, action: "label.layout.save", entity: "label_layout", entityId: sizeId,
+    summary: `Saved label alignment for ${sizeId}`,
+    meta: { offsetX: Number(b.offsetX) || 0, offsetY: Number(b.offsetY) || 0, elements: (b.elements && typeof b.elements === "object") ? b.elements : {} },
+  }).catch(() => {});
   return NextResponse.json({ ok: true });
 }

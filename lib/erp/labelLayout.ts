@@ -76,7 +76,12 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
 }
 
 // Wipe all saved alignments so every size falls back to its built-in (current) layout.
-export async function clearAllLayouts(): Promise<number> {
+// DESTRUCTIVE: erases every operator's saved alignment. Guarded so it can only run
+// when a caller explicitly opts in — no accidental/automated wipe can ever fire.
+export async function clearAllLayouts(confirm?: "WIPE-ALL-LABEL-LAYOUTS"): Promise<number> {
+  if (confirm !== "WIPE-ALL-LABEL-LAYOUTS") {
+    throw new Error("clearAllLayouts refused: pass the explicit confirm token to wipe all saved alignments.");
+  }
   await ensure();
   const rows = (await getSql()`DELETE FROM label_layouts RETURNING size_id`) as unknown as { size_id: string }[];
   return rows.length;
