@@ -352,7 +352,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
   // the full code wouldn't fit the width. Never truncated.
-  const codeStr = (big || med ? "CODE:" : "") + esc(l.sku_code);
+  const codeStr = esc(l.sku_code); // just the SKU (no "CODE:" prefix)
   let codeF = fillBig ? (heroSmall ? String(Math.max(2, Number(nameF) - 1)) : nameF) : skuF; // big green: code as big as the name
   while (Number(codeF) > 1 && codeStr.length * (F_WIDTH[codeF] || 16) > textW) codeF = String(Number(codeF) - 1);
 
@@ -363,7 +363,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // and the operator still never has to add per-SKU line breaks.
   const nlh = (c: { font: string; mag: number }) => (F_HEIGHT[c.font] || 24) * c.mag + Math.round(0.6 * dp);
   let nameEff = emFont("name", nameF);
-  if (!useManual && (el.name?.mm || el.name?.f)) {
+  // Run the fit-to-full-name step-down on EVERY green hero label (95×70, 70×40,
+  // 65×35, 50×30), not only when the operator forced a size — so long names always
+  // wrap onto as many lines as needed (up to 6) at the largest font that fits, and
+  // are NEVER truncated. Short names still print big (they fit at the top size).
+  if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
     // Descending ladder of real sizes from the requested one down to the smallest.
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
