@@ -4,6 +4,9 @@
 
 $ErrorActionPreference = "Continue"
 $BaseUrl = "https://silver-dashboard-eight.vercel.app"
+# Printer name filter. Default "TSC" (matches the TSC TTP-244 fleet). Set
+# "printerFilter" in config.json to override — use "" to register EVERY printer on
+# this PC (useful when the label printer isn't named "TSC"). Read below once cfg loads.
 $Filter  = "TSC"
 # config.json + agent.log live right next to this script (the install folder).
 $Dir     = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { Join-Path $env:LOCALAPPDATA "SilverPrintAgent" }
@@ -21,6 +24,8 @@ try { if ((Test-Path $LogFile) -and ((Get-Item $LogFile).Length -gt 200kb)) { Cl
 $cfg = Get-Content (Join-Path $Dir "config.json") -Raw | ConvertFrom-Json
 $Token = ("" + $cfg.token).Trim()
 $Pc    = $env:COMPUTERNAME
+# Honour an explicit printerFilter from config.json (including "" = all printers).
+if ($cfg.PSObject.Properties['printerFilter']) { $Filter = "" + $cfg.printerFilter }
 Log "=== agent starting on $Pc (base $BaseUrl) ==="
 if ([string]::IsNullOrWhiteSpace($Token)) { Log "NO TOKEN in config.json - stopping"; exit 1 }
 
@@ -70,9 +75,10 @@ $tick = 0
 while ($true) {
   try {
     if ($tick % 12 -eq 0) {
-      $printers = @(Get-Printer | Where-Object { $_.Name -like "*$Filter*" } | Select-Object -ExpandProperty Name)
+      $allPrinters = @(Get-Printer | Select-Object -ExpandProperty Name)
+      $printers = @($allPrinters | Where-Object { $_ -like "*$Filter*" })
       Post "/api/erp/print/agent/heartbeat" @{ pc = $Pc; printers = $printers } | Out-Null
-      Log ("heartbeat OK  printers=[" + ($printers -join ", ") + "]")
+      Log ("heartbeat OK  filter='" + $Filter + "'  registered=[" + ($printers -join ", ") + "]  allWindowsPrinters=[" + ($allPrinters -join ", ") + "]")
     }
     $r = Post "/api/erp/print/agent/pull" @{ pc = $Pc; limit = 10 }
     foreach ($j in @($r.jobs)) {

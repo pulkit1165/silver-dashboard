@@ -25,8 +25,17 @@ Copy-Item -Path (Join-Path $Src "SilverPrintAgent.ps1") -Destination $AgentPath 
 if ([string]::IsNullOrWhiteSpace($Token)) { $Token = Read-Host "  Paste the print token and press Enter" }
 $Token = ("" + $Token).Trim()
 if ([string]::IsNullOrWhiteSpace($Token)) { Write-Host "  No token entered. Aborting." -ForegroundColor Red; Start-Sleep 5; exit 1 }
-@{ token = $Token } | ConvertTo-Json | Set-Content -Encoding ASCII -Path (Join-Path $InstallDir "config.json")
-Write-Host "  Saved token."
+
+# --- printer filter ---------------------------------------------------------
+# Only printers whose name contains this text are registered. Default "TSC" fits
+# the TSC TTP-244 fleet; leave blank to register EVERY printer on this PC (use this
+# when the label printer isn't a TSC / isn't named "TSC").
+Write-Host ""
+$Filter = Read-Host "  Printer name filter [Enter = TSC, or type part of the name, or 'all']"
+$Filter = ("" + $Filter).Trim()
+if ($Filter -eq "") { $Filter = "TSC" } elseif ($Filter -ieq "all") { $Filter = "" }
+@{ token = $Token; printerFilter = $Filter } | ConvertTo-Json | Set-Content -Encoding ASCII -Path (Join-Path $InstallDir "config.json")
+Write-Host ("  Saved token. Printer filter = '" + $Filter + "'" + $(if ($Filter -eq "") { " (ALL printers)" } else { "" }))
 
 # --- a big obvious README + a restart shortcut ------------------------------
 @"
