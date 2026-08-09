@@ -594,20 +594,20 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
     rows.push(`TEXT ${x + 1},${y},"${font}",0,1,1,"${text}"`); // overstrike = bold
   };
 
-  // Code header (bare SKU — no "CODE:" prefix)
+  // Code header (bare SKU — no "CODE:" prefix), bigger font 4.
   let cy = top;
-  emit(leftM, cy, "3", fitText(esc(l.sku_code), "3", colW)); cy += lh("3") + Math.round(1 * dp);
+  emit(leftM, cy, "4", fitText(esc(l.sku_code), "4", colW)); cy += lh("4") + Math.round(1 * dp);
 
   // Full-width NAME. Step the font down if it would need too many lines to leave room
   // for the QR + details block below.
   const rawName = esc(String(l.name ?? ""));
-  const qrBoxMax = Math.round((hires ? 22 : 20) * dp);
+  const qrBoxMax = Math.round((hires ? 26 : 24) * dp); // allow a bigger QR
   let nameF = "4";
   let nameLines = wrapAll(rawName, nameF, colW);
-  // Reserve enough height below the name for the QR AND all six detail lines (Qty/MRP
-  // + 4 attributes incl. Rack No). A long name steps its font down to fit above that,
-  // so Rack No is never cut. ~18mm reserve.
-  const nameRoom = bottom - cy - Math.round(18 * dp) - Math.round(2 * dp);
+  // Reserve height below the name for the QR + the six detail lines (Qty/MRP + 4
+  // attributes incl. Rack No). ~16mm keeps normal names at 4mm; a very long name steps
+  // its font down so Rack No is never cut.
+  const nameRoom = bottom - cy - Math.round(16 * dp) - Math.round(2 * dp);
   while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
@@ -623,8 +623,8 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // (kept inside the white zone so it never bleeds onto the next label).
   const qrX = leftM, qrY = Math.min(cy, bottom - qrPx);
 
-  // Details to the right of the QR
-  const dx0 = qrX + qrPx + Math.round(3 * dp);
+  // Details to the right of the QR — a wider gap gives the (bigger) QR more room.
+  const dx0 = qrX + qrPx + Math.round(4 * dp);
   const dW = Math.max(6 * dp, Wd - dx0 - rMar);
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
