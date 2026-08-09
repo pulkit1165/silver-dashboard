@@ -73,14 +73,22 @@ function fitText(s: string, font: string, maxDots: number): string {
 function wrapAll(s: string, font: string, maxDots: number): string[] {
   const cw = F_WIDTH[font] || 16;
   const maxChars = Math.max(4, Math.floor(maxDots / cw));
+  // Hard-break any word longer than a full line into <=maxChars chunks FIRST, so the
+  // leftover fragment (e.g. the "S" of "…PESS") is treated as a normal word and the
+  // NEXT words ("PRO NEW") pack onto the same line instead of each dropping down.
+  const words: string[] = [];
+  for (const w of s.split(/\s+/).filter(Boolean)) {
+    if (w.length <= maxChars) words.push(w);
+    else for (let i = 0; i < w.length; i += maxChars) words.push(w.slice(i, i + maxChars));
+  }
   const out: string[] = [];
   let cur = "";
-  for (const word of s.split(/\s+/).filter(Boolean)) {
+  for (const word of words) {
     const test = cur ? cur + " " + word : word;
     if (test.length > maxChars && cur) { out.push(cur); cur = word; } else cur = test;
   }
   if (cur) out.push(cur);
-  return out.flatMap((l) => (l.length > maxChars ? (l.match(new RegExp(`.{1,${maxChars}}`, "g")) ?? [l]) : [l]));
+  return out.length ? out : [""];
 }
 
 // TSPL TEXT has no auto-wrap, so word-wrap the name to at most `maxLines` lines.
