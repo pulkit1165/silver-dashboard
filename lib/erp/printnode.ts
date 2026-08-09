@@ -601,11 +601,12 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Full-width NAME. Step the font down if it would need too many lines to leave room
   // for the QR + details block below.
   const rawName = esc(String(l.name ?? ""));
-  const qrBoxMax = Math.round((hires ? 22 : 20) * dp);
-  const minQr = Math.round(14 * dp); // keep at least this much height for the QR below
+  const qrBoxMax = Math.round((hires ? 20 : 18) * dp);
   let nameF = "4";
   let nameLines = wrapAll(rawName, nameF, colW);
-  const nameRoom = bottom - cy - minQr - Math.round(2 * dp);
+  // Reserve the FULL QR height below the name so the bottom-parked QR can never
+  // ride up into the name; a long name steps its font down to fit above that.
+  const nameRoom = bottom - cy - qrBoxMax - Math.round(2 * dp);
   while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
@@ -617,7 +618,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
   const qrPx = qrTotal * modDots;
   const bmp = renderQrBytes(qr, modDots, QUIET);
-  const qrX = leftM, qrY = Math.min(cy, bottom - qrPx);
+  // QR parked at the very BOTTOM-left (extremely low) — but kept inside the white
+  // zone (bottom) so it never bleeds onto the next label on the roll.
+  const qrX = leftM, qrY = Math.max(cy, bottom - qrPx);
 
   // Details to the right of the QR
   const dx0 = qrX + qrPx + Math.round(3 * dp);
