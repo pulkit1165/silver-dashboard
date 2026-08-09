@@ -7,7 +7,7 @@ import { getSql } from "./db";
 // per-attribute overrides (qr|code|name|qty|mrp → dx/dy mm, f = font, sz = QR mm).
 
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
-export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
+export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
 
 let ensured: Promise<void> | null = null;
 function ensure(): Promise<void> {
@@ -23,8 +23,9 @@ function ensure(): Promise<void> {
         updated_by text,
         updated_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
       )`;
-      // Add the column on pre-existing tables (feature shipped after the table).
+      // Add the columns on pre-existing tables (features shipped after the table).
       await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS elements jsonb`;
+      await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS design integer DEFAULT 1`;
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
@@ -54,10 +55,10 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
 export async function getLabelLayouts(): Promise<Record<string, LabelLayout>> {
   try {
     await ensure();
-    const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements FROM label_layouts`) as unknown as
-      { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown }[];
+    const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design FROM label_layouts`) as unknown as
+      { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number }[];
     const out: Record<string, LabelLayout> = {};
-    for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements) };
+    for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1 };
     return out;
   } catch { return {}; }
 }
@@ -68,10 +69,14 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
   const ox = clamp(l.offsetX, -30, 30), oy = clamp(l.offsetY, -30, 30), qr = clamp(l.qrMM, 0, 60);
   const els = cleanElements(l.elements);
   const elsJson = els ? JSON.stringify(els) : null;
+  // design: explicit 1/2 sets it; undefined PRESERVES the existing choice (so the
+  // aligner saving offsets never resets which template the size is on).
+  const design = l.design === 2 ? 2 : l.design === 1 ? 1 : null;
   await getSql()`
-    INSERT INTO label_layouts (size_id, offset_x, offset_y, qr_mm, elements, updated_by, updated_at)
-    VALUES (${sizeId}, ${ox}, ${oy}, ${qr}, ${elsJson}::jsonb, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+    INSERT INTO label_layouts (size_id, offset_x, offset_y, qr_mm, elements, design, updated_by, updated_at)
+    VALUES (${sizeId}, ${ox}, ${oy}, ${qr}, ${elsJson}::jsonb, ${design ?? 1}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
     ON CONFLICT (size_id) DO UPDATE SET offset_x=${ox}, offset_y=${oy}, qr_mm=${qr}, elements=${elsJson}::jsonb,
+      design=COALESCE(${design}, label_layouts.design),
       updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
 }
 

@@ -109,6 +109,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     setLabelNames((m) => { const c = { ...m }; if (clean) c[code] = clean; else delete c[code]; return c; });
     setNameEdit(null);
   }
+  // Switch this size between the two label templates (Design 1 / Design 2). Saved to
+  // the (protected) layouts table so the choice is locked and never resets.
+  async function setLabelDesign(d: number) {
+    const cur = layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 };
+    setLayouts((m) => ({ ...m, [sizeId]: { ...cur, design: d } }));
+    await fetch("/api/erp/labels/layout", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sizeId, offsetX: cur.offsetX ?? 0, offsetY: cur.offsetY ?? 0, qrMM: cur.qrMM ?? 0, elements: cur.elements ?? {}, design: d }),
+    }).catch(() => {});
+  }
   const loadPrinters = useCallback(async () => {
     setPnLoading(true);
     try {
@@ -251,6 +261,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             offsetYmm: layouts[sizeId]?.offsetY ?? 0,
             qrMM: layouts[sizeId]?.qrMM ?? 0,
             elements: layouts[sizeId]?.elements ?? {},
+            design: layouts[sizeId]?.design ?? 1,
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
@@ -316,6 +327,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             offsetYmm: layouts[sizeId]?.offsetY ?? 0,
             qrMM: layouts[sizeId]?.qrMM ?? 0,
             elements: layouts[sizeId]?.elements ?? {},
+            design: layouts[sizeId]?.design ?? 1,
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
@@ -462,6 +474,22 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               try { localStorage.setItem("erp_label_size_by_computer", JSON.stringify(sizeByComputer.current)); } catch { /* ignore */ }
             }
           }} />
+        </div>
+      )}
+
+      {/* thin bar: choose which of the two label templates to print for this size */}
+      {(roll || a4) && sizeId !== "custom" && (
+        <div className="no-print flex flex-wrap items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-sm">
+          <span className="font-bold text-[var(--muted)]">Label design:</span>
+          {[1, 2].map((d) => (
+            <button key={d} onClick={() => setLabelDesign(d)}
+              className={`rounded-md border px-3 py-1 font-bold ${(layouts[sizeId]?.design ?? 1) === d
+                ? "border-[var(--accent)] bg-[var(--accent)] text-white"
+                : "border-[var(--border)] bg-white hover:bg-[var(--surface)]"}`}>
+              Label {d}{d === 2 ? " · Classic" : ""}
+            </button>
+          ))}
+          <span className="ml-auto text-xs text-[var(--muted-2)]">🔒 Saved &amp; locked — never resets</span>
         </div>
       )}
 
@@ -809,7 +837,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             : { code: "HH12006", name: "CENTER STAND KIT SPL", qty: "Qty. 1 PCS", mrp: "MRP.Rs.570/-" }}
           initial={layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }}
           onClose={() => setAlignOpen(false)}
-          onSaved={(l) => { setLayouts((m) => ({ ...m, [sizeId]: l })); setAlignOpen(false); setPnMsg({ ok: true, text: `Alignment saved for ${dims.w}×${dims.h} mm.` }); }}
+          onSaved={(l) => { setLayouts((m) => ({ ...m, [sizeId]: { ...l, design: m[sizeId]?.design ?? 1 } })); setAlignOpen(false); setPnMsg({ ok: true, text: `Alignment saved for ${dims.w}×${dims.h} mm.` }); }}
         />
       )}
     </div>

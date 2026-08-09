@@ -108,9 +108,13 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 // the visual aligner): key = qr|code|name|qty|mrp, dx/dy = mm nudge from the auto
 // position, f = font 1–5 (text), sz = QR size in mm. Absent/0 = keep auto.
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
-export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride> };
+export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride>; design?: number };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
+  // Two selectable templates per size: Design 1 (default, big-name layout below) and
+  // Design 2 (classic header: CODE + full-width name on top, QR bottom-left, details
+  // to its right). The choice is saved per size and never resets.
+  if (opts.design === 2) return buildTSPLDesign2(l, w, h, opts);
   // Dots per mm depends on the printer's RESOLUTION. TTP-244 Plus/Pro = 203 dpi
   // (8 dots/mm); TTP-345 = 300 dpi (~11.81 dots/mm). All x/y/size are in dots,
   // so using the wrong dp squashes the print into a corner on a 300 dpi head.
@@ -554,6 +558,81 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     const colRows = rows.map((r) => r.replace(/^TEXT (\d+),/, (_m, x) => `TEXT ${Number(x) + xOff},`));
     buf.push(Buffer.from("\r\n" + colRows.join("\r\n") + "\r\n", "ascii"));
   }
+  buf.push(Buffer.from(`PRINT 1,1\r\n`, "ascii"));
+  return Buffer.concat(buf);
+}
+
+// ── DESIGN 2: classic header template ────────────────────────────────────────
+// CODE:xxxx and the full-width product NAME across the top, the QR bottom-LEFT, and
+// Qty / MRP / (Incl of Taxes) / Lot / PKD / Rack to the right of the QR. Matches the
+// original red sticker. Everything is bold (overstruck). Self-contained + locked.
+function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
+  const dpi = opts.dpi && opts.dpi >= 280 ? opts.dpi : 203;
+  const dp = dpi === 203 ? 8 : dpi / 25.4;
+  const hires = dpi >= 280;
+  const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
+  const pos = opts.pos === "bottom" ? "bottom" : "top";
+  const red = w === 85 && h === 55;
+  // White printable zone (below the top banner on red; above the bottom footer on green).
+  const top = Math.round(Hd * (pos === "bottom" ? 0.30 : 0.06));
+  const bottom = Math.round(Hd * (pos === "bottom" ? 0.94 : 0.72));
+  const leftM = Math.round(4 * dp);
+  const rMar = Math.round((red ? 14 : 3) * dp); // clear the hologram strip on red
+  const colW = Math.max(10 * dp, Wd - leftM - rMar);
+  const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.5 * dp);
+  const rows: string[] = [];
+  const emit = (x: number, y: number, font: string, text: string) => {
+    rows.push(`TEXT ${x},${y},"${font}",0,1,1,"${text}"`);
+    rows.push(`TEXT ${x + 1},${y},"${font}",0,1,1,"${text}"`); // overstrike = bold
+  };
+
+  // Code header
+  let cy = top;
+  emit(leftM, cy, "3", fitText("CODE:" + esc(l.sku_code), "3", colW)); cy += lh("3") + Math.round(1 * dp);
+
+  // Full-width NAME. Step the font down if it would need too many lines to leave room
+  // for the QR + details block below.
+  const rawName = esc(String(l.name ?? ""));
+  const qrBoxMax = Math.round((hires ? 22 : 20) * dp);
+  const minQr = Math.round(14 * dp); // keep at least this much height for the QR below
+  let nameF = "4";
+  let nameLines = wrapAll(rawName, nameF, colW);
+  const nameRoom = bottom - cy - minQr - Math.round(2 * dp);
+  while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
+  for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
+  cy += Math.round(1.5 * dp);
+
+  // QR bottom-left
+  const qr = QRCode.create(l.qrToken, { errorCorrectionLevel: "M" });
+  const QUIET = 4; const qrTotal = qr.modules.size + QUIET * 2;
+  const qrAvail = Math.max(Math.round(12 * dp), Math.min(qrBoxMax, bottom - cy));
+  const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
+  const qrPx = qrTotal * modDots;
+  const bmp = renderQrBytes(qr, modDots, QUIET);
+  const qrX = leftM, qrY = Math.min(cy, bottom - qrPx);
+
+  // Details to the right of the QR
+  const dx0 = qrX + qrPx + Math.round(3 * dp);
+  const dW = Math.max(6 * dp, Wd - dx0 - rMar);
+  const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
+  const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
+  const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
+  const extras = ["(Incl. of All Taxes)", `Lot No: ${esc(l.lot ?? "")}`.trimEnd(), `PKD: ${l.pkd ? esc(l.pkd) : today}`, `Rack No: ${esc(l.rack ?? "")}`.trimEnd()];
+  let dy = qrY;
+  emit(dx0, dy, "3", fitText(esc(qtyStr), "3", dW)); dy += lh("3");
+  emit(dx0, dy, "3", fitText(esc(mrpStr), "3", dW)); dy += lh("3");
+  for (const e of extras) { if (dy + lh("2") > bottom + Math.round(0.5 * dp)) break; emit(dx0, dy, "2", fitText(esc(e), "2", dW)); dy += lh("2"); }
+
+  // Assemble
+  const density = opts.density != null && opts.density >= 1 ? Math.min(15, Math.round(opts.density)) : (hires ? 8 : 9);
+  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
+  const head = [`SIZE ${w} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`, `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, ``].join("\r\n");
+  const buf: Buffer[] = [Buffer.from(head, "ascii")];
+  const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX));
+  const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY));
+  buf.push(Buffer.from(`BITMAP ${qbx},${qby},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
+  buf.push(bmp.bytes);
+  buf.push(Buffer.from("\r\n" + rows.join("\r\n") + "\r\n", "ascii"));
   buf.push(Buffer.from(`PRINT 1,1\r\n`, "ascii"));
   return Buffer.concat(buf);
 }

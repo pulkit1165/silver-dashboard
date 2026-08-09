@@ -38,6 +38,7 @@ export async function POST(req: Request) {
     ...(Number.isFinite(Number(lay.offsetYmm)) ? { offsetYmm: Number(lay.offsetYmm) } : {}),
     ...(Number(lay.qrMM) > 0 ? { qrMM: Number(lay.qrMM) } : {}),
     ...(lay.elements && typeof lay.elements === "object" ? { elements: lay.elements as Record<string, { dx?: number; dy?: number; f?: number; sz?: number; mm?: number; b?: number }> } : {}),
+    ...(Number(lay.design) === 2 ? { design: 2 } : {}),
   };
 
   const jobs = labels.map((l) => ({ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }));

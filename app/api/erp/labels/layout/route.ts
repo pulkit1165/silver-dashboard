@@ -24,6 +24,7 @@ export async function POST(req: Request) {
   await saveLabelLayout(sizeId, {
     offsetX: Number(b.offsetX) || 0, offsetY: Number(b.offsetY) || 0, qrMM: Number(b.qrMM) || 0,
     elements: (b.elements && typeof b.elements === "object") ? b.elements : undefined,
+    design: b.design === 2 || b.design === "2" ? 2 : b.design === 1 || b.design === "1" ? 1 : undefined,
   }, user.name);
   // Audit every save so an alignment change (or a later disappearance) is traceable.
   await logActivity({

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
-export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride> };
+export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
 // `bg` = the label colour under the QR (white panel on red stock, green on green
