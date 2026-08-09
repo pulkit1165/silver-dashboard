@@ -491,20 +491,22 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += elh("mrp", qtyF) + spread;
   // Right-column attribute lines (Incl of Taxes / Lot / PKD) under the MRP.
   { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
-  // RED only: the Rack No line prints BELOW the QR, CENTRED under it (mirroring the
-  // centred code above). A long rack value WRAPS to a 2nd line (bounded to the QR-ish
-  // width) rather than being cut; both lines stay under the QR so they never overlap
-  // the right-column Lot/PKD, and the block is clamped to the label bottom.
+  // RED only: the Rack No block prints BELOW the QR, CENTRED under it. The LABEL sits
+  // on line 1 and the actual RACK VALUE on line 2 (each centred, fitted to ~the QR
+  // width) — so a long rack number never runs right into the Lot/PKD column. Empty
+  // rack = just the "Rack No:" line. The block is clamped to the label bottom.
   if (rackBelowQr) {
     const { font, mag } = emFont("extras", exF);
+    const rackVal = esc(String(l.rack ?? "").trim());
+    const rackParts = rackVal ? ["Rack No:", rackVal] : ["Rack No:"];
     const rackBoxW = Math.max(4 * dp, qrPx + Math.round(8 * dp)); // ~QR width; keeps it left of the right column
-    const rackLines = wrapAll(esc(rackLine), font, Math.max(1, Math.floor(rackBoxW / mag))).slice(0, 2);
     const lineDots = (F_HEIGHT[font] || 20) * mag + Math.round(0.35 * dp);
-    let ry = Math.min(rackY, Hd - rackLines.length * lineDots); // clamp so the last line stays on-label
-    for (const rl of rackLines) {
-      const rw = rl.length * (F_WIDTH[font] || 16) * mag;
+    let ry = Math.min(rackY, Hd - rackParts.length * lineDots); // clamp so the last line stays on-label
+    for (const rl of rackParts) {
+      const fit = fitText(rl, font, rackBoxW);
+      const rw = fit.length * (F_WIDTH[font] || 16) * mag;
       const rx = qrX + Math.round((qrPx - rw) / 2); // centre each line under the QR
-      emit("extras", rx + tdx("extras"), ry + tdy("extras"), font, mag, rl);
+      emit("extras", rx + tdx("extras"), ry + tdy("extras"), font, mag, fit);
       ry += lineDots;
     }
   }
