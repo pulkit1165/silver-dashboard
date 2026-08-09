@@ -629,7 +629,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
   const extras = ["(Incl. of All Taxes)", `Lot No: ${esc(l.lot ?? "")}`.trimEnd(), `PKD: ${l.pkd ? esc(l.pkd) : today}`, `Rack No: ${esc(l.rack ?? "")}`.trimEnd()];
-  let dy = qrY;
+  // Details fill the RIGHT column from just below the name (so all lines incl. Rack No
+  // fit) while the QR sits low on the left. Start no lower than the QR top.
+  let dy = Math.min(cy, qrY);
   emit(dx0, dy, "3", fitText(esc(qtyStr), "3", dW)); dy += lh("3");
   emit(dx0, dy, "3", fitText(esc(mrpStr), "3", dW)); dy += lh("3");
   for (const e of extras) { if (dy + lh("2") > bottom + Math.round(0.5 * dp)) break; emit(dx0, dy, "2", fitText(esc(e), "2", dW)); dy += lh("2"); }
