@@ -375,23 +375,19 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let nameEff = emFont("name", nameF);
 
   // ── RED 85×55 special layout ──────────────────────────────────────────────
-  // Code CENTRED above the QR; QR high on the left; the attribute lines (Incl of
-  // Taxes / Lot / PKD / Rack) print in a FULL-WIDTH band BELOW the QR so they are
-  // NEVER squeezed out or cut by a long product name. Name+qty+MRP fill the right
-  // column down to that band.
+  // Code CENTRED above the QR (top-left); QR sits HIGH; and ONLY the "Rack No" line
+  // prints BELOW the QR so it is never cut by a long name. The other attributes
+  // (Incl of Taxes / Lot / PKD) stay in the right column under the MRP. The code no
+  // longer takes a right-column line (it's above the QR).
   const codeOverQr = red;
-  const extrasBelowQr = red;
-  if (codeOverQr) qrY = Math.max(top, top + downShift + elh("code", codeF)); // QR right under the top code
-  const gapQr = Math.round(1.5 * dp);
-  const extrasBandLH = extrasBelowQr ? (F_HEIGHT[exF] || 20) + Math.round(0.35 * dp) : 0; // tight lines in the band
-  const extrasBandH = extrasBelowQr ? allExtras.length * extrasBandLH : 0;
-  // Attribute band is anchored to the BOTTOM of the white zone; name column runs down to it.
-  const extrasTopY = extrasBelowQr ? Math.max(qrY + qrPx + gapQr, bottom - extrasBandH) : 0;
-  const nameFitRoom = extrasBelowQr ? Math.max(8 * dp, extrasTopY - (top + downShift) - Math.round(0.5 * dp)) : fitRoom;
+  const rackBelowQr = red;
+  // Push the code+QR block to the very top of the white zone (QR "up").
+  if (codeOverQr) qrY = Math.max(top, top + Math.round(0.5 * dp) + elh("code", codeF));
+  const rackLine = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
+  const rackY = rackBelowQr ? qrY + qrPx + Math.round(1.5 * dp) : 0;
 
   // Name sizing = TARGET with step-down: normal names print big, a long name steps
-  // down to the largest size that still fits its column. (Attributes are safe either
-  // way — on red they live in the band below the QR.)
+  // down to the largest size that still fits (long-name handling you said is fine).
   if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
@@ -409,20 +405,18 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
       const wr = wrapAll(esc(rawName), c.font, availW);
       const need = (codeOverQr ? 0 : elh("code", codeF)) + wr.length * nlh(c) + elh("qty", qtyF) + elh("mrp", qtyF);
       picked = c; pickedLines = wr;
-      if (need <= nameFitRoom) break; // largest size at which the whole name + qty + MRP fit
+      if (need <= fitRoom) break; // largest size at which the whole name + qty + MRP fit
     }
     nameEff = picked;
     nameLines = pickedLines.slice(0, 8);
   }
 
+  // Right-column attributes: on red, everything EXCEPT Rack No (which prints below QR).
+  const colExtras = rackBelowQr ? allExtras.filter((e) => !e.startsWith("Rack No")) : allExtras;
   const baseH = (codeOverQr ? 0 : elh("code", codeF)) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
-  if (extrasBelowQr) {
-    nEx = allExtras.length; // full-width band below the QR always fits every attribute
-  } else {
-    while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
-  }
-  const extras = allExtras.slice(0, nEx);
+  while (nEx < colExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
+  const extras = colExtras.slice(0, nEx);
 
   const contentH = baseH + extras.length * elh("extras", exF);
   // On the BIG label (95×70) spread the lines DOWN the whole zone so the content
@@ -487,17 +481,13 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += elh("qty", qtyF) + spread;
   { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + tdx("mrp"), cy + tdy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
   cy += elh("mrp", qtyF) + spread;
-  // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together as
-  // one "extras" element. On RED they print in a FULL-WIDTH band BELOW the QR (fixed
-  // position, tight lines) so a long name can never push them off; other sizes stack
-  // them under the MRP in the right column.
-  {
+  // Right-column attribute lines (Incl of Taxes / Lot / PKD) under the MRP.
+  { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
+  // RED only: the Rack No line prints BELOW the QR (full width) so a long name can
+  // never push it off the label.
+  if (rackBelowQr) {
     const { font, mag } = emFont("extras", exF);
-    const exX = extrasBelowQr ? qrX : textX;
-    const exW = extrasBelowQr ? Math.max(4 * dp, Wd - exX - rMar) : fw(mag); // full width (minus hologram) on red
-    let ey = (extrasBelowQr ? extrasTopY : cy) + tdy("extras");
-    const step = extrasBelowQr ? extrasBandLH : lh(font) * mag + spread;
-    for (const e of extras) { emit("extras", exX + tdx("extras"), ey, font, mag, fitText(esc(e), font, exW)); ey += step; }
+    emit("extras", qrX + tdx("extras"), rackY + tdy("extras"), font, mag, fitText(esc(rackLine), font, Math.max(4 * dp, Wd - qrX - rMar)));
   }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
