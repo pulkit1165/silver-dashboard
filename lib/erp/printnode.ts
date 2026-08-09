@@ -145,13 +145,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // printed height is closest to the requested mm — real continuous-ish sizing.
     const mm = el[k]?.mm;
     if (mm && mm > 0) {
-      let best = { font: def, mag: 1, err: Infinity };
-      for (const bf of [1, 2, 3, 4, 5]) {
-        for (let mag = 1; mag <= 3; mag++) {
-          const err = Math.abs(baseMM(bf) * mag - mm);
-          if (err < best.err) best = { font: String(bf), mag, err };
+      // Prefer a NATIVE bitmap font (mag 1) — magnifying a small font makes the
+      // glyphs blocky/pixelated. If the target fits within the native range (up to
+      // the largest built-in font, ~6mm @203dpi), snap to the closest native font.
+      // Only magnify font 5 for sizes bigger than any native font (rare XXL).
+      const nativeMaxMM = baseMM(5);
+      if (mm <= nativeMaxMM + 0.75) {
+        let best = { font: def, err: Infinity };
+        for (const bf of [1, 2, 3, 4, 5]) {
+          const err = Math.abs(baseMM(bf) - mm);
+          if (err < best.err - 1e-9) best = { font: String(bf), err };
         }
+        return { font: best.font, mag: 1 };
       }
+      let best = { font: "5", mag: 1, err: Infinity };
+      for (let mag = 1; mag <= 3; mag++) { const err = Math.abs(baseMM(5) * mag - mm); if (err < best.err) best = { font: "5", mag, err }; }
       return { font: best.font, mag: best.mag };
     }
     const f = el[k]?.f;
