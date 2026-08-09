@@ -483,11 +483,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += elh("mrp", qtyF) + spread;
   // Right-column attribute lines (Incl of Taxes / Lot / PKD) under the MRP.
   { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
-  // RED only: the Rack No line prints BELOW the QR (full width) so a long name can
-  // never push it off the label.
+  // RED only: the Rack No line prints BELOW the QR, CENTRED under it (mirroring the
+  // centred code above), so a long name can never push it off the label.
   if (rackBelowQr) {
     const { font, mag } = emFont("extras", exF);
-    emit("extras", qrX + tdx("extras"), rackY + tdy("extras"), font, mag, fitText(esc(rackLine), font, Math.max(4 * dp, Wd - qrX - rMar)));
+    const rackTxt = fitText(esc(rackLine), font, Math.max(4 * dp, qrPx + Math.round(6 * dp)));
+    const rackW = rackTxt.length * (F_WIDTH[font] || 16) * mag;
+    const rackXc = qrX + Math.round((qrPx - rackW) / 2); // centre under the QR
+    emit("extras", rackXc + tdx("extras"), rackY + tdy("extras"), font, mag, rackTxt);
   }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
