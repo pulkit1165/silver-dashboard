@@ -465,12 +465,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
   if (codeOverQr) {
-    // Code sits directly ABOVE the QR, aligned to the QR's left edge and fitted to
-    // the QR's width. Its own dx/dy aligner nudges still apply for fine-tuning; the
-    // text column below does NOT advance for it (name starts at the top).
+    // Code sits directly ABOVE the QR, CENTRED over the QR's width and fitted to it.
+    // Its own dx/dy aligner nudges still apply for fine-tuning; the text column below
+    // does NOT advance for it (name starts at the top).
     const { font, mag } = emFont("code", codeF);
+    const codeTxt = fitText(codeStr, font, Math.max(4 * dp, qrPx));
+    const codeW = codeTxt.length * (F_WIDTH[font] || 16) * mag;
+    const codeXc = qrX + Math.max(0, Math.round((qrPx - codeW) / 2)); // centre over the QR
     const codeY = Math.max(top, qrY - elh("code", codeF));
-    emit("code", qrX + tdx("code"), codeY + tdy("code"), font, mag, fitText(codeStr, font, Math.max(4 * dp, qrPx)));
+    emit("code", codeXc + tdx("code"), codeY + tdy("code"), font, mag, codeTxt);
   } else {
     { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
     cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
