@@ -250,7 +250,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       const r = await fetch("/api/erp/labels/printnode", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          printerId: pnPrinterId, w: dims.w, h: dims.h,
+          printerId: pnPrinterId, w: dims.w, h: dims.h, sizeId,
           // which end the pre-printed address sits on, so the print lands in the
           // white half; dpi (203 for TTP-244, 300 for TTP-345) so coordinates map
           // to the printer's real resolution instead of squashing into a corner
@@ -321,7 +321,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       const r = await fetch("/api/erp/labels/bridge", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({
-          printerId: brPrinterId, w: dims.w, h: dims.h,
+          printerId: brPrinterId, w: dims.w, h: dims.h, sizeId,
           layout: {
             pos: contentPos, density, speed,
             offsetXmm: layouts[sizeId]?.offsetX ?? 0,
