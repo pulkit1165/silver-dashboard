@@ -221,7 +221,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
 
   // Text column. Big label: LEFT-aligned, full width up to the QR (bottom-right), so
   // the whole name fits and reads left-aligned. Other sizes: right of the left QR.
-  const rMar = Math.round((bigLbl ? 4 : 2) * dp);
+  // The RED 85×55 stock has a HOLOGRAM security strip down its right edge (~14mm),
+  // so text must stop before it or it prints under the hologram and looks cut.
+  const rMar = Math.round((red ? 14 : bigLbl ? 4 : 2) * dp);
   // Big: QR on the right — clamp its left edge on-label so the text width is sane.
   // Non-big: QR on the left at its actual x.
   const qrLnow = fillBig ? Math.max(Math.round(30 * dp), Math.min(qrX, Wd - qrPx)) : Math.max(0, qrX);
@@ -367,8 +369,18 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // 65×35, 50×30), not only when the operator forced a size — so long names always
   // wrap onto as many lines as needed (up to 6) at the largest font that fits, and
   // are NEVER truncated. Short names still print big (they fit at the top size).
-  if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
-    // Descending ladder of real sizes from the requested one down to the smallest.
+  if (!useManual && (el.name?.mm || el.name?.f) && !fillBig) {
+    // NON-hero labels (red 85×55) with an explicit name size: keep that size FIXED for
+    // EVERY SKU — long names wrap onto more lines instead of shrinking, so all names
+    // print at the same size. (Extras gate below drops trailing attribute lines if a
+    // very long name needs the room.) Width already excludes the hologram strip.
+    const c = emFont("name", nameF);
+    nameEff = c;
+    const availW = Math.max(1, Math.floor(textW / c.mag)); // magnified glyphs are wider
+    nameLines = wrapAll(esc(rawName), c.font, availW).slice(0, 6);
+  } else if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
+    // GREEN hero labels: the size is a TARGET — use it when the full name fits, else
+    // step DOWN to the largest size that fits (short names big, long names smaller).
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
     const seenH = new Set<number>();
