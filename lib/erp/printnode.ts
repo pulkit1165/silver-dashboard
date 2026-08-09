@@ -594,9 +594,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
     rows.push(`TEXT ${x + 1},${y},"${font}",0,1,1,"${text}"`); // overstrike = bold
   };
 
-  // Code header
+  // Code header (bare SKU — no "CODE:" prefix)
   let cy = top;
-  emit(leftM, cy, "3", fitText("CODE:" + esc(l.sku_code), "3", colW)); cy += lh("3") + Math.round(1 * dp);
+  emit(leftM, cy, "3", fitText(esc(l.sku_code), "3", colW)); cy += lh("3") + Math.round(1 * dp);
 
   // Full-width NAME. Step the font down if it would need too many lines to leave room
   // for the QR + details block below.
@@ -604,9 +604,10 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrBoxMax = Math.round((hires ? 22 : 20) * dp);
   let nameF = "4";
   let nameLines = wrapAll(rawName, nameF, colW);
-  // Reserve enough height below the name for a decent QR (a long name steps its font
-  // down to fit above that). ~15mm keeps normal names at 4mm and the QR ~16-20mm.
-  const nameRoom = bottom - cy - Math.round(15 * dp) - Math.round(2 * dp);
+  // Reserve enough height below the name for the QR AND all six detail lines (Qty/MRP
+  // + 4 attributes incl. Rack No). A long name steps its font down to fit above that,
+  // so Rack No is never cut. ~18mm reserve.
+  const nameRoom = bottom - cy - Math.round(18 * dp) - Math.round(2 * dp);
   while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
@@ -629,8 +630,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
   const extras = ["(Incl. of All Taxes)", `Lot No: ${esc(l.lot ?? "")}`.trimEnd(), `PKD: ${l.pkd ? esc(l.pkd) : today}`, `Rack No: ${esc(l.rack ?? "")}`.trimEnd()];
-  // Details start at the QR's top (to the right of it), matching the reference sticker.
-  let dy = qrY;
+  // Details start right below the name (to the right of the QR) so all six lines incl.
+  // Rack No always fit; the QR fills the left column beside them.
+  let dy = cy;
   emit(dx0, dy, "3", fitText(esc(qtyStr), "3", dW)); dy += lh("3");
   emit(dx0, dy, "3", fitText(esc(mrpStr), "3", dW)); dy += lh("3");
   for (const e of extras) { if (dy + lh("2") > bottom + Math.round(0.5 * dp)) break; emit(dx0, dy, "2", fitText(esc(e), "2", dW)); dy += lh("2"); }
