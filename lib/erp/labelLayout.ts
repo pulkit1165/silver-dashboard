@@ -14,18 +14,24 @@ function ensure(): Promise<void> {
   if (!ensured) {
     const sql = getSql();
     ensured = (async () => {
-      await sql`CREATE TABLE IF NOT EXISTS label_layouts (
-        size_id text PRIMARY KEY,
-        offset_x double precision DEFAULT 0,
-        offset_y double precision DEFAULT 0,
-        qr_mm double precision DEFAULT 0,
-        elements jsonb,
-        updated_by text,
-        updated_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
-      )`;
-      // Add the columns on pre-existing tables (features shipped after the table).
-      await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS elements jsonb`;
-      await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS design integer DEFAULT 1`;
+      // These are all idempotent DDL, but CREATE/ALTER ... IF NOT EXISTS can still
+      // spuriously error when several requests run them at once (Postgres column-
+      // collision race). Swallow those so ensure() never throws for an already-set-up
+      // table — otherwise getLabelLayouts would catch, return {}, and EVERY label
+      // would print with no saved layout (untuned).
+      try {
+        await sql`CREATE TABLE IF NOT EXISTS label_layouts (
+          size_id text PRIMARY KEY,
+          offset_x double precision DEFAULT 0,
+          offset_y double precision DEFAULT 0,
+          qr_mm double precision DEFAULT 0,
+          elements jsonb,
+          updated_by text,
+          updated_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+        )`;
+      } catch { /* concurrent create */ }
+      try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS elements jsonb`; } catch { /* concurrent/exists */ }
+      try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS design integer DEFAULT 1`; } catch { /* concurrent/exists */ }
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
@@ -36,6 +42,9 @@ const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 // Keep only known keys, coerce to numbers, drop empties so the JSON stays small.
 const EL_KEYS = ["qr", "code", "name", "qty", "mrp", "extras"] as const;
 function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
+  // Safety net: tolerate a jsonb value that came back as a JSON STRING (double-encoded
+  // by an older write) so a bad row can never silently drop a size's whole layout.
+  if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch { return undefined; } }
   if (!raw || typeof raw !== "object") return undefined;
   const src = raw as Record<string, ElOverride>;
   const out: Record<string, ElOverride> = {};
@@ -68,14 +77,18 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : 0));
   const ox = clamp(l.offsetX, -30, 30), oy = clamp(l.offsetY, -30, 30), qr = clamp(l.qrMM, 0, 60);
   const els = cleanElements(l.elements);
-  const elsJson = els ? JSON.stringify(els) : null;
+  // Store as a real jsonb OBJECT via sql.json(). (Previously `${JSON.stringify(els)}::jsonb`
+  // double-encoded it into a jsonb STRING, which the loader couldn't read → the size's
+  // whole layout silently vanished.)
+  const sql = getSql();
+  const elsVal = els ? sql.json(els as never) : null;
   // design: explicit 1/2 sets it; undefined PRESERVES the existing choice (so the
   // aligner saving offsets never resets which template the size is on).
   const design = l.design === 2 ? 2 : l.design === 1 ? 1 : null;
-  await getSql()`
+  await sql`
     INSERT INTO label_layouts (size_id, offset_x, offset_y, qr_mm, elements, design, updated_by, updated_at)
-    VALUES (${sizeId}, ${ox}, ${oy}, ${qr}, ${elsJson}::jsonb, ${design ?? 1}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
-    ON CONFLICT (size_id) DO UPDATE SET offset_x=${ox}, offset_y=${oy}, qr_mm=${qr}, elements=${elsJson}::jsonb,
+    VALUES (${sizeId}, ${ox}, ${oy}, ${qr}, ${elsVal}, ${design ?? 1}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+    ON CONFLICT (size_id) DO UPDATE SET offset_x=${ox}, offset_y=${oy}, qr_mm=${qr}, elements=${elsVal},
       design=COALESCE(${design}, label_layouts.design),
       updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
 }
