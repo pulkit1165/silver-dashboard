@@ -385,9 +385,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const codeOverQr = red;
   const rackBelowQr = red;
   // Push the code+QR block to the very top of the white zone (QR "up").
-  if (codeOverQr) qrY = Math.max(top, top + Math.round(0.5 * dp) + elh("code", codeF));
+  if (codeOverQr) qrY = Math.max(top, top + elh("code", codeF)); // code+QR pushed to the very top
   const rackLine = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
-  const rackY = rackBelowQr ? qrY + qrPx + Math.round(1.5 * dp) : 0;
+  const rackY = rackBelowQr ? qrY + qrPx + Math.round(0.8 * dp) : 0; // Rack sits a little higher, right under the QR
   // Right-column attributes: on red, everything EXCEPT Rack No (which prints below QR).
   const colExtras = rackBelowQr ? allExtras.filter((e) => !e.startsWith("Rack No")) : allExtras;
 
@@ -436,7 +436,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   if (fillBig) {
     cy = top;
   } else if (codeOverQr) {
-    cy = top + Math.round(0.5 * dp); // red: name sits right under the banner (uses the top white space)
+    cy = top; // red: name pushed to the very top of the white zone (right under the banner)
   } else {
     cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2)); // centre against the QR
     if (cy + contentH > bottom) cy = bottom - contentH;
