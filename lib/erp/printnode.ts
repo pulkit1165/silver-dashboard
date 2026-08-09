@@ -391,7 +391,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     nameLines = pickedLines.slice(0, 6);
   }
 
-  const baseH = elh("code", codeF) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
+  // RED (85×55): the SKU code prints ABOVE the QR (aligned over it), and the text
+  // column (name → attrs) starts at the TOP of the white zone — this frees vertical
+  // room so long names fit. Push the QR down by half the code height so the
+  // code+QR block stays centred. Other sizes keep code as the first text line.
+  const codeOverQr = red;
+  if (codeOverQr) qrY = Math.max(top, Math.min(bottom - qrPx, qrY + Math.round(elh("code", codeF) / 2)));
+
+  const baseH = (codeOverQr ? 0 : elh("code", codeF)) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
   while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
   const extras = allExtras.slice(0, nEx);
@@ -405,6 +412,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   let cy;
   if (fillBig) {
     cy = top;
+  } else if (codeOverQr) {
+    cy = top + downShift; // red: text column top-aligned → name sits high, max room below
   } else {
     cy = qrY + Math.max(0, Math.round((qrPx - contentH) / 2)); // centre against the QR
     if (cy + contentH > bottom) cy = bottom - contentH;
@@ -435,8 +444,17 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const tdy = (k: string) => emy(k); // per-element vertical nudge from the aligner
   // `CODE:` prefix to match the reference label. `spread` (big label only) is added
   // after every line so the whole block fills the sticker top-to-bottom.
-  { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
-  cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
+  if (codeOverQr) {
+    // Code sits directly ABOVE the QR, aligned to the QR's left edge and fitted to
+    // the QR's width. Its own dx/dy aligner nudges still apply for fine-tuning; the
+    // text column below does NOT advance for it (name starts at the top).
+    const { font, mag } = emFont("code", codeF);
+    const codeY = Math.max(top, qrY - elh("code", codeF));
+    emit("code", qrX + tdx("code"), codeY + tdy("code"), font, mag, fitText(codeStr, font, Math.max(4 * dp, qrPx)));
+  } else {
+    { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
+    cy += elh("code", codeF) + spread; // advance by the CODE's real height (it may be bigger than the name)
+  }
   { const { font, mag } = nameEff; let ny = cy + tdy("name"); for (const nl of nameLines) { emit("name", textX + tdx("name"), ny, font, mag, fitText(nl, font, fw(mag))); ny += nlh({ font, mag }) + spread; } }
   cy += nameLines.length * (nlh(nameEff) + spread);
   // QTY and MRP on SEPARATE lines — combined they overran the width and the MRP
