@@ -601,12 +601,12 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Full-width NAME. Step the font down if it would need too many lines to leave room
   // for the QR + details block below.
   const rawName = esc(String(l.name ?? ""));
-  const qrBoxMax = Math.round((hires ? 20 : 18) * dp);
+  const qrBoxMax = Math.round((hires ? 22 : 20) * dp);
   let nameF = "4";
   let nameLines = wrapAll(rawName, nameF, colW);
-  // Reserve the FULL QR height below the name so the bottom-parked QR can never
-  // ride up into the name; a long name steps its font down to fit above that.
-  const nameRoom = bottom - cy - qrBoxMax - Math.round(2 * dp);
+  // Reserve enough height below the name for a decent QR (a long name steps its font
+  // down to fit above that). ~15mm keeps normal names at 4mm and the QR ~16-20mm.
+  const nameRoom = bottom - cy - Math.round(15 * dp) - Math.round(2 * dp);
   while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
@@ -618,9 +618,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
   const qrPx = qrTotal * modDots;
   const bmp = renderQrBytes(qr, modDots, QUIET);
-  // QR parked at the very BOTTOM-left (extremely low) — but kept inside the white
-  // zone (bottom) so it never bleeds onto the next label on the roll.
-  const qrX = leftM, qrY = Math.max(cy, bottom - qrPx);
+  // QR bottom-left, sitting right under the name and filling down toward the bottom
+  // (kept inside the white zone so it never bleeds onto the next label).
+  const qrX = leftM, qrY = Math.min(cy, bottom - qrPx);
 
   // Details to the right of the QR
   const dx0 = qrX + qrPx + Math.round(3 * dp);
@@ -629,9 +629,8 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
   const extras = ["(Incl. of All Taxes)", `Lot No: ${esc(l.lot ?? "")}`.trimEnd(), `PKD: ${l.pkd ? esc(l.pkd) : today}`, `Rack No: ${esc(l.rack ?? "")}`.trimEnd()];
-  // Details fill the RIGHT column from just below the name (so all lines incl. Rack No
-  // fit) while the QR sits low on the left. Start no lower than the QR top.
-  let dy = Math.min(cy, qrY);
+  // Details start at the QR's top (to the right of it), matching the reference sticker.
+  let dy = qrY;
   emit(dx0, dy, "3", fitText(esc(qtyStr), "3", dW)); dy += lh("3");
   emit(dx0, dy, "3", fitText(esc(mrpStr), "3", dW)); dy += lh("3");
   for (const e of extras) { if (dy + lh("2") > bottom + Math.round(0.5 * dp)) break; emit(dx0, dy, "2", fitText(esc(e), "2", dW)); dy += lh("2"); }
