@@ -584,7 +584,7 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // White printable zone (below the top banner on red; above the bottom footer on green).
   const top = Math.round(Hd * (pos === "bottom" ? 0.30 : 0.06));
   const bottom = Math.round(Hd * (pos === "bottom" ? 0.94 : 0.72));
-  const leftM = Math.round(4 * dp);
+  const leftM = Math.round(7 * dp); // inset so the code/name/QR sit off the left red border
   const rMar = Math.round((red ? 14 : 3) * dp); // clear the hologram strip on red
   const colW = Math.max(10 * dp, Wd - leftM - rMar);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.5 * dp);
@@ -612,16 +612,17 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
 
-  // QR bottom-left
-  const qr = QRCode.create(l.qrToken, { errorCorrectionLevel: "M" });
+  // QR bottom-left. Error-correction "L" = fewer modules → bigger, more-scannable
+  // cells at the same box size. It may extend a touch lower than the text zone
+  // (qrBottom) for more size, while staying inside the label so it can't hit the next.
+  const qr = QRCode.create(l.qrToken, { errorCorrectionLevel: "L" });
   const QUIET = 4; const qrTotal = qr.modules.size + QUIET * 2;
-  const qrAvail = Math.max(Math.round(12 * dp), Math.min(qrBoxMax, bottom - cy));
+  const qrBottom = Math.round(Hd * (pos === "bottom" ? 0.965 : 0.74));
+  const qrAvail = Math.max(Math.round(12 * dp), Math.min(qrBoxMax, qrBottom - cy));
   const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
   const qrPx = qrTotal * modDots;
   const bmp = renderQrBytes(qr, modDots, QUIET);
-  // QR bottom-left, sitting right under the name and filling down toward the bottom
-  // (kept inside the white zone so it never bleeds onto the next label).
-  const qrX = leftM, qrY = Math.min(cy, bottom - qrPx);
+  const qrX = leftM, qrY = Math.min(cy, qrBottom - qrPx);
 
   // Details to the right of the QR — a wider gap gives the (bigger) QR more room.
   const dx0 = qrX + qrPx + Math.round(4 * dp);
