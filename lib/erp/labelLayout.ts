@@ -93,6 +93,18 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
       updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
 }
 
+// Change ONLY the template (design 1/2) for a size — never touches the saved
+// alignment/elements, so toggling the design can't wipe a size's layout even if the
+// caller's on-screen state is stale.
+export async function saveLabelDesign(sizeId: string, design: number, actor?: string | null): Promise<void> {
+  await ensure();
+  const d = design === 2 ? 2 : 1;
+  await getSql()`
+    INSERT INTO label_layouts (size_id, design, updated_by, updated_at)
+    VALUES (${sizeId}, ${d}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+    ON CONFLICT (size_id) DO UPDATE SET design=${d}, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
+}
+
 // Wipe all saved alignments so every size falls back to its built-in (current) layout.
 // DESTRUCTIVE: erases every operator's saved alignment. Guarded so it can only run
 // when a caller explicitly opts in — no accidental/automated wipe can ever fire.

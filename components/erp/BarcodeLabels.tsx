@@ -112,11 +112,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Switch this size between the two label templates (Design 1 / Design 2). Saved to
   // the (protected) layouts table so the choice is locked and never resets.
   async function setLabelDesign(d: number) {
-    const cur = layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 };
-    setLayouts((m) => ({ ...m, [sizeId]: { ...cur, design: d } }));
+    setLayouts((m) => ({ ...m, [sizeId]: { ...(m[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }), design: d } }));
+    // designOnly = change ONLY the template; never sends elements/offsets, so it can
+    // never overwrite a size's saved alignment (even if local state is stale).
     await fetch("/api/erp/labels/layout", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ sizeId, offsetX: cur.offsetX ?? 0, offsetY: cur.offsetY ?? 0, qrMM: cur.qrMM ?? 0, elements: cur.elements ?? {}, design: d }),
+      body: JSON.stringify({ sizeId, design: d, designOnly: true }),
     }).catch(() => {});
   }
   const loadPrinters = useCallback(async () => {
