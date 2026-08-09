@@ -373,22 +373,26 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // and the operator still never has to add per-SKU line breaks.
   const nlh = (c: { font: string; mag: number }) => (F_HEIGHT[c.font] || 24) * c.mag + Math.round(0.6 * dp);
   let nameEff = emFont("name", nameF);
-  // Run the fit-to-full-name step-down on EVERY green hero label (95×70, 70×40,
-  // 65×35, 50×30), not only when the operator forced a size — so long names always
-  // wrap onto as many lines as needed (up to 6) at the largest font that fits, and
-  // are NEVER truncated. Short names still print big (they fit at the top size).
-  if (!useManual && (el.name?.mm || el.name?.f) && !fillBig) {
-    // NON-hero labels (red 85×55) with an explicit name size: keep that size FIXED for
-    // EVERY SKU — long names wrap onto more lines instead of shrinking, so all names
-    // print at the same size. (Extras gate below drops trailing attribute lines if a
-    // very long name needs the room.) Width already excludes the hologram strip.
-    const c = emFont("name", nameF);
-    nameEff = c;
-    const availW = Math.max(1, Math.floor(textW / c.mag)); // magnified glyphs are wider
-    nameLines = wrapAll(esc(rawName), c.font, availW).slice(0, 6);
-  } else if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
-    // GREEN hero labels: the size is a TARGET — use it when the full name fits, else
-    // step DOWN to the largest size that fits (short names big, long names smaller).
+
+  // ── RED 85×55 special layout ──────────────────────────────────────────────
+  // Code CENTRED above the QR; QR high on the left; the attribute lines (Incl of
+  // Taxes / Lot / PKD / Rack) print in a FULL-WIDTH band BELOW the QR so they are
+  // NEVER squeezed out or cut by a long product name. Name+qty+MRP fill the right
+  // column down to that band.
+  const codeOverQr = red;
+  const extrasBelowQr = red;
+  if (codeOverQr) qrY = Math.max(top, top + downShift + elh("code", codeF)); // QR right under the top code
+  const gapQr = Math.round(1.5 * dp);
+  const extrasBandLH = extrasBelowQr ? (F_HEIGHT[exF] || 20) + Math.round(0.35 * dp) : 0; // tight lines in the band
+  const extrasBandH = extrasBelowQr ? allExtras.length * extrasBandLH : 0;
+  // Attribute band is anchored to the BOTTOM of the white zone; name column runs down to it.
+  const extrasTopY = extrasBelowQr ? Math.max(qrY + qrPx + gapQr, bottom - extrasBandH) : 0;
+  const nameFitRoom = extrasBelowQr ? Math.max(8 * dp, extrasTopY - (top + downShift) - Math.round(0.5 * dp)) : fitRoom;
+
+  // Name sizing = TARGET with step-down: normal names print big, a long name steps
+  // down to the largest size that still fits its column. (Attributes are safe either
+  // way — on red they live in the band below the QR.)
+  if (!useManual && (fillBig || el.name?.mm || el.name?.f)) {
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
     const seenH = new Set<number>();
@@ -403,24 +407,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     for (const c of cands) {
       const availW = Math.max(1, Math.floor(textW / c.mag)); // magnified glyphs are wider
       const wr = wrapAll(esc(rawName), c.font, availW);
-      const need = elh("code", codeF) + wr.length * nlh(c) + elh("qty", qtyF) + elh("mrp", qtyF);
+      const need = (codeOverQr ? 0 : elh("code", codeF)) + wr.length * nlh(c) + elh("qty", qtyF) + elh("mrp", qtyF);
       picked = c; pickedLines = wr;
-      if (need <= fitRoom) break; // largest size at which the whole name + core fits
+      if (need <= nameFitRoom) break; // largest size at which the whole name + qty + MRP fit
     }
     nameEff = picked;
-    nameLines = pickedLines.slice(0, 6);
+    nameLines = pickedLines.slice(0, 8);
   }
-
-  // RED (85×55): the SKU code prints ABOVE the QR (aligned over it), and the text
-  // column (name → attrs) starts at the TOP of the white zone — this frees vertical
-  // room so long names fit. Push the QR down by half the code height so the
-  // code+QR block stays centred. Other sizes keep code as the first text line.
-  const codeOverQr = red;
-  if (codeOverQr) qrY = Math.max(top, Math.min(bottom - qrPx, qrY + Math.round(elh("code", codeF) / 2)));
 
   const baseH = (codeOverQr ? 0 : elh("code", codeF)) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
-  while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
+  if (extrasBelowQr) {
+    nEx = allExtras.length; // full-width band below the QR always fits every attribute
+  } else {
+    while (nEx < allExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
+  }
   const extras = allExtras.slice(0, nEx);
 
   const contentH = baseH + extras.length * elh("extras", exF);
@@ -486,9 +487,18 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += elh("qty", qtyF) + spread;
   { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + tdx("mrp"), cy + tdy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
   cy += elh("mrp", qtyF) + spread;
-  // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together
-  // as one "extras" element from the aligner.
-  { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
+  // The attribute lines (Incl of Taxes / Lot / PKD / Rack) move & resize together as
+  // one "extras" element. On RED they print in a FULL-WIDTH band BELOW the QR (fixed
+  // position, tight lines) so a long name can never push them off; other sizes stack
+  // them under the MRP in the right column.
+  {
+    const { font, mag } = emFont("extras", exF);
+    const exX = extrasBelowQr ? qrX : textX;
+    const exW = extrasBelowQr ? Math.max(4 * dp, Wd - exX - rMar) : fw(mag); // full width (minus hologram) on red
+    let ey = (extrasBelowQr ? extrasTopY : cy) + tdy("extras");
+    const step = extrasBelowQr ? extrasBandLH : lh(font) * mag + spread;
+    for (const e of extras) { emit("extras", exX + tdx("extras"), ey, font, mag, fitText(esc(e), font, exW)); ey += step; }
+  }
 
   // Assemble as binary (the QR bitmap carries raw bytes, so we can't use a
   // plain string). Lower density on the finer 300 dpi head keeps modules crisp.
