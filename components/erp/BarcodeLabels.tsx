@@ -36,6 +36,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [type, setType] = useState<Record<number, LabelType>>({});
   const [copies, setCopies] = useState(1);
+  // Unit printed in the Qty line. "" = use each SKU's own unit; otherwise this
+  // overrides it (KIT / SET / PIECE / PCS / …) for every label in this print.
+  const [unitOverride, setUnitOverride] = useState("");
+  const UNIT_OPTIONS = ["", "KIT", "SET", "PIECE", "PCS", "PAIR", "NOS", "BOX", "PKT"];
   const [mode, setMode] = useState<"sheet" | "roll" | "a4tiled" | "a4land">("roll");
   // A4 sheet packing: page margin + gap between labels. Defaults match the
   // original layout; dropping them fits noticeably more per sheet.
@@ -255,7 +259,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-            masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
+            masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
             lot: l.lot, rack: l.rack, pkd: l.pkd,
           })),
         }),
@@ -321,7 +325,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-            masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
+            masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
             lot: l.lot, rack: l.rack, pkd: l.pkd,
           })),
         }),
@@ -366,7 +370,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const payload = {
       labels: printable.map((l) => ({
         sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-        masterQty: l.masterQty, singleQty: l.singleQty, unit: l.unit, price: l.price,
+        masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
         lot: l.lot, rack: l.rack, pkd: l.pkd,
       })),
       // The A4 die sheet is always a full white label (own address); the per-die
@@ -566,6 +570,13 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           Copies
           <input type="number" min={1} value={copies} onChange={(e) => setCopies(Number(e.target.value) || 1)}
             className="w-16 rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm" />
+        </label>
+        <label className="flex items-center gap-2 text-sm font-semibold">
+          Unit
+          <select value={unitOverride} onChange={(e) => setUnitOverride(e.target.value)}
+            className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-2 py-1 text-sm">
+            {UNIT_OPTIONS.map((u) => <option key={u || "auto"} value={u}>{u === "" ? "Auto (SKU's unit)" : u}</option>)}
+          </select>
         </label>
         <span className="text-sm text-[var(--muted)]">{chosen.length} selected</span>
         {roll && (
