@@ -11,7 +11,7 @@ config({ path: ".env.local" });
 // them. NEVER remove an entry unless you have first added that table to schema.ts.
 const RUNTIME_TABLES_PROTECTED = [
   "activity_log", "agent_tokens", "checklist_tasks",
-  "label_layouts", "label_master", "label_names",
+  "label_layouts", "label_locks", "label_master", "label_names",
   "print_jobs", "print_printers", "sku_aliases",
   "mrp_history", "foc_rates", "item_net_rates",
   "party_disc_history", "party_foc_history", "party_item_net_rates", "party_ogl_history",

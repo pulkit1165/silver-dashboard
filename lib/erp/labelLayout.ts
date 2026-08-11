@@ -110,11 +110,20 @@ export async function getLabelLayouts(): Promise<Record<string, LabelLayout>> {
   // an empty result here used to make the print path fall back to the browser's
   // (possibly stale) design — the "it reset on a new PC" symptom. One retry makes
   // that far rarer; defaultDesignFor() is the hard backstop if both attempts fail.
+  const sql = getSql();
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await ensure();
-      const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design, locked, lock_code FROM label_layouts`) as unknown as
-        { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number; locked: boolean; lock_code: string | null }[];
+      // Read the lock columns too, but NEVER let their absence blank the whole layout:
+      // if `locked`/`lock_code` don't exist yet (migration lag on a fresh DB), the SELECT
+      // would throw and getLabelLayouts would return {} → every print resets to defaults.
+      // So on that specific failure we re-read the guaranteed-present columns instead.
+      let rows: { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number; locked?: boolean; lock_code?: string | null }[];
+      try {
+        rows = (await sql`SELECT size_id, offset_x, offset_y, qr_mm, elements, design, locked, lock_code FROM label_layouts`) as unknown as typeof rows;
+      } catch {
+        rows = (await sql`SELECT size_id, offset_x, offset_y, qr_mm, elements, design FROM label_layouts`) as unknown as typeof rows;
+      }
       const out: Record<string, LabelLayout> = {};
       for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1, locked: !!r.locked, lockCode: r.lock_code ?? null };
       return out;
@@ -127,7 +136,10 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
   await ensure();
   // FROZEN when locked: a locked size ignores every alignment write. This is the
   // "even if a tsunami comes it won't change" guarantee — the only way to edit again
-  // is to unlock first (deliberate, logged).
+  // is to unlock first (deliberate, logged). The JS check is a fast path; the REAL
+  // enforcement is the `WHERE label_layouts.locked IS NOT TRUE` on the UPDATE below,
+  // so even if this check hits a transient DB error (isSizeLocked fails open to false)
+  // the database itself still refuses to overwrite a locked row.
   if (await isSizeLocked(sizeId)) return;
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : 0));
   const ox = clamp(l.offsetX, -30, 30), oy = clamp(l.offsetY, -30, 30), qr = clamp(l.qrMM, 0, 60);
@@ -145,7 +157,8 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
     VALUES (${sizeId}, ${ox}, ${oy}, ${qr}, ${elsVal}, ${design ?? 1}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
     ON CONFLICT (size_id) DO UPDATE SET offset_x=${ox}, offset_y=${oy}, qr_mm=${qr}, elements=${elsVal},
       design=COALESCE(${design}, label_layouts.design),
-      updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
+      updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+    WHERE label_layouts.locked IS NOT TRUE`;
 }
 
 // Change ONLY the template (design 1/2) for a size — never touches the saved
@@ -153,12 +166,15 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
 // caller's on-screen state is stale.
 export async function saveLabelDesign(sizeId: string, design: number, actor?: string | null): Promise<void> {
   await ensure();
-  if (await isSizeLocked(sizeId)) return; // frozen while locked
+  if (await isSizeLocked(sizeId)) return; // frozen while locked (JS fast path)
   const d = design === 2 ? 2 : 1;
+  // DB-level enforcement (WHERE ... locked IS NOT TRUE): a locked row can't be changed
+  // even if the JS guard above fails open on a transient error.
   await getSql()`
     INSERT INTO label_layouts (size_id, design, updated_by, updated_at)
     VALUES (${sizeId}, ${d}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
-    ON CONFLICT (size_id) DO UPDATE SET design=${d}, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
+    ON CONFLICT (size_id) DO UPDATE SET design=${d}, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')
+    WHERE label_layouts.locked IS NOT TRUE`;
 }
 
 // Wipe all saved alignments so every size falls back to its built-in (current) layout.
