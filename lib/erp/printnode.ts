@@ -298,7 +298,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const useManual = manualSegs.length > 1;
   // Allow enough name lines that the FULL name always fits (it breaks to more lines
   // / steps the font down rather than ever truncating). Big label up to 4, others up to 3.
-  const nameCap = useManual ? manualSegs.length : (bigLbl || heroSmall ? 4 : 3);
+  const nameCap = useManual ? manualSegs.length : (heroSmall ? 5 : bigLbl ? 4 : 3);
   const linesFor = (nf: string) => (useManual ? manualSegs : wrapAll(esc(rawName), nf, textW));
   const tiers: [string, string, string, string][] = big
     ? [["5", "5", "4", "3"], ["4", "4", "3", "2"], ["3", "3", "2", "2"], ["2", "2", "2", "1"]]
@@ -339,12 +339,25 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // font at which the name (≤ maxL lines) + qty + MRP + the key attributes fit;
     // short names print big, long ones step down a font. The CODE prints one step
     // below the name, so we reserve the code line at (name font − 1).
-    const bigTiers: { f: [string, string, string, string]; maxL: number }[] = [
-      { f: ["5", "5", "3", "2"], maxL: 2 },
-      { f: ["4", "4", "3", "2"], maxL: 3 },
-      { f: ["3", "3", "2", "2"], maxL: 4 },
-      { f: ["2", "2", "2", "1"], maxL: 4 },
-    ];
+    // [code, name, qty/MRP, extras]. On the small hero labels the NAME is the star,
+    // so qty/MRP and the attribute lines sit a font-step BELOW it — that keeps the
+    // name visibly the biggest AND frees the vertical room a long name needs to size
+    // up (instead of collapsing to the same tiny font as qty/MRP). Long names are
+    // allowed more wrap lines (up to 5) so they step down in LINES before FONT.
+    const bigTiers: { f: [string, string, string, string]; maxL: number }[] = heroSmall
+      ? [
+          { f: ["5", "5", "4", "3"], maxL: 2 },
+          { f: ["4", "4", "3", "2"], maxL: 3 },
+          { f: ["3", "3", "2", "1"], maxL: 4 },
+          { f: ["3", "3", "2", "1"], maxL: 5 },
+          { f: ["2", "2", "1", "1"], maxL: 5 },
+        ]
+      : [
+          { f: ["5", "5", "3", "2"], maxL: 2 },
+          { f: ["4", "4", "3", "2"], maxL: 3 },
+          { f: ["3", "3", "2", "2"], maxL: 4 },
+          { f: ["2", "2", "2", "1"], maxL: 4 },
+        ];
     // 70×40 is short — force fewer attribute lines so the name can stay big (the gate
     // still fills in extras below if there's room).
     const KEEP = heroSmall ? 1 : 3;
@@ -362,7 +375,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     chosen = bc ?? (["2", "2", "2", "1"] as [string, string, string, string]);
     if (!bc) nameLines = wrapAll(esc(rawName), "2", textW).slice(0, 4);
   }
-  const [skuF, nameF0, qtyF, exF0] = chosen;
+  const [skuF, nameF0, qtyF0, exF0] = chosen;
+  let qtyF = qtyF0;
 
   // Width-fit so text is never CUT mid-string on narrow (small) labels: shrink the
   // NAME font until the full name fits nameCap lines, and the ATTRIBUTE font until
@@ -378,6 +392,16 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   }
   let exF = exF0;
   { const wE = allExtras.reduce((m, e) => Math.max(m, e.length), 1); while (Number(exF) > 1 && wE * (F_WIDTH[exF] || 16) > textW) exF = String(Number(exF) - 1); }
+  // Small hero labels (70×40 / 65×35 / 50×30): the NAME is the hero. Pin qty/MRP and
+  // the attribute lines a step BELOW the name so the name always reads as the biggest
+  // element, and so the second (all-extras) sizing pass keeps the bigger name instead
+  // of shrinking it down to the detail font.
+  if (heroSmall && !useManual) {
+    // qty/MRP: one step below the name where possible, but never below font 2 (the
+    // MRP must stay clearly readable). The attribute lines may go to font 1.
+    qtyF = String(Math.max(2, Math.min(Number(qtyF0), Number(nameF) - 1)));
+    exF = String(Math.min(Number(exF), Math.max(1, Number(nameF) - 1)));
+  }
 
   // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
@@ -592,17 +616,25 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const Wd = Math.round(w * dp), Hd = Math.round(h * dp);
   const pos = opts.pos === "bottom" ? "bottom" : "top";
   const red = w === 85 && h === 55;
+  // Aligner nudge (mm → dots). Design 2 now honours the saved offset so the whole
+  // block can be moved on-site; previously it was ignored, so "the saved label
+  // didn't come out". Applied to EVERY mark (code/name/QR/details) at emit time.
+  const oxd = Math.round((Number(opts.offsetXmm) || 0) * dp);
+  const oyd = Math.round((Number(opts.offsetYmm) || 0) * dp);
   // White printable zone (below the top banner on red; above the bottom footer on green).
-  const top = Math.round(Hd * (pos === "bottom" ? 0.30 : 0.06));
-  const bottom = Math.round(Hd * (pos === "bottom" ? 0.94 : 0.72));
+  // Red starts LOWER (0.40) so the code/name clear the pre-printed banner + address
+  // band; the content below is sized to still fit all six detail lines incl. Rack No.
+  const top = Math.round(Hd * (pos === "bottom" ? (red ? 0.38 : 0.30) : 0.06));
+  const bottom = Math.round(Hd * (pos === "bottom" ? (red ? 0.965 : 0.94) : 0.72));
   const leftM = Math.round(7 * dp); // inset so the code/name/QR sit off the left red border
   const rMar = Math.round((red ? 14 : 3) * dp); // clear the hologram strip on red
   const colW = Math.max(10 * dp, Wd - leftM - rMar);
   const lh = (f: string) => (F_HEIGHT[f] || 24) + Math.round(0.5 * dp);
   const rows: string[] = [];
   const emit = (x: number, y: number, font: string, text: string) => {
-    rows.push(`TEXT ${x},${y},"${font}",0,1,1,"${text}"`);
-    rows.push(`TEXT ${x + 1},${y},"${font}",0,1,1,"${text}"`); // overstrike = bold
+    const xx = x + oxd, yy = y + oyd;
+    rows.push(`TEXT ${xx},${yy},"${font}",0,1,1,"${text}"`);
+    rows.push(`TEXT ${xx + 1},${yy},"${font}",0,1,1,"${text}"`); // overstrike = bold
   };
 
   // Code header (bare SKU — no "CODE:" prefix), bigger font 4.
@@ -615,10 +647,12 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const qrBoxMax = Math.round((hires ? 26 : 24) * dp); // allow a bigger QR
   let nameF = "4";
   let nameLines = wrapAll(rawName, nameF, colW);
-  // Reserve height below the name for the QR + the six detail lines (Qty/MRP + 4
-  // attributes incl. Rack No). ~16mm keeps normal names at 4mm; a very long name steps
-  // its font down so Rack No is never cut.
-  const nameRoom = bottom - cy - Math.round(16 * dp) - Math.round(2 * dp);
+  // Reserve the EXACT height the six detail lines need (Qty/MRP at font 3 + the four
+  // attribute lines incl. Rack No at font 2) plus a small gap, so the name is forced to
+  // step its font down enough that Rack No can NEVER be pushed past the label bottom —
+  // even now that the whole block starts lower (top 0.38) to clear the pre-printed band.
+  const detailsH = 2 * lh("3") + 4 * lh("2") + Math.round(2 * dp);
+  const nameRoom = bottom - cy - detailsH;
   while (Number(nameF) > 2 && nameLines.length * lh(nameF) > nameRoom) { nameF = String(Number(nameF) - 1); nameLines = wrapAll(rawName, nameF, colW); }
   for (const nl of nameLines) { emit(leftM, cy, nameF, fitText(nl, nameF, colW)); cy += lh(nameF); }
   cy += Math.round(1.5 * dp);
@@ -628,7 +662,7 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // (qrBottom) for more size, while staying inside the label so it can't hit the next.
   const qr = QRCode.create(l.qrToken, { errorCorrectionLevel: "L" });
   const QUIET = 4; const qrTotal = qr.modules.size + QUIET * 2;
-  const qrBottom = Math.round(Hd * (pos === "bottom" ? 0.965 : 0.74));
+  const qrBottom = Math.round(Hd * (pos === "bottom" ? (red ? 0.98 : 0.965) : 0.74));
   const qrAvail = Math.max(Math.round(12 * dp), Math.min(qrBoxMax, qrBottom - cy));
   const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
   const qrPx = qrTotal * modDots;
@@ -654,8 +688,8 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
   const head = [`SIZE ${w} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`, `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, ``].join("\r\n");
   const buf: Buffer[] = [Buffer.from(head, "ascii")];
-  const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX));
-  const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY));
+  const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX + oxd));
+  const qby = Math.max(0, Math.min(Hd - bmp.sideDots, qrY + oyd));
   buf.push(Buffer.from(`BITMAP ${qbx},${qby},${bmp.widthBytes},${bmp.sideDots},0,`, "ascii"));
   buf.push(bmp.bytes);
   buf.push(Buffer.from("\r\n" + rows.join("\r\n") + "\r\n", "ascii"));
