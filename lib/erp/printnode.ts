@@ -514,14 +514,17 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const heroBoldKeys = new Set(["name", "code", "qty", "mrp"]);
   const emit = (k: string, x: number, y: number, font: string, mag: number, text: string) => {
     const rot = rotOf(k);
-    const bold = (fillBig && heroBoldKeys.has(k)) || !!el[k]?.b;
+    // Weight: 0 normal · 1 bold · 2 bolder (aligner "Thickness"). Hero primaries still
+    // default to a heavy weight. Bold = overstrike (TSPL has no bold), offset ALONG the
+    // text's own axis so a rotated line thickens cleanly instead of ghosting sideways.
+    // weight 1 = one overstrike (unchanged from before); weight 2 = + a perpendicular
+    // pass for a noticeably heavier stroke.
+    const weight = Math.max((fillBig && heroBoldKeys.has(k)) ? 2 : 0, Number(el[k]?.b) || 0);
     rows.push(`TEXT ${x},${y},"${font}",${rot},${mag},${mag},"${text}"`);
-    if (bold) {
-      // Bold = overstrike. Offset the duplicate ALONG the text's own axis so a rotated
-      // line (e.g. a vertical PKD) thickens cleanly instead of ghosting sideways.
+    if (weight >= 1) {
       const [bx, by] = rot === 90 ? [0, 1] : rot === 180 ? [-1, 0] : rot === 270 ? [0, -1] : [1, 0];
       rows.push(`TEXT ${x + bx},${y + by},"${font}",${rot},${mag},${mag},"${text}"`);
-      if (fillBig && heroBoldKeys.has(k)) rows.push(`TEXT ${x + (rot % 180 ? by : bx)},${y + (rot % 180 ? bx : by)},"${font}",${rot},${mag},${mag},"${text}"`);
+      if (weight >= 2) rows.push(`TEXT ${x + (rot % 180 ? by : bx)},${y + (rot % 180 ? bx : by)},"${font}",${rot},${mag},${mag},"${text}"`);
     }
   };
   // Each attribute band line maps to its own element key so it can be moved /

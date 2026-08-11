@@ -96,16 +96,21 @@ export default function LabelAligner({
   const now = new Date();
   const todayStr = `${String(now.getDate()).padStart(2, "0")}/${String(now.getMonth() + 1).padStart(2, "0")}/${String(now.getFullYear()).slice(2)}`;
   const r1 = (v: number) => Math.round(v * 10) / 10;
-  const setEl = (k: string, patch: ElOverride) =>
+  // Every edit is a NO-OP while locked — belt-and-braces on top of the disabled Save
+  // and the server/DB refusal, so a locked label can't be changed even on screen.
+  const setEl = (k: string, patch: ElOverride) => {
+    if (locked) return;
     setEls((m) => ({ ...m, [k]: { ...m[k], ...patch } }));
+  };
 
   // ── Drag-to-move (trackpad/mouse): drag any element in the preview to reposition ──
   const dragRef = useRef<{ k: string; sx: number; sy: number; dx0: number; dy0: number } | null>(null);
   const onDragStart = (k: string) => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation(); // don't let a child drag bubble to the "all" background handler
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     setSel(k as ElKey);
+    if (locked) return; // frozen: selecting to view is fine, dragging does nothing
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     dragRef.current = k === "all"
       ? { k, sx: e.clientX, sy: e.clientY, dx0: ox, dy0: oy }
       : { k, sx: e.clientX, sy: e.clientY, dx0: els[k]?.dx || 0, dy0: els[k]?.dy || 0 };
@@ -122,15 +127,20 @@ export default function LabelAligner({
   const dragStyle = { touchAction: "none" as const, cursor: "move" as const };
   // Bold: per text element, or all text at once from the "Whole label" tab.
   const TEXT_KEYS = ["code", "name", "qty", "mrp", "incl", "lot", "pkd", "rack"];
-  const isBold = sel === "all" ? TEXT_KEYS.every((k) => els[k]?.b) : !!els[sel]?.b;
-  const toggleBold = () => {
-    const on = !isBold;
-    if (sel === "all") setEls((m) => { const c = { ...m }; for (const k of TEXT_KEYS) c[k] = { ...c[k], b: on ? 1 : 0 }; return c; });
-    else if (sel !== "qr") setEl(sel, { b: on ? 1 : 0 });
+  // Weight is 0 = normal, 1 = bold, 2 = bolder (heavier overstrike in the printer).
+  // Reads the selected element's level; for "all" it's the common level (else 0).
+  const boldLevel = sel === "all"
+    ? (TEXT_KEYS.every((k) => (Number(els[k]?.b) || 0) >= 2) ? 2 : TEXT_KEYS.every((k) => els[k]?.b) ? 1 : 0)
+    : (Number(els[sel]?.b) || 0);
+  const setBold = (level: number) => {
+    if (locked) return;
+    if (sel === "all") setEls((m) => { const c = { ...m }; for (const k of TEXT_KEYS) c[k] = { ...c[k], b: level }; return c; });
+    else if (sel !== "qr") setEl(sel, { b: level });
   };
 
   // Nudge / size act on whichever attribute is selected.
   const nudge = (axis: "dx" | "dy", d: number) => {
+    if (locked) return;
     if (sel === "all") { if (axis === "dx") setOx((v) => r1(v + d)); else setOy((v) => r1(v + d)); return; }
     setEl(sel, { [axis]: r1((els[sel]?.[axis] || 0) + d) });
   };
@@ -313,11 +323,22 @@ export default function LabelAligner({
             )}
             {sel !== "qr" && sel !== "all" && (
               <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
-                Text size {els[sel]?.f || els[sel]?.mm ? "" : "(auto)"}
-                <div className="flex gap-1">
+                Text size — {mmOf(sel).toFixed(1)} mm {els[sel]?.f || els[sel]?.mm ? "" : "(auto)"}
+                {/* Drag-a-bar sizing: the big obvious "make it bigger" control. Snaps to
+                    0.1mm; the printer picks the closest achievable bitmap height. */}
+                <input type="range" min={1.5} max={12} step={0.1} value={mmOf(sel)}
+                  onChange={(e) => setEl(sel, { mm: Math.round(Number(e.target.value) * 10) / 10 })}
+                  className="accent-[var(--accent)]" />
+                <div className="mt-1 flex gap-1">
+                  <button onClick={() => setEl(sel, { mm: Math.max(1, Math.round((mmOf(sel) - 0.3) * 10) / 10) })}
+                    className="flex-1 rounded-md border border-[var(--border)] bg-white py-1.5 text-sm font-black hover:bg-[var(--surface-2)]" title="Smaller">A−</button>
+                  <button onClick={() => setEl(sel, { mm: Math.min(12, Math.round((mmOf(sel) + 0.3) * 10) / 10) })}
+                    className="flex-1 rounded-md border border-[var(--border)] bg-white py-1.5 text-base font-black hover:bg-[var(--surface-2)]" title="Bigger">A+</button>
+                </div>
+                <div className="mt-1 flex gap-1">
                   {[1, 2, 3, 4, 5, 6].map((f) => (
                     <button key={f} onClick={() => setEl(sel, { f, mm: FONT_MM[f] })}
-                      className={`flex-1 rounded-md border py-1.5 text-xs font-bold ${curFont === f ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
+                      className={`flex-1 rounded-md border py-1 text-[11px] font-bold ${curFont === f ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
                       {["", "XS", "S", "M", "L", "XL", "XXL"][f]}
                     </button>
                   ))}
@@ -344,10 +365,18 @@ export default function LabelAligner({
             )}
 
             {sel !== "qr" && (
-              <button onClick={toggleBold}
-                className={`rounded-lg border px-3 py-2 text-sm font-bold ${isBold ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
-                {isBold ? "✓ Bold" : "Bold"}{sel === "all" ? " (all text)" : ""}
-              </button>
+              <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
+                Thickness{sel === "all" ? " (all text)" : ""}
+                <div className="flex gap-1">
+                  {[{ v: 0, l: "Normal" }, { v: 1, l: "Bold" }, { v: 2, l: "Bolder" }].map((o) => (
+                    <button key={o.v} onClick={() => setBold(o.v)}
+                      className={`flex-1 rounded-md border py-1.5 text-xs ${boldLevel === o.v ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}
+                      style={{ fontWeight: o.v === 0 ? 500 : o.v === 1 ? 700 : 900 }}>
+                      {o.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             {sel !== "all" && sel !== "qr" && (

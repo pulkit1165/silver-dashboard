@@ -98,7 +98,7 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
     const f = Math.round(cl(n(e.f), 0, 7));
     const sz = cl(n(e.sz), 0, 60);
     const mm = Math.round(cl(n(e.mm), 0, 20) * 10) / 10;
-    const b = e.b ? 1 : 0;
+    const b = Math.max(0, Math.min(2, Math.round(n(e.b)))); // 0 normal · 1 bold · 2 bolder
     const r = norm90(n(e.r)); // rotation: 0 | 90 | 180 | 270
     if (dx || dy || f || sz || b || mm || r) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}), ...(mm ? { mm } : {}), ...(b ? { b } : {}), ...(r ? { r } : {}) };
   }
