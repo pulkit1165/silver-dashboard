@@ -7,7 +7,7 @@ import { getSql } from "./db";
 // per-attribute overrides (qr|code|name|qty|mrp → dx/dy mm, f = font, sz = QR mm).
 
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
-export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
+export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number; locked?: boolean; lockCode?: string | null };
 
 // Which design template a size is on by DEFAULT, as a server-side fact. The red
 // 85×55 stock is always the classic bottom-QR Design 2. The print path uses this
@@ -49,6 +49,28 @@ function ensure(): Promise<void> {
       } catch { /* concurrent create */ }
       try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS elements jsonb`; } catch { /* concurrent/exists */ }
       try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS design integer DEFAULT 1`; } catch { /* concurrent/exists */ }
+      // Lock: once a size is locked it is FROZEN — no save/reset/aligner write can
+      // change it (see the guards in saveLabelLayout/saveLabelDesign). lock_code is a
+      // human unique id (LBL-####) stamped on every print's audit line so a layout can
+      // always be traced and restored from label_locks.
+      try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS locked boolean DEFAULT false`; } catch { /* concurrent/exists */ }
+      try { await sql`ALTER TABLE label_layouts ADD COLUMN IF NOT EXISTS lock_code text`; } catch { /* concurrent/exists */ }
+      // Immutable snapshot history: each lock writes the FULL layout (design + offsets +
+      // qr + every element position) here under its unique code, so "bring it back by
+      // code" always works even if the live row is later disturbed.
+      try {
+        await sql`CREATE TABLE IF NOT EXISTS label_locks (
+          lock_code text PRIMARY KEY,
+          size_id text NOT NULL,
+          w integer, h integer,
+          design integer,
+          offset_x double precision, offset_y double precision, qr_mm double precision,
+          elements jsonb,
+          locked_by text,
+          locked_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+          active boolean DEFAULT true
+        )`;
+      } catch { /* concurrent create */ }
     })().catch((e) => { ensured = null; throw e; });
   }
   return ensured;
@@ -91,10 +113,10 @@ export async function getLabelLayouts(): Promise<Record<string, LabelLayout>> {
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       await ensure();
-      const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design FROM label_layouts`) as unknown as
-        { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number }[];
+      const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design, locked, lock_code FROM label_layouts`) as unknown as
+        { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number; locked: boolean; lock_code: string | null }[];
       const out: Record<string, LabelLayout> = {};
-      for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1 };
+      for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1, locked: !!r.locked, lockCode: r.lock_code ?? null };
       return out;
     } catch { /* fall through to retry, then to {} */ }
   }
@@ -103,6 +125,10 @@ export async function getLabelLayouts(): Promise<Record<string, LabelLayout>> {
 
 export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: string | null): Promise<void> {
   await ensure();
+  // FROZEN when locked: a locked size ignores every alignment write. This is the
+  // "even if a tsunami comes it won't change" guarantee — the only way to edit again
+  // is to unlock first (deliberate, logged).
+  if (await isSizeLocked(sizeId)) return;
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, Number.isFinite(v) ? v : 0));
   const ox = clamp(l.offsetX, -30, 30), oy = clamp(l.offsetY, -30, 30), qr = clamp(l.qrMM, 0, 60);
   const els = cleanElements(l.elements);
@@ -127,6 +153,7 @@ export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: st
 // caller's on-screen state is stale.
 export async function saveLabelDesign(sizeId: string, design: number, actor?: string | null): Promise<void> {
   await ensure();
+  if (await isSizeLocked(sizeId)) return; // frozen while locked
   const d = design === 2 ? 2 : 1;
   await getSql()`
     INSERT INTO label_layouts (size_id, design, updated_by, updated_at)
@@ -142,6 +169,91 @@ export async function clearAllLayouts(confirm?: "WIPE-ALL-LABEL-LAYOUTS"): Promi
     throw new Error("clearAllLayouts refused: pass the explicit confirm token to wipe all saved alignments.");
   }
   await ensure();
-  const rows = (await getSql()`DELETE FROM label_layouts RETURNING size_id`) as unknown as { size_id: string }[];
+  // Locked sizes are NEVER wiped — even the explicit wipe skips them.
+  const rows = (await getSql()`DELETE FROM label_layouts WHERE NOT COALESCE(locked, false) RETURNING size_id`) as unknown as { size_id: string }[];
   return rows.length;
+}
+
+// ── Lock / unique code / restore ────────────────────────────────────────────
+export type LabelLock = {
+  lockCode: string; sizeId: string; w: number | null; h: number | null; design: number;
+  offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>;
+  lockedBy: string | null; lockedAt: string; active: boolean;
+};
+
+export async function isSizeLocked(sizeId: string): Promise<boolean> {
+  try {
+    await ensure();
+    const rows = (await getSql()`SELECT locked FROM label_layouts WHERE size_id=${sizeId}`) as unknown as { locked: boolean }[];
+    return !!rows[0]?.locked;
+  } catch { return false; }
+}
+
+// Next unique human code LBL-0001, LBL-0002, … (max existing + 1). Retries on the
+// rare PK collision from two simultaneous locks.
+async function nextLockCode(): Promise<string> {
+  const rows = (await getSql()`SELECT lock_code FROM label_locks WHERE lock_code ~ '^LBL-[0-9]+$'`) as unknown as { lock_code: string }[];
+  let max = 0;
+  for (const r of rows) { const num = parseInt(r.lock_code.slice(4), 10); if (Number.isFinite(num) && num > max) max = num; }
+  return `LBL-${String(max + 1).padStart(4, "0")}`;
+}
+
+// Lock a size: snapshot the FULL current layout into label_locks under a new unique
+// code, and freeze the live row (locked=true, lock_code set). Returns the code.
+export async function lockLabelSize(sizeId: string, wh: { w?: number; h?: number } = {}, actor?: string | null): Promise<{ lockCode: string; already?: boolean }> {
+  await ensure();
+  const sql = getSql();
+  const cur = (await sql`SELECT offset_x, offset_y, qr_mm, elements, design, locked, lock_code FROM label_layouts WHERE size_id=${sizeId}`) as unknown as
+    { offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number; locked: boolean; lock_code: string | null }[];
+  const row = cur[0];
+  if (row?.locked && row.lock_code) return { lockCode: row.lock_code, already: true };
+  const design = n(row?.design) === 2 ? 2 : 1;
+  const els = cleanElements(row?.elements);
+  const elsVal = els ? sql.json(els as never) : null;
+  // Retry a couple of times in case the code was taken concurrently.
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const code = await nextLockCode();
+    try {
+      await sql`INSERT INTO label_locks (lock_code, size_id, w, h, design, offset_x, offset_y, qr_mm, elements, locked_by, locked_at, active)
+        VALUES (${code}, ${sizeId}, ${wh.w ?? null}, ${wh.h ?? null}, ${design}, ${n(row?.offset_x)}, ${n(row?.offset_y)}, ${n(row?.qr_mm)}, ${elsVal}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'), true)`;
+      await sql`INSERT INTO label_layouts (size_id, design, locked, lock_code, updated_by, updated_at)
+        VALUES (${sizeId}, ${design}, true, ${code}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+        ON CONFLICT (size_id) DO UPDATE SET locked=true, lock_code=${code}, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
+      return { lockCode: code };
+    } catch { /* code collided — try the next number */ }
+  }
+  throw new Error("Could not allocate a lock code — please retry.");
+}
+
+// Unlock so the size can be edited again (history is kept; the code stays recorded).
+export async function unlockLabelSize(sizeId: string, actor?: string | null): Promise<void> {
+  await ensure();
+  await getSql()`UPDATE label_layouts SET locked=false, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS') WHERE size_id=${sizeId}`;
+}
+
+export async function listLabelLocks(): Promise<LabelLock[]> {
+  try {
+    await ensure();
+    const rows = (await getSql()`SELECT lock_code, size_id, w, h, design, offset_x, offset_y, qr_mm, elements, locked_by, locked_at, active FROM label_locks ORDER BY locked_at DESC, lock_code DESC`) as unknown as
+      { lock_code: string; size_id: string; w: number | null; h: number | null; design: number; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; locked_by: string | null; locked_at: string; active: boolean }[];
+    return rows.map((r) => ({ lockCode: r.lock_code, sizeId: r.size_id, w: r.w, h: r.h, design: n(r.design) === 2 ? 2 : 1, offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), lockedBy: r.locked_by, lockedAt: r.locked_at, active: !!r.active }));
+  } catch { return []; }
+}
+
+// Restore a saved lock snapshot back onto its size and re-freeze it. This is the
+// "it got disturbed — bring back LBL-0007" path.
+export async function restoreLabelLock(lockCode: string, actor?: string | null): Promise<{ sizeId: string } | null> {
+  await ensure();
+  const sql = getSql();
+  const rows = (await sql`SELECT lock_code, size_id, design, offset_x, offset_y, qr_mm, elements FROM label_locks WHERE lock_code=${lockCode}`) as unknown as
+    { lock_code: string; size_id: string; design: number; offset_x: number; offset_y: number; qr_mm: number; elements: unknown }[];
+  const r = rows[0];
+  if (!r) return null;
+  const els = cleanElements(r.elements);
+  const elsVal = els ? sql.json(els as never) : null;
+  const design = n(r.design) === 2 ? 2 : 1;
+  await sql`INSERT INTO label_layouts (size_id, offset_x, offset_y, qr_mm, elements, design, locked, lock_code, updated_by, updated_at)
+    VALUES (${r.size_id}, ${n(r.offset_x)}, ${n(r.offset_y)}, ${n(r.qr_mm)}, ${elsVal}, ${design}, true, ${r.lock_code}, ${actor ?? null}, to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+    ON CONFLICT (size_id) DO UPDATE SET offset_x=${n(r.offset_x)}, offset_y=${n(r.offset_y)}, qr_mm=${n(r.qr_mm)}, elements=${elsVal}, design=${design}, locked=true, lock_code=${r.lock_code}, updated_by=${actor ?? null}, updated_at=to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`;
+  return { sizeId: r.size_id };
 }

@@ -3,6 +3,7 @@ import { printLabels, listPrinters, type LabelData, type LayoutOpts } from "@/li
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -65,5 +66,14 @@ export async function POST(req: Request) {
   };
   const results = await printLabels(printerId, labels, w, h, opts);
   const sent = results.filter((r) => r.ok).length;
+  // Audit which template (design) + lock code produced this batch, so a print can
+  // always be traced back to its exact frozen layout.
+  const effDesign = (enforcedDesignFor(sizeId) ?? (Number(src.design) === 2 ? 2 : 1)) === 2 ? 2 : 1;
+  const lockCode = (dbLay && "lockCode" in dbLay ? (dbLay as { lockCode?: string | null }).lockCode : null) ?? null;
+  if (sent > 0) logActivity({
+    actor: user.name, actorRole: user.role, action: "label.print.tspl", entity: "label_layout", entityId: sizeId,
+    summary: `Printed ${sent} label(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
+    meta: { sizeId, design: effDesign, lockCode, count: sent, engine: "printnode" },
+  }).catch(() => {});
   return NextResponse.json({ ok: sent > 0, sent, total: results.length, results });
 }

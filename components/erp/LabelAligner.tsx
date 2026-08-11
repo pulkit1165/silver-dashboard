@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
-export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
+export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number; locked?: boolean; lockCode?: string | null };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
 // `bg` = the label colour under the QR (white panel on red stock, green on green
@@ -43,17 +43,45 @@ const TABS: { key: ElKey; label: string }[] = [
 const FONT_MM: Record<number, number> = { 1: 1.7, 2: 2.1, 3: 2.6, 4: 3.2, 5: 3.9, 6: 7.6, 7: 11.4 };
 
 export default function LabelAligner({
-  sizeId, w, h, pos, sample, initial, onClose, onSaved,
+  sizeId, w, h, pos, sample, initial, onClose, onSaved, onLockChange,
 }: {
   sizeId: string; w: number; h: number; pos: "top" | "bottom";
   sample: { code: string; name: string; qty: string; mrp: string };
   initial: Layout; onClose: () => void; onSaved: (l: Layout) => void;
+  onLockChange?: (locked: boolean, lockCode: string | null) => void;
 }) {
   const [ox, setOx] = useState(initial.offsetX || 0);
   const [oy, setOy] = useState(initial.offsetY || 0);
   const [els, setEls] = useState<Record<string, ElOverride>>(initial.elements ? JSON.parse(JSON.stringify(initial.elements)) : {});
   const [sel, setSel] = useState<ElKey>("qr");
   const [saving, setSaving] = useState(false);
+  // Lock state: once locked the layout is FROZEN on the server (no save can change it).
+  const [locked, setLocked] = useState(!!initial.locked);
+  const [lockCode, setLockCode] = useState<string | null>(initial.lockCode ?? null);
+  const [locking, setLocking] = useState(false);
+  async function doLock() {
+    if (!confirm(`Lock the ${w}×${h} mm label?\n\nThis freezes its design + alignment and gives it a unique code. After locking, NOTHING (resets, other PCs, re-aligns) can change it until you unlock. Make sure your test print looked right first.`)) return;
+    setLocking(true);
+    try {
+      const r = await fetch("/api/erp/labels/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "lock", sizeId, w, h }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert("Could not lock: " + (d.error || `server ${r.status}`)); return; }
+      setLocked(true); setLockCode(d.lockCode); onLockChange?.(true, d.lockCode);
+      alert(`🔒 Locked as ${d.lockCode}.\n\nThis exact layout is saved on the backend under ${d.lockCode}. If it ever gets disturbed, restore it by this code.`);
+    } catch { alert("Could not lock — network error."); }
+    finally { setLocking(false); }
+  }
+  async function doUnlock() {
+    if (!confirm(`Unlock the ${w}×${h} mm label so it can be edited again?\n\nThe saved snapshot ${lockCode || ""} is kept — you can always re-lock or restore it.`)) return;
+    setLocking(true);
+    try {
+      const r = await fetch("/api/erp/labels/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "unlock", sizeId }) });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert("Could not unlock: " + (d.error || `server ${r.status}`)); return; }
+      setLocked(false); onLockChange?.(false, lockCode);
+    } catch { alert("Could not unlock — network error."); }
+    finally { setLocking(false); }
+  }
   // free-text draft for the "exact mm" box so typing isn't snapped back mid-keystroke
   const [mmDraft, setMmDraft] = useState<{ k: string; v: string } | null>(null);
 
@@ -148,6 +176,7 @@ export default function LabelAligner({
   const selStyle = (k: ElKey) => sel === k ? { outline: "2px solid #e11d2a", outlineOffset: 2, borderRadius: 3 } : {};
 
   async function save() {
+    if (locked) { alert(`This label is locked (${lockCode || ""}). Unlock it first to make changes.`); return; }
     setSaving(true);
     try {
       const body = { sizeId, offsetX: ox, offsetY: oy, qrMM: 0, elements: els };
@@ -175,8 +204,18 @@ export default function LabelAligner({
       <div className="max-h-full overflow-auto rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="mb-3 flex items-center justify-between gap-6">
           <h2 className="text-lg font-extrabold">🎯 Design label · {w} × {h} mm</h2>
-          <button onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">✕ Close</button>
+          <div className="flex items-center gap-2">
+            {locked && lockCode && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--accent-2-bg)] px-3 py-1 text-xs font-extrabold text-[var(--accent-2)]">🔒 Locked · {lockCode}</span>
+            )}
+            <button onClick={onClose} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">✕ Close</button>
+          </div>
         </div>
+        {locked && (
+          <div className="mb-3 rounded-lg border border-[var(--accent-2)] bg-[var(--accent-2-bg)] px-3 py-2 text-xs font-semibold text-[var(--accent-2)]">
+            This label is <b>frozen</b> under <b>{lockCode}</b> — resets, other PCs and re-aligns cannot change it. Unlock below to edit.
+          </div>
+        )}
 
         {/* attribute tabs */}
         <div className="mb-4 flex flex-wrap gap-1.5">
@@ -320,11 +359,30 @@ export default function LabelAligner({
             )}
 
             <div className="flex gap-2">
-              <button onClick={() => { if (sel === "all") { setOx(0); setOy(0); } else setEls((m) => { const c = { ...m }; delete c[sel]; return c; }); }}
-                className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:bg-[var(--surface-2)]">Reset this</button>
-              <button onClick={save} disabled={saving} className="flex-1 rounded-lg bg-[var(--accent-2)] px-3 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60">{saving ? "Saving…" : "Save all"}</button>
+              <button onClick={() => { if (sel === "all") { setOx(0); setOy(0); } else setEls((m) => { const c = { ...m }; delete c[sel]; return c; }); }} disabled={locked}
+                className="flex-1 rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:bg-[var(--surface-2)] disabled:opacity-40">Reset this</button>
+              <button onClick={save} disabled={saving || locked} className="flex-1 rounded-lg bg-[var(--accent-2)] px-3 py-2 text-sm font-bold text-white hover:opacity-90 disabled:opacity-60">{saving ? "Saving…" : "Save all"}</button>
             </div>
-            <button onClick={() => { setOx(0); setOy(0); setEls({}); }} className="text-xs font-semibold text-[var(--muted)] underline hover:text-[var(--accent-strong)]">Reset the whole label to auto</button>
+            {!locked && (
+              <button onClick={() => { setOx(0); setOy(0); setEls({}); }} className="text-xs font-semibold text-[var(--muted)] underline hover:text-[var(--accent-strong)]">Reset the whole label to auto</button>
+            )}
+
+            {/* Lock: freeze this size after a good test print — mints a unique code and
+                makes the layout tsunami-proof (no reset/PC/re-align can change it). */}
+            <div className="mt-1 rounded-lg border-2 border-dashed border-[var(--border)] p-2">
+              {!locked ? (
+                <button onClick={doLock} disabled={locking}
+                  className="w-full rounded-lg bg-[var(--accent)] px-3 py-2 text-sm font-extrabold text-white hover:bg-[var(--accent-strong)] disabled:opacity-60">
+                  {locking ? "Locking…" : "🔒 Lock this label"}
+                </button>
+              ) : (
+                <button onClick={doUnlock} disabled={locking}
+                  className="w-full rounded-lg border border-[var(--accent)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)] disabled:opacity-60">
+                  {locking ? "…" : `🔓 Unlock (${lockCode || "locked"})`}
+                </button>
+              )}
+              <p className="mt-1 text-[10px] text-[var(--muted-2)]">Save &amp; test-print first. Locking freezes design + alignment under a unique code you can always restore by.</p>
+            </div>
             <p className="text-[10px] text-[var(--muted-2)]">Saved for this size and shared with every ERP PC — applied automatically on every print.</p>
           </div>
         </div>

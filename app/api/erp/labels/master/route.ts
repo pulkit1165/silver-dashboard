@@ -22,6 +22,7 @@ export async function POST(req: Request) {
   if (!skuCode) return NextResponse.json({ ok: false, error: "skuCode required" }, { status: 400 });
   await saveLabelMaster(skuCode, {
     line1: b.line1, line2: b.line2, line3: b.line3, units: b.units, lot: b.lot, rack: b.rack,
+    unitQty: Number(b.unitQty) || 0,
   }, user.name);
   return NextResponse.json({ ok: true });
 }

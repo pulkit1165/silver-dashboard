@@ -4,6 +4,7 @@ import { enqueueJobs } from "@/lib/erp/printBridge";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
+import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
@@ -55,5 +56,13 @@ export async function POST(req: Request) {
 
   const jobs = labels.map((l) => ({ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }));
   const ids = await enqueueJobs(printerId, jobs, user.name);
+  // Audit which template (design) + lock code produced this batch.
+  const effDesign = (enforcedDesignFor(sizeId) ?? (Number(src.design) === 2 ? 2 : 1)) === 2 ? 2 : 1;
+  const lockCode = (dbLay && "lockCode" in dbLay ? (dbLay as { lockCode?: string | null }).lockCode : null) ?? null;
+  if (ids.length) logActivity({
+    actor: user.name, actorRole: user.role, action: "label.print.tspl", entity: "label_layout", entityId: sizeId,
+    summary: `Queued ${ids.length} label(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
+    meta: { sizeId, design: effDesign, lockCode, count: ids.length, engine: "bridge" },
+  }).catch(() => {});
   return NextResponse.json({ ok: true, ids, queued: ids.length });
 }

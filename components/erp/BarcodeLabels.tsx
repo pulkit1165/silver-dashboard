@@ -97,7 +97,23 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Per-SKU print name overrides (with manual line breaks). Shared across PCs.
   const [labelNames, setLabelNames] = useState<Record<string, string>>({});
   // Label Master (structured Line 1/2/3 + units/lot/rack per SKU) — takes precedence on print.
-  const [labelMaster, setLabelMaster] = useState<Record<string, { line1: string; line2: string; line3: string; units: string; lot: string; rack: string }>>({});
+  const [labelMaster, setLabelMaster] = useState<Record<string, { line1: string; line2: string; line3: string; units: string; lot: string; rack: string; unitQty?: number }>>({});
+  // Per-SKU Unit + Qty editor (units like SET/KIT + a count that prints in the Qty line).
+  const [unitEdit, setUnitEdit] = useState<{ code: string; unit: string; qty: string } | null>(null);
+  async function saveUnitEdit() {
+    if (!unitEdit) return;
+    const code = unitEdit.code;
+    const unit = unitEdit.unit.trim();
+    const qty = Math.max(0, Math.round(Number(unitEdit.qty) || 0));
+    const existing = labelMaster[code] || { line1: "", line2: "", line3: "", units: "", lot: "", rack: "" };
+    // Merge with existing master so we don't wipe the name lines / lot / rack.
+    await fetch("/api/erp/labels/master", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ skuCode: code, line1: existing.line1, line2: existing.line2, line3: existing.line3, lot: existing.lot, rack: existing.rack, units: unit, unitQty: qty }),
+    }).catch(() => {});
+    setLabelMaster((m) => ({ ...m, [code]: { ...existing, units: unit, unitQty: qty } }));
+    setUnitEdit(null);
+  }
   useEffect(() => {
     fetch("/api/erp/labels/master").then((r) => r.json()).then((d) => { if (d.ok) setLabelMaster(d.master || {}); }).catch(() => {});
   }, []);
@@ -230,7 +246,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const lot = m?.lot || l.lot;
     const rack = m?.rack || l.rack;
     const unit = m?.units || l.unit;
-    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, lot, rack, unit, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
+    // Per-SKU saved quantity (units × count). When set it drives the printed Qty number.
+    const unitQty = m?.unitQty && m.unitQty > 0 ? m.unitQty : undefined;
+    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, lot, rack, unit, unitQty, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
   });
 
   const labelStyle = (roll || a4) ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
@@ -259,7 +277,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-            masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
+            masterQty: l.unitQty ?? l.masterQty, singleQty: l.unitQty ?? l.singleQty, unit: unitOverride || l.unit, price: l.price,
             lot: l.lot, rack: l.rack, pkd: l.pkd,
           })),
         }),
@@ -325,7 +343,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           },
           labels: printable.map((l) => ({
             sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-            masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
+            masterQty: l.unitQty ?? l.masterQty, singleQty: l.unitQty ?? l.singleQty, unit: unitOverride || l.unit, price: l.price,
             lot: l.lot, rack: l.rack, pkd: l.pkd,
           })),
         }),
@@ -370,7 +388,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const payload = {
       labels: printable.map((l) => ({
         sku_code: l.sku_code, qrToken: l.qrToken, name: l.name, type: l.type,
-        masterQty: l.masterQty, singleQty: l.singleQty, unit: unitOverride || l.unit, price: l.price,
+        masterQty: l.unitQty ?? l.masterQty, singleQty: l.unitQty ?? l.singleQty, unit: unitOverride || l.unit, price: l.price,
         lot: l.lot, rack: l.rack, pkd: l.pkd,
       })),
       // The A4 die sheet is always a full white label (own address); the per-die
@@ -415,7 +433,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               <div className="bl-sku">{l.sku_code}</div>
               <div className="bl-name">{String(l.name).split("\n").map((ln, i) => <div key={i}>{ln}</div>)}</div>
               <div className="bl-qty">
-                {l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`}
+                {l.type === "master" ? `QTY: ${l.unitQty ?? l.masterQty} ${l.unit}` : `Qty. ${l.unitQty ?? l.singleQty || 1} ${l.unit}`}
                 {" · "}MRP.Rs.{l.price.toFixed(0)}/-
               </div>
               {showFull && <div className="bl-tax">(Incl. of All Taxes)</div>}
@@ -522,9 +540,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           </label>
         )}
         {roll && (
-          <button onClick={() => setAlignOpen(true)} title="Fine-tune this size's alignment (nudge / resize), on top of the current layout"
+          <button onClick={() => setAlignOpen(true)} title={layouts[sizeId]?.locked ? `Locked as ${layouts[sizeId]?.lockCode} — open to view or unlock` : "Fine-tune this size's alignment (nudge / resize), then lock it"}
             className="rounded-lg border border-[var(--accent)] px-3 py-1.5 text-sm font-bold text-[var(--accent-strong)] hover:bg-[var(--accent-bg)]">
-            🎯 Align{(layouts[sizeId]?.offsetX || layouts[sizeId]?.offsetY || layouts[sizeId]?.qrMM || (layouts[sizeId]?.elements && Object.keys(layouts[sizeId].elements!).length)) ? " ✓" : ""}
+            {layouts[sizeId]?.locked ? `🔒 ${layouts[sizeId]?.lockCode ?? "Locked"}` : <>🎯 Align{(layouts[sizeId]?.offsetX || layouts[sizeId]?.offsetY || layouts[sizeId]?.qrMM || (layouts[sizeId]?.elements && Object.keys(layouts[sizeId].elements!).length)) ? " ✓" : ""}</>}
           </button>
         )}
         {roll && (
@@ -784,6 +802,24 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         </div>
       )}
 
+      {/* Per-SKU Unit + Qty — pick the unit (SET/KIT/…) and how many; saved once per
+          SKU and printed in the Qty line. Editable here or in Barcode Master. */}
+      {chosen.length > 0 && (
+        <div className="no-print flex flex-wrap items-center gap-2">
+          <span className="text-xs font-bold uppercase text-[var(--muted)]">⚖ Unit &amp; Qty:</span>
+          {chosen.map((i) => {
+            const mm = labelMaster[i.sku_code];
+            const set = mm?.units && (mm?.unitQty ?? 0) > 0;
+            return (
+              <button key={i.id} onClick={() => setUnitEdit({ code: i.sku_code, unit: mm?.units || "PCS", qty: String(mm?.unitQty && mm.unitQty > 0 ? mm.unitQty : 1) })}
+                className={`rounded-lg border px-2 py-1 text-xs font-bold hover:bg-[var(--surface-2)] ${set ? "border-[var(--accent)] text-[var(--accent-strong)]" : "border-[var(--border)] bg-white"}`}>
+                ⚖ {i.sku_code}{set ? `: ${mm!.unitQty} ${mm!.units}` : ""}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {/* On-screen preview (inline). In print this is hidden — the body-level
           portal below is what actually prints. */}
       <div className={`print-area ${roll ? "roll" : a4 ? "a4sheet" : ""}`}>{renderSheet()}</div>
@@ -823,7 +859,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             : { code: "HH12006", name: "CENTER STAND KIT SPL", qty: "Qty. 1 PCS", mrp: "MRP.Rs.570/-" }}
           initial={layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }}
           onClose={() => setAlignOpen(false)}
-          onSaved={(l) => { setLayouts((m) => ({ ...m, [sizeId]: { ...l, design: m[sizeId]?.design ?? 1 } })); setAlignOpen(false); setPnMsg({ ok: true, text: `Alignment saved for ${dims.w}×${dims.h} mm.` }); }}
+          onSaved={(l) => { setLayouts((m) => ({ ...m, [sizeId]: { ...m[sizeId], ...l, design: m[sizeId]?.design ?? 1 } })); setAlignOpen(false); setPnMsg({ ok: true, text: `Alignment saved for ${dims.w}×${dims.h} mm.` }); }}
+          onLockChange={(lk, code) => {
+            setLayouts((m) => ({ ...m, [sizeId]: { ...(m[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }), locked: lk, lockCode: code } }));
+            setPnMsg({ ok: true, text: lk ? `🔒 ${dims.w}×${dims.h} mm locked as ${code} — frozen and safe.` : `🔓 ${dims.w}×${dims.h} mm unlocked — editable again.` });
+          }}
         />
       )}
     </div>
