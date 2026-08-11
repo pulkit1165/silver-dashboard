@@ -63,6 +63,12 @@ export default function LabelAligner({
     if (!confirm(`Lock the ${w}×${h} mm label?\n\nThis freezes its design + alignment and gives it a unique code. After locking, NOTHING (resets, other PCs, re-aligns) can change it until you unlock. Make sure your test print looked right first.`)) return;
     setLocking(true);
     try {
+      // SAVE-THEN-LOCK: persist exactly what's on screen FIRST, so the frozen snapshot is
+      // precisely what the operator sees — never a stale earlier save. (The lock endpoint
+      // snapshots the DB row, so the DB must hold the current alignment before we lock.)
+      const sv = await fetch("/api/erp/labels/layout", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sizeId, offsetX: ox, offsetY: oy, qrMM: 0, elements: els }) });
+      const svd = await sv.json().catch(() => ({}));
+      if (!sv.ok || !svd.ok) { alert("Could not save the current alignment before locking — nothing was locked. " + (svd.error || `server ${sv.status}`)); return; }
       const r = await fetch("/api/erp/labels/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "lock", sizeId, w, h }) });
       const d = await r.json().catch(() => ({}));
       if (!r.ok || !d.ok) { alert("Could not lock: " + (d.error || `server ${r.status}`)); return; }
