@@ -9,6 +9,23 @@ import { getSql } from "./db";
 export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
 export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
 
+// Which design template a size is on by DEFAULT, as a server-side fact. The red
+// 85×55 stock is always the classic bottom-QR Design 2. The print path uses this
+// whenever the DB row can't be read (cold serverless / momentary Neon hiccup on a
+// freshly-set-up PC) so `design` is NEVER taken from the browser — a new PC or a
+// new printer can therefore never make the label "reset" to the wrong template.
+const DEFAULT_DESIGN_BY_SIZE: Record<string, number> = { "red-85x55": 2 };
+export function defaultDesignFor(sizeId: string): number {
+  return DEFAULT_DESIGN_BY_SIZE[sizeId] ?? 1;
+}
+// Sizes whose template is FIXED and must never vary by PC/printer/cache. The print
+// path forces this design regardless of what the DB row or the browser says, so the
+// red label can never come out on the wrong template. Returns null if not enforced.
+const ENFORCED_DESIGN_BY_SIZE: Record<string, number> = { "red-85x55": 2 };
+export function enforcedDesignFor(sizeId: string): number | null {
+  return ENFORCED_DESIGN_BY_SIZE[sizeId] ?? null;
+}
+
 let ensured: Promise<void> | null = null;
 function ensure(): Promise<void> {
   if (!ensured) {
@@ -67,14 +84,21 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
 }
 
 export async function getLabelLayouts(): Promise<Record<string, LabelLayout>> {
-  try {
-    await ensure();
-    const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design FROM label_layouts`) as unknown as
-      { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number }[];
-    const out: Record<string, LabelLayout> = {};
-    for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1 };
-    return out;
-  } catch { return {}; }
+  // Retry once: a cold serverless instance's first hit on Neon can time out, and
+  // an empty result here used to make the print path fall back to the browser's
+  // (possibly stale) design — the "it reset on a new PC" symptom. One retry makes
+  // that far rarer; defaultDesignFor() is the hard backstop if both attempts fail.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      await ensure();
+      const rows = (await getSql()`SELECT size_id, offset_x, offset_y, qr_mm, elements, design FROM label_layouts`) as unknown as
+        { size_id: string; offset_x: number; offset_y: number; qr_mm: number; elements: unknown; design: number }[];
+      const out: Record<string, LabelLayout> = {};
+      for (const r of rows) out[r.size_id] = { offsetX: n(r.offset_x), offsetY: n(r.offset_y), qrMM: n(r.qr_mm), elements: cleanElements(r.elements), design: n(r.design) === 2 ? 2 : 1 };
+      return out;
+    } catch { /* fall through to retry, then to {} */ }
+  }
+  return {};
 }
 
 export async function saveLabelLayout(sizeId: string, l: LabelLayout, actor?: string | null): Promise<void> {

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { printLabels, listPrinters, type LabelData, type LayoutOpts } from "@/lib/erp/printnode";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { getLabelLayouts } from "@/lib/erp/labelLayout";
+import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
 
 export const dynamic = "force-dynamic";
 
@@ -34,7 +34,11 @@ export async function POST(req: Request) {
   const sizeId = String(body.sizeId || "").trim();
   let dbLay: { offsetX?: number; offsetY?: number; qrMM?: number; elements?: Record<string, unknown>; design?: number } | null = null;
   if (sizeId) { try { dbLay = (await getLabelLayouts())[sizeId] ?? null; } catch { dbLay = null; } }
-  const src = dbLay ?? { offsetX: Number(lay.offsetXmm) || 0, offsetY: Number(lay.offsetYmm) || 0, qrMM: Number(lay.qrMM) || 0, elements: (lay.elements as Record<string, unknown>) || undefined, design: Number(lay.design) === 2 ? 2 : 1 };
+  // On a DB miss we still take offsets/elements from the client, but the DESIGN
+  // template comes from the server default for this size — NEVER the browser — so a
+  // fresh PC / new printer whose cache says design:1 can't force the red label back
+  // to Design 1. defaultDesignFor("red-85x55") === 2.
+  const src = dbLay ?? { offsetX: Number(lay.offsetXmm) || 0, offsetY: Number(lay.offsetYmm) || 0, qrMM: Number(lay.qrMM) || 0, elements: (lay.elements as Record<string, unknown>) || undefined, design: defaultDesignFor(sizeId) };
 
   // Resolution is AUTHORITATIVE from the printer's model name (300 dpi for the
   // TTP-345, 203 for the TTP-244s) so a stale client bundle can't send the wrong
@@ -55,7 +59,7 @@ export async function POST(req: Request) {
     ...(Number.isFinite(Number(src.offsetY)) ? { offsetYmm: Number(src.offsetY) } : {}),
     ...(Number(src.qrMM) > 0 ? { qrMM: Number(src.qrMM) } : {}),
     ...(src.elements && typeof src.elements === "object" ? { elements: src.elements as Record<string, { dx?: number; dy?: number; f?: number; sz?: number; mm?: number; b?: number }> } : {}),
-    ...(Number(src.design) === 2 ? { design: 2 } : {}),
+    ...((enforcedDesignFor(sizeId) ?? Number(src.design)) === 2 ? { design: 2 } : {}),
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
   };

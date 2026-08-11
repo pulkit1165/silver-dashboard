@@ -3,7 +3,7 @@ import { buildTSPL, type LabelData, type LayoutOpts } from "@/lib/erp/printnode"
 import { enqueueJobs } from "@/lib/erp/printBridge";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { getLabelLayouts } from "@/lib/erp/labelLayout";
+import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
 
 export const dynamic = "force-dynamic";
 
@@ -32,7 +32,10 @@ export async function POST(req: Request) {
   const sizeId = String(body.sizeId || "").trim();
   let dbLay: { offsetX?: number; offsetY?: number; qrMM?: number; elements?: Record<string, unknown>; design?: number } | null = null;
   if (sizeId) { try { dbLay = (await getLabelLayouts())[sizeId] ?? null; } catch { dbLay = null; } }
-  const src = dbLay ?? { offsetX: Number(lay.offsetXmm) || 0, offsetY: Number(lay.offsetYmm) || 0, qrMM: Number(lay.qrMM) || 0, elements: (lay.elements as Record<string, unknown>) || undefined, design: Number(lay.design) === 2 ? 2 : 1 };
+  // On a DB miss, offsets/elements may fall back to the client but the DESIGN template
+  // is a server fact (defaultDesignFor), never the browser — so a new PC / new printer
+  // can't reset the red label to Design 1. defaultDesignFor("red-85x55") === 2.
+  const src = dbLay ?? { offsetX: Number(lay.offsetXmm) || 0, offsetY: Number(lay.offsetYmm) || 0, qrMM: Number(lay.qrMM) || 0, elements: (lay.elements as Record<string, unknown>) || undefined, design: defaultDesignFor(sizeId) };
   // dpi is authoritative from the Windows printer NAME (300 for a TTP-345, else 203).
   const name = printerId.slice(printerId.indexOf("::") + 2);
   const dpi = /34\d|300\s*dpi/i.test(name) ? 300 : 203;
@@ -47,7 +50,7 @@ export async function POST(req: Request) {
     ...(Number.isFinite(Number(src.offsetY)) ? { offsetYmm: Number(src.offsetY) } : {}),
     ...(Number(src.qrMM) > 0 ? { qrMM: Number(src.qrMM) } : {}),
     ...(src.elements && typeof src.elements === "object" ? { elements: src.elements as Record<string, { dx?: number; dy?: number; f?: number; sz?: number; mm?: number; b?: number }> } : {}),
-    ...(Number(src.design) === 2 ? { design: 2 } : {}),
+    ...((enforcedDesignFor(sizeId) ?? Number(src.design)) === 2 ? { design: 2 } : {}),
   };
 
   const jobs = labels.map((l) => ({ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }));
