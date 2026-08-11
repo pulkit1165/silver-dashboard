@@ -433,7 +433,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               <div className="bl-sku">{l.sku_code}</div>
               <div className="bl-name">{String(l.name).split("\n").map((ln, i) => <div key={i}>{ln}</div>)}</div>
               <div className="bl-qty">
-                {l.type === "master" ? `QTY: ${l.unitQty ?? l.masterQty} ${l.unit}` : `Qty. ${l.unitQty ?? l.singleQty || 1} ${l.unit}`}
+                {l.type === "master" ? `QTY: ${l.unitQty ?? l.masterQty} ${l.unit}` : `Qty. ${l.unitQty ?? (l.singleQty || 1)} ${l.unit}`}
                 {" · "}MRP.Rs.{l.price.toFixed(0)}/-
               </div>
               {showFull && <div className="bl-tax">(Incl. of All Taxes)</div>}
@@ -845,6 +845,38 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             <div className="mt-3 flex justify-end gap-2">
               <button onClick={() => setNameEdit((v) => v ? { ...v, value: "" } : v)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:bg-[var(--surface-2)]">Clear</button>
               <button onClick={saveLabelNameEdit} className="rounded-lg bg-[var(--accent-2)] px-4 py-2 text-sm font-bold text-white hover:opacity-90">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {unitEdit && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={() => setUnitEdit(null)}>
+          <div className="w-full max-w-sm rounded-2xl border border-[var(--border)] bg-[var(--background)] p-5 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className="text-lg font-extrabold">⚖ Unit &amp; Qty · {unitEdit.code}</h2>
+              <button onClick={() => setUnitEdit(null)} className="rounded-lg border border-[var(--border)] px-2.5 py-1 text-sm font-bold hover:bg-[var(--surface-2)]">✕</button>
+            </div>
+            <p className="mb-3 text-xs text-[var(--muted)]">Set the unit and how many are in it — e.g. <b>SET</b> × <b>2</b> prints <b>Qty: 2 SET</b>. Saved once for this part and used on every print (also editable in Barcode Master).</p>
+            <div className="flex items-end gap-2">
+              <label className="flex flex-1 flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
+                Unit
+                <input list="unit-options" value={unitEdit.unit} autoFocus
+                  onChange={(e) => setUnitEdit((v) => v ? { ...v, unit: e.target.value.toUpperCase() } : v)}
+                  className="rounded-lg border border-[var(--border)] bg-white px-2 py-1.5 text-sm font-bold" />
+                <datalist id="unit-options">{UNIT_OPTIONS.filter(Boolean).map((u) => <option key={u} value={u} />)}</datalist>
+              </label>
+              <label className="flex w-24 flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
+                Qty
+                <input type="number" min={1} step={1} value={unitEdit.qty}
+                  onChange={(e) => setUnitEdit((v) => v ? { ...v, qty: e.target.value } : v)}
+                  className="rounded-lg border border-[var(--border)] bg-white px-2 py-1.5 text-sm font-bold" />
+              </label>
+            </div>
+            <div className="mt-2 rounded-lg bg-[var(--surface-2)] px-3 py-2 text-sm font-bold">Prints: <span className="text-[var(--accent-strong)]">Qty: {Math.max(1, Math.round(Number(unitEdit.qty) || 1))} {unitEdit.unit || "PCS"}</span></div>
+            <div className="mt-3 flex justify-end gap-2">
+              <button onClick={() => setUnitEdit((v) => v ? { ...v, unit: "", qty: "0" } : v)} className="rounded-lg border border-[var(--border)] px-3 py-2 text-sm font-bold hover:bg-[var(--surface-2)]">Clear</button>
+              <button onClick={saveUnitEdit} className="rounded-lg bg-[var(--accent-2)] px-4 py-2 text-sm font-bold text-white hover:opacity-90">Save</button>
             </div>
           </div>
         </div>
