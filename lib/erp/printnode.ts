@@ -115,7 +115,7 @@ const esc = (s: unknown) => String(s ?? "").replace(/["\r\n]/g, " ").trim();
 // `elements` lets the operator position/size EACH attribute independently (from
 // the visual aligner): key = qr|code|name|qty|mrp, dx/dy = mm nudge from the auto
 // position, f = font 1–5 (text), sz = QR size in mm. Absent/0 = keep auto.
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
 export type LayoutOpts = { qrMM?: number; topMM?: number; leftMM?: number; large?: boolean; pos?: "top" | "bottom"; dpi?: number; density?: number; speed?: number; offsetXmm?: number; offsetYmm?: number; elements?: Record<string, ElOverride>; design?: number };
 
 export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts = {}): Buffer {
@@ -469,15 +469,21 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // again +1 dot across) to thicken the strokes — TSPL's built-in fonts have no bold.
   // The big green prints ALL text bold (overstruck) so long names at the smaller
   // font stay heavy and readable; other sizes bold only where the aligner set it.
+  // Per-element rotation (0/90/180/270) from the aligner (el[k].r).
+  const rotOf = (k: string) => ((Math.round((el[k]?.r || 0) / 90) * 90) % 360 + 360) % 360;
   const emit = (k: string, x: number, y: number, font: string, mag: number, text: string) => {
-    rows.push(`TEXT ${x},${y},"${font}",0,${mag},${mag},"${text}"`);
+    const rot = rotOf(k);
+    rows.push(`TEXT ${x},${y},"${font}",${rot},${mag},${mag},"${text}"`);
     if (fillBig || el[k]?.b) {
       // Bold = overstrike. On the hero fill labels we overstrike in BOTH directions
       // (+1 x and +1 y) for a heavier, clearly-bold look.
-      rows.push(`TEXT ${x + 1},${y},"${font}",0,${mag},${mag},"${text}"`);
-      if (fillBig) rows.push(`TEXT ${x},${y + 1},"${font}",0,${mag},${mag},"${text}"`);
+      rows.push(`TEXT ${x + 1},${y},"${font}",${rot},${mag},${mag},"${text}"`);
+      if (fillBig) rows.push(`TEXT ${x},${y + 1},"${font}",${rot},${mag},${mag},"${text}"`);
     }
   };
+  // Each attribute band line maps to its own element key so it can be moved /
+  // sized / rotated independently in the aligner.
+  const extraKey = (t: string) => t.startsWith("Lot No") ? "lot" : t.startsWith("PKD") ? "pkd" : t.startsWith("Rack No") ? "rack" : "incl";
   // On the big green the text is a FIXED left-aligned block, so ignore the saved
   // per-element X/Y nudges (they were shoving it back to the middle); other sizes keep them.
   const tdx = (k: string) => emx(k); // per-element horizontal nudge from the aligner
@@ -507,13 +513,13 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   { const { font, mag } = emFont("mrp", qtyF); emit("mrp", textX + tdx("mrp"), cy + tdy("mrp"), font, mag, fitText(esc(mrpStr), font, fw(mag))); }
   cy += elh("mrp", qtyF) + spread;
   // Right-column attribute lines (Incl of Taxes / Lot / PKD) under the MRP.
-  { const { font, mag } = emFont("extras", exF); let ey = cy + tdy("extras"); for (const e of extras) { emit("extras", textX + tdx("extras"), ey, font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
+  { let ey = cy; for (const e of extras) { const k = extraKey(e); const { font, mag } = emFont(k, exF); emit(k, textX + tdx("extras") + tdx(k), ey + tdy("extras") + tdy(k), font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
   // RED only: the Rack No block prints BELOW the QR, CENTRED under it. The LABEL sits
   // on line 1 and the actual RACK VALUE on line 2 (each centred, fitted to ~the QR
   // width) — so a long rack number never runs right into the Lot/PKD column. Empty
   // rack = just the "Rack No:" line. The block is clamped to the label bottom.
   if (rackBelowQr) {
-    const { font, mag } = emFont("extras", exF);
+    const { font, mag } = emFont("rack", exF);
     const rackVal = esc(String(l.rack ?? "").trim());
     const rackParts = rackVal ? ["Rack No:", rackVal] : ["Rack No:"];
     const rackBoxW = Math.max(4 * dp, qrPx + Math.round(8 * dp)); // ~QR width; keeps it left of the right column
@@ -523,7 +529,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
       const fit = fitText(rl, font, rackBoxW);
       const rw = fit.length * (F_WIDTH[font] || 16) * mag;
       const rx = qrX + Math.round((qrPx - rw) / 2); // centre each line under the QR
-      emit("extras", rx + tdx("extras"), ry + tdy("extras"), font, mag, fit);
+      emit("rack", rx + tdx("rack"), ry + tdy("rack"), font, mag, fit);
       ry += lineDots;
     }
   }

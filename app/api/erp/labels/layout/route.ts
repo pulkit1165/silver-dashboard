@@ -30,7 +30,12 @@ export async function POST(req: Request) {
   await saveLabelLayout(sizeId, {
     offsetX: Number(b.offsetX) || 0, offsetY: Number(b.offsetY) || 0, qrMM: Number(b.qrMM) || 0,
     elements: (b.elements && typeof b.elements === "object") ? b.elements : undefined,
-    design: b.design === 2 || b.design === "2" ? 2 : b.design === 1 || b.design === "1" ? 1 : undefined,
+    // NEVER carry design through the alignment save. The template (Design 1/2) is
+    // changed ONLY via the designOnly path above (saveLabelDesign). Previously a
+    // client that realigned while its in-memory design was a stale `1` would send
+    // design:1 here and COALESCE-overwrite a size that was on Design 2 back to 1 —
+    // that is exactly how the red label "reset" itself after the client realigned.
+    design: undefined,
   }, user.name);
   // Audit every save so an alignment change (or a later disappearance) is traceable.
   await logActivity({

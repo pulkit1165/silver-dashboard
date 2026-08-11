@@ -6,7 +6,7 @@ import { getSql } from "./db";
 // the whole content block; qrMM overrides the QR size (0 = auto). `elements` holds
 // per-attribute overrides (qr|code|name|qty|mrp → dx/dy mm, f = font, sz = QR mm).
 
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
 export type LabelLayout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
 
 let ensured: Promise<void> | null = null;
@@ -40,7 +40,11 @@ function ensure(): Promise<void> {
 const n = (v: unknown) => (typeof v === "number" ? v : Number(v ?? 0));
 
 // Keep only known keys, coerce to numbers, drop empties so the JSON stays small.
-const EL_KEYS = ["qr", "code", "name", "qty", "mrp", "extras"] as const;
+// The attribute band is now split so each line (Incl of taxes, Lot No, PKD, Rack
+// No) can be positioned/sized/rotated independently in the aligner. "extras" is
+// kept for older saved layouts that moved the whole block.
+const EL_KEYS = ["qr", "code", "name", "qty", "mrp", "extras", "incl", "lot", "pkd", "rack"] as const;
+const norm90 = (v: number) => ((Math.round((Number(v) || 0) / 90) * 90) % 360 + 360) % 360;
 function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
   // Safety net: tolerate a jsonb value that came back as a JSON STRING (double-encoded
   // by an older write) so a bad row can never silently drop a size's whole layout.
@@ -56,7 +60,8 @@ function cleanElements(raw: unknown): Record<string, ElOverride> | undefined {
     const sz = cl(n(e.sz), 0, 60);
     const mm = Math.round(cl(n(e.mm), 0, 20) * 10) / 10;
     const b = e.b ? 1 : 0;
-    if (dx || dy || f || sz || b || mm) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}), ...(mm ? { mm } : {}), ...(b ? { b } : {}) };
+    const r = norm90(n(e.r)); // rotation: 0 | 90 | 180 | 270
+    if (dx || dy || f || sz || b || mm || r) out[k] = { ...(dx ? { dx } : {}), ...(dy ? { dy } : {}), ...(f ? { f } : {}), ...(sz ? { sz } : {}), ...(mm ? { mm } : {}), ...(b ? { b } : {}), ...(r ? { r } : {}) };
   }
   return Object.keys(out).length ? out : undefined;
 }

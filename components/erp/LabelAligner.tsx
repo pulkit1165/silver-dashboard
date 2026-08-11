@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 
-export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number };
+export type ElOverride = { dx?: number; dy?: number; f?: number; sz?: number; b?: number; mm?: number; r?: number };
 export type Layout = { offsetX: number; offsetY: number; qrMM: number; elements?: Record<string, ElOverride>; design?: number };
 
 // A QR-like placeholder (finder patterns) so the preview shows the QR's box/position.
@@ -26,7 +26,7 @@ function QrGlyph({ bg = "#fff" }: { bg?: string }) {
   );
 }
 
-type ElKey = "all" | "qr" | "code" | "name" | "qty" | "mrp" | "extras";
+type ElKey = "all" | "qr" | "code" | "name" | "qty" | "mrp" | "incl" | "lot" | "pkd" | "rack";
 const TABS: { key: ElKey; label: string }[] = [
   { key: "all", label: "Whole label" },
   { key: "qr", label: "QR code" },
@@ -34,7 +34,10 @@ const TABS: { key: ElKey; label: string }[] = [
   { key: "name", label: "Name" },
   { key: "qty", label: "Qty" },
   { key: "mrp", label: "MRP" },
-  { key: "extras", label: "Attributes" },
+  { key: "incl", label: "Taxes line" },
+  { key: "lot", label: "Lot No" },
+  { key: "pkd", label: "PKD date" },
+  { key: "rack", label: "Rack No" },
 ];
 // Approx TSPL bitmap-font heights (mm) so the preview font tracks the size control.
 const FONT_MM: Record<number, number> = { 1: 1.7, 2: 2.1, 3: 2.6, 4: 3.2, 5: 3.9, 6: 7.6, 7: 11.4 };
@@ -84,7 +87,7 @@ export default function LabelAligner({
   const drag = (k: string) => ({ onPointerDown: onDragStart(k), onPointerMove: onDragMove, onPointerUp: onDragEnd });
   const dragStyle = { touchAction: "none" as const, cursor: "move" as const };
   // Bold: per text element, or all text at once from the "Whole label" tab.
-  const TEXT_KEYS = ["code", "name", "qty", "mrp", "extras"];
+  const TEXT_KEYS = ["code", "name", "qty", "mrp", "incl", "lot", "pkd", "rack"];
   const isBold = sel === "all" ? TEXT_KEYS.every((k) => els[k]?.b) : !!els[sel]?.b;
   const toggleBold = () => {
     const on = !isBold;
@@ -110,7 +113,10 @@ export default function LabelAligner({
   const big = h >= 54, med = h >= 38;
   const nameDef = big ? 5 : med ? 4 : 3;
   const codeDef = hero ? (heroSmall ? Math.max(2, nameDef - 1) : nameDef) : nameDef;
-  const defFont: Record<string, number> = { code: codeDef, name: nameDef, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: big ? 3 : 2 };
+  const exDef = big ? 3 : 2;
+  const defFont: Record<string, number> = { code: codeDef, name: nameDef, qty: big ? 4 : med ? 3 : 2, mrp: big ? 4 : med ? 3 : 2, extras: exDef, incl: exDef, lot: exDef, pkd: exDef, rack: exDef };
+  // Rotation transform for the preview (matches TSPL 0/90/180/270 clockwise).
+  const rotStyle = (k: string) => (els[k]?.r ? { transform: `rotate(${els[k]!.r}deg)`, transformOrigin: "left top" as const } : {});
   const fontOf = (k: string) => (els[k]?.f && els[k]!.f! >= 1 ? els[k]!.f! : defFont[k]);
   // Effective text height (mm): an exact mm override wins, else the size level's mm.
   const mmOf = (k: string) => (els[k]?.mm && els[k]!.mm! > 0 ? els[k]!.mm! : FONT_MM[fontOf(k)]);
@@ -132,6 +138,12 @@ export default function LabelAligner({
   const box = (k: string, xa: number, ya: number) => ({ left: xa + (els[k]?.dx || 0), top: ya + (els[k]?.dy || 0) });
   const qrBox = { left: qrXa + (els.qr?.dx || 0), top: qrYa + (els.qr?.dy || 0), size: qrSize };
   const codeB = box("code", textXa, codeYa), nameB = box("name", textXa, nameYa), qtyB = box("qty", textXa, qtyYa), mrpB = box("mrp", textXa, mrpYa);
+  // Attribute band split into independent lines (Incl / Lot / PKD / Rack).
+  const exTop = mrpYa + lhmm("mrp");
+  const inclB = box("incl", textXa, exTop);
+  const lotB = box("lot", textXa, exTop + lhmm("incl"));
+  const pkdB = box("pkd", textXa, exTop + lhmm("incl") + lhmm("lot"));
+  const rackB = box("rack", textXa, exTop + lhmm("incl") + lhmm("lot") + lhmm("pkd"));
 
   const selStyle = (k: ElKey) => sel === k ? { outline: "2px solid #e11d2a", outlineOffset: 2, borderRadius: 3 } : {};
 
@@ -203,20 +215,22 @@ export default function LabelAligner({
                 </div>
               )}
               {/* QR */}
-              <div className="absolute cursor-pointer" {...drag("qr")} style={{ ...dragStyle, left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
-              {/* text attributes — each independently placed */}
-              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" {...drag("code")} style={{ ...dragStyle, left: px(codeB.left), top: px(codeB.top), fontSize: px(mmOf("code")), fontWeight: els.code?.b ? 900 : undefined, ...selStyle("code") }}>{sample.code}</div>
-              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" {...drag("name")} style={{ ...dragStyle, left: px(nameB.left), top: px(nameB.top), fontSize: px(mmOf("name")), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...selStyle("name") }}>{sample.name}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("qty")} style={{ ...dragStyle, left: px(qtyB.left), top: px(qtyB.top), fontSize: px(mmOf("qty")), fontWeight: els.qty?.b ? 900 : undefined, ...selStyle("qty") }}>{sample.qty}</div>
-              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("mrp")} style={{ ...dragStyle, left: px(mrpB.left), top: px(mrpB.top), fontSize: px(mmOf("mrp")), fontWeight: els.mrp?.b ? 900 : undefined, ...selStyle("mrp") }}>{sample.mrp}</div>
-              {/* attributes printed under MRP — move & resize as one "Attributes" element */}
-              <div className="absolute cursor-pointer font-mono leading-tight text-black" {...drag("extras")}
-                style={{ ...dragStyle, left: px(textXa + (els.extras?.dx || 0)), top: px(mrpYa + lhmm("mrp") + (els.extras?.dy || 0)), fontSize: px(mmOf("extras")), fontWeight: els.extras?.b ? 900 : undefined, ...selStyle("extras") }}>
-                <div>(Incl. of All Taxes)</div>
-                <div>Lot No:</div>
-                <div>PKD: {todayStr}</div>
-                <div>Rack No:</div>
-              </div>
+              <div className="absolute cursor-pointer" {...drag("qr")} style={{ ...dragStyle, left: px(qrBox.left), top: px(qrBox.top), width: px(qrBox.size), height: px(qrBox.size), ...rotStyle("qr"), ...selStyle("qr") }}><QrGlyph bg={pos === "bottom" ? "#fff" : "#8cc63f"} /></div>
+              {/* text attributes — each independently placed & rotatable */}
+              <div className="absolute cursor-pointer font-mono font-extrabold leading-none text-black" {...drag("code")} style={{ ...dragStyle, left: px(codeB.left), top: px(codeB.top), fontSize: px(mmOf("code")), fontWeight: els.code?.b ? 900 : undefined, ...rotStyle("code"), ...selStyle("code") }}>{sample.code}</div>
+              <div className="absolute cursor-pointer font-mono font-bold leading-tight text-black" {...drag("name")} style={{ ...dragStyle, left: px(nameB.left), top: px(nameB.top), fontSize: px(mmOf("name")), maxWidth: px((hero ? qrXa - 2 : w) - nameB.left - 1), fontWeight: hero || els.name?.b ? 900 : undefined, ...rotStyle("name"), ...selStyle("name") }}>{sample.name}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("qty")} style={{ ...dragStyle, left: px(qtyB.left), top: px(qtyB.top), fontSize: px(mmOf("qty")), fontWeight: els.qty?.b ? 900 : undefined, ...rotStyle("qty"), ...selStyle("qty") }}>{sample.qty}</div>
+              <div className="absolute cursor-pointer font-mono leading-none text-black" {...drag("mrp")} style={{ ...dragStyle, left: px(mrpB.left), top: px(mrpB.top), fontSize: px(mmOf("mrp")), fontWeight: els.mrp?.b ? 900 : undefined, ...rotStyle("mrp"), ...selStyle("mrp") }}>{sample.mrp}</div>
+              {/* attribute band — each line independent (move / size / rotate) */}
+              {([
+                { k: "incl", b: inclB, t: "(Incl. of All Taxes)" },
+                { k: "lot", b: lotB, t: "Lot No:" },
+                { k: "pkd", b: pkdB, t: `PKD: ${todayStr}` },
+                { k: "rack", b: rackB, t: "Rack No:" },
+              ] as const).map(({ k, b, t }) => (
+                <div key={k} className="absolute cursor-pointer whitespace-nowrap font-mono leading-none text-black" {...drag(k)}
+                  style={{ ...dragStyle, left: px(b.left), top: px(b.top), fontSize: px(mmOf(k)), fontWeight: els[k]?.b ? 900 : undefined, ...rotStyle(k), ...selStyle(k) }}>{t}</div>
+              ))}
             </div>
             <p className="mt-1 text-[10px] text-[var(--muted-2)]">Position &amp; QR size match the print; on-screen font is only an approximation.</p>
           </div>
@@ -289,6 +303,20 @@ export default function LabelAligner({
                 className={`rounded-lg border px-3 py-2 text-sm font-bold ${isBold ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
                 {isBold ? "✓ Bold" : "Bold"}{sel === "all" ? " (all text)" : ""}
               </button>
+            )}
+
+            {sel !== "all" && sel !== "qr" && (
+              <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)]">
+                Rotate {(els[sel]?.r || 0) ? `· ${els[sel]?.r}°` : ""}
+                <div className="flex gap-1">
+                  {[0, 90, 180, 270].map((r) => (
+                    <button key={r} onClick={() => setEl(sel, { r })}
+                      className={`flex-1 rounded-md border py-1.5 text-xs font-bold ${(els[sel]?.r || 0) === r ? "border-[var(--accent)] bg-[var(--accent)] text-white" : "border-[var(--border)] bg-white hover:bg-[var(--surface-2)]"}`}>
+                      {r}°
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
 
             <div className="flex gap-2">
