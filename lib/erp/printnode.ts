@@ -205,7 +205,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     : Math.round(Hd * (red ? 0.30 : heroSmall ? 0.05 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
   // Content zone kept comfortably clear of the pre-printed address band so it never
   // overprints it. The red 85×55 & 70×40 use more of their white area for big text.
-  const bottom = Math.round(Hd * (red ? 0.94 : heroSmall ? 0.72 : pos === "bottom" ? 0.92 : 0.63));
+  // 70×40 green: the pre-printed address starts ~62% down, so keep content above it
+  // (the earlier 0.72 overlapped the address). Other hero-small sizes keep 0.72.
+  const bottom = Math.round(Hd * (red ? 0.94 : (w === 70 && h === 40) ? 0.62 : heroSmall ? 0.72 : pos === "bottom" ? 0.92 : 0.63));
   const zoneH = Math.max(25, bottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
 
@@ -274,11 +276,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Lot/Rack show their value if the SKU has one, else the field stays blank;
   // PKD defaults to TODAY (the print date) unless a date is supplied.
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
+  // Lot No / Rack No only print when the SKU actually has one — empty "Lot No:" /
+  // "Rack No:" lines just waste rows, shrink the (hero) name and push content down
+  // into the pre-printed address band. PKD (packed date) and the tax line always show.
   const allExtras: string[] = [
     "(Incl. of All Taxes)",
-    `Lot No: ${esc(l.lot ?? "")}`.trimEnd(),
+    ...(l.lot && String(l.lot).trim() ? [`Lot No: ${esc(l.lot)}`] : []),
     `PKD: ${l.pkd ? esc(l.pkd) : today}`,
-    `Rack No: ${esc(l.rack ?? "")}`.trimEnd(),
+    ...(l.rack && String(l.rack).trim() ? [`Rack No: ${esc(l.rack)}`] : []),
   ];
 
   // Auto-fit: pick the LARGEST font tier [code, name, qty/mrp, extras] at which the
