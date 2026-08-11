@@ -134,12 +134,32 @@ export async function claimJobs(pc: string, limit = 5): Promise<BridgeJob[]> {
   return rows.map((r) => ({ id: Number(r.id), name: r.name, tspl_b64: r.tspl_b64 }));
 }
 
-// Agent → report the outcome of a claimed job.
+// Agent → report the outcome of a claimed job. Once a job is DONE the raw TSPL payload
+// (tspl_b64, ~1–4 KB/label) is dead weight — clear it so a high-volume shop (e.g.
+// 400k prints/month) doesn't accumulate GB of spent label data. A thin audit row (who/
+// when/status) remains. Failed jobs KEEP the payload so they can be retried.
 export async function ackJob(id: number, ok: boolean, error?: string): Promise<void> {
   await ensure();
-  await getSql()`UPDATE print_jobs
-    SET status=${ok ? "done" : "failed"}, error=${ok ? null : (error ?? "print failed")}, done_at=now()
-    WHERE id=${id}`;
+  if (ok) {
+    await getSql()`UPDATE print_jobs SET status='done', error=null, done_at=now(), tspl_b64='' WHERE id=${id}`;
+  } else {
+    await getSql()`UPDATE print_jobs SET status='failed', error=${error ?? "print failed"}, done_at=now() WHERE id=${id}`;
+  }
+}
+
+// Bounded retention: delete terminal jobs older than `days` (default 30). Cheap and
+// self-limiting via LIMIT so it can run from the daily cron without long locks.
+export async function purgeOldJobs(days = 30, limit = 5000): Promise<number> {
+  try {
+    await ensure();
+    const rows = (await getSql()`
+      DELETE FROM print_jobs WHERE id IN (
+        SELECT id FROM print_jobs
+        WHERE status IN ('done','failed','canceled') AND done_at < now() - (${days} || ' days')::interval
+        ORDER BY id LIMIT ${limit}
+      ) RETURNING id`) as unknown as { id: number }[];
+    return rows.length;
+  } catch { return 0; }
 }
 
 // App → poll statuses for the jobs it just enqueued (for the print-confirmation UI).

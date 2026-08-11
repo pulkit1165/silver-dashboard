@@ -78,6 +78,13 @@ async function runSync(
   const retentionDays = Number(process.env.SNAPSHOT_RETENTION_DAYS ?? 0);
   try { snapshotsPruned = await pruneSnapshots(retentionDays); } catch { /* non-fatal */ }
 
+  // Bounded retention for the print-job queue so a high-volume shop doesn't grow it
+  // without limit. Runs daily off the same cron; deletes terminal jobs older than the
+  // window (done jobs already had their heavy TSPL payload cleared on ack).
+  let printJobsPurged = 0;
+  const printJobDays = Number(process.env.PRINT_JOB_RETENTION_DAYS ?? 30);
+  try { const { purgeOldJobs } = await import("@/lib/erp/printBridge"); printJobsPurged = await purgeOldJobs(printJobDays); } catch { /* non-fatal */ }
+
   const errors = results.filter(r => r.error);
   const durationMs = Date.now() - started;
 
@@ -91,6 +98,7 @@ async function runSync(
     mode, fromDate, toDate,
     totalUpserted,
     snapshotsPruned,
+    printJobsPurged,
     durationMs,
     results,
   });
