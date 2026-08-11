@@ -40,8 +40,11 @@ export async function POST(req: Request) {
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const pageW = w * MM, pageH = h * MM;
   const margin = 2 * MM;
-  // Bigger QR — fills much of the content height, capped so text still fits.
-  const qrMM = Math.min(h * 0.5, w * 0.42, 34);
+  // Bigger QR — fills much of the content height, capped so text still fits, and
+  // FLOORED so a small/custom label never prints a QR too tiny to scan (a v1–2 code
+  // needs ~11mm for reliable ~0.33mm modules). The floor is itself capped to the
+  // label so it can't overflow a genuinely tiny die.
+  const qrMM = Math.max(Math.min(11, w * 0.6, h * 0.6), Math.min(h * 0.5, w * 0.42, 34));
   const qrPt = qrMM * MM;
 
   // wrap text to a max width in points
@@ -58,16 +61,20 @@ export async function POST(req: Request) {
     return lines;
   };
 
-  // Embed each unique QR once (copies of the same token reuse it).
-  const qrCache = new Map<string, Awaited<ReturnType<typeof doc.embedPng>>>();
+  // Embed each unique QR once (copies of the same token reuse it). Returns null for a
+  // blank/invalid token instead of throwing, so ONE bad label can never 500 the whole
+  // batch — the rest of the sheet still prints. margin 4 = the full spec quiet zone.
+  const qrCache = new Map<string, Awaited<ReturnType<typeof doc.embedPng>> | null>();
   async function embedQr(token: string) {
-    let img = qrCache.get(token);
-    if (!img) {
-      const png = await QRCode.toBuffer(token, { type: "png", margin: 2, width: 520, errorCorrectionLevel: "M" });
-      img = await doc.embedPng(png);
-      qrCache.set(token, img);
-    }
-    return img;
+    const t = String(token ?? "").trim();
+    if (!t) return null;
+    if (qrCache.has(t)) return qrCache.get(t)!;
+    try {
+      const png = await QRCode.toBuffer(t, { type: "png", margin: 4, width: 520, errorCorrectionLevel: "M" });
+      const img = await doc.embedPng(png);
+      qrCache.set(t, img);
+      return img;
+    } catch { qrCache.set(t, null); return null; }
   }
 
   // ── A4 DIE SHEET: exact-size labels tiled on A4, with cut lines ─────────────
@@ -88,7 +95,7 @@ export async function POST(req: Request) {
     const startX = pageMargin + Math.max(0, (usableW - gridW) / 2);
     const startTopY = A4H - pageMargin;
     const pad = 2 * MM;
-    const qrMM2 = Math.min(h * 0.5, w * 0.42, 34);
+    const qrMM2 = Math.max(Math.min(11, w * 0.6, h * 0.6), Math.min(h * 0.5, w * 0.42, 34));
     const qrPt2 = qrMM2 * MM;
     const skuSize = h >= 55 ? 11 : 9;
     const nameSize = h >= 55 ? 12 : 9.5;
@@ -110,7 +117,7 @@ export async function POST(req: Request) {
       // QR on the left
       const qr = await embedQr(l.qrToken);
       const topY = y0 + cellH - pad;
-      page.drawImage(qr, { x: x0 + pad, y: topY - qrPt2, width: qrPt2, height: qrPt2 });
+      if (qr) page.drawImage(qr, { x: x0 + pad, y: topY - qrPt2, width: qrPt2, height: qrPt2 });
 
       // right column: SKU, name (≤2 lines), qty/MRP
       const textX = x0 + pad + qrPt2 + 3 * MM;
@@ -145,9 +152,9 @@ export async function POST(req: Request) {
 
   for (const l of labels) {
     const page = doc.addPage([pageW, pageH]);
-    // high-res PNG + quiet zone (margin 2) for a crisp, scannable QR
-    const qrPng = await QRCode.toBuffer(l.qrToken, { type: "png", margin: 2, width: 520, errorCorrectionLevel: "M" });
-    const qr = await doc.embedPng(qrPng);
+    // Reuse the batch-safe embedder (margin-4 quiet zone; null on a bad token so the
+    // page still prints its text instead of 500-ing the whole run).
+    const qr = await embedQr(l.qrToken);
 
     const textX = margin + qrPt + 3 * MM;
     const textW = pageW - textX - margin;
@@ -161,8 +168,8 @@ export async function POST(req: Request) {
 
     // top-anchored (bottom left blank for the pre-printed address)
     const topY = pos === "top" ? pageH - margin : margin + qrPt + 6;
-    // QR on the left
-    page.drawImage(qr, { x: margin, y: topY - qrPt, width: qrPt, height: qrPt });
+    // QR on the left (skip drawing if the token was blank/invalid)
+    if (qr) page.drawImage(qr, { x: margin, y: topY - qrPt, width: qrPt, height: qrPt });
     // right column: SKU code, full name (≤2 lines), qty/MRP
     let cy = topY;
     const line = (text: string, f: typeof font, size: number) => {

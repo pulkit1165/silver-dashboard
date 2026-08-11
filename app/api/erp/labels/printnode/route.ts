@@ -23,9 +23,13 @@ export async function POST(req: Request) {
   const printerId = Number(body.printerId);
   const w = Math.max(10, Number(body.w) || 70);
   const h = Math.max(10, Number(body.h) || 40);
-  const labels: LabelData[] = Array.isArray(body.labels) ? body.labels : [];
+  const allLabels: LabelData[] = Array.isArray(body.labels) ? body.labels : [];
+  // Drop any label whose QR token is blank — the QR encoder throws on an empty string,
+  // and one bad record must never fail the whole batch. Report how many were skipped.
+  const labels = allLabels.filter((l) => String(l?.qrToken ?? "").trim());
+  const skipped = allLabels.length - labels.length;
   if (!printerId) return NextResponse.json({ ok: false, error: "No printer selected." }, { status: 400 });
-  if (!labels.length) return NextResponse.json({ ok: false, error: "No labels to print." }, { status: 400 });
+  if (!labels.length) return NextResponse.json({ ok: false, error: skipped ? `All ${skipped} label(s) had a missing QR token — nothing printed.` : "No labels to print." }, { status: 400 });
 
   const lay = (body.layout ?? {}) as Record<string, unknown>;
   // The SAVED alignment (offsets/elements/design) is AUTHORITATIVE from the database
@@ -75,5 +79,5 @@ export async function POST(req: Request) {
     summary: `Printed ${sent} label(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
     meta: { sizeId, design: effDesign, lockCode, count: sent, engine: "printnode" },
   }).catch(() => {});
-  return NextResponse.json({ ok: sent > 0, sent, total: results.length, results });
+  return NextResponse.json({ ok: sent > 0, sent, total: results.length, results, skipped });
 }

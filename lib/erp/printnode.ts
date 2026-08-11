@@ -226,9 +226,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? Math.min(20, h * 0.5) : bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
+  // SCANNABILITY FLOOR: every module must be at least ~0.34mm (≈3 dots @203dpi, 4 @300)
+  // or a printed QR won't reliably decode. The aligner lets the QR size be dragged
+  // down to 8mm which, on a 20-char token, is ~0.25mm/module (2 dots) — dead. Flooring
+  // modDots here means a too-small override just prints the smallest STILL-SCANNABLE QR
+  // instead of an unscannable one. Auto sizing already stays well above this.
+  const minMod = Math.max(3, Math.round(0.34 * dp));
   const modDots = qrSzMM > 0
-    ? Math.max(2, Math.floor((qrSzMM * dp) / qrTotal))
-    : Math.max(2, Math.floor(maxBox / qrTotal));
+    ? Math.max(minMod, Math.floor((qrSzMM * dp) / qrTotal))
+    : Math.max(minMod, Math.floor(maxBox / qrTotal));
   const qrPx = qrTotal * modDots; // full QR box (black symbol + quiet zone)
   // QR position (final, incl. aligner nudge). On the BIG label the QR is parked in
   // the BOTTOM-RIGHT corner and ALL text is left-aligned across the rest — matches
@@ -689,7 +695,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const QUIET = 4; const qrTotal = qr.modules.size + QUIET * 2;
   const qrBottom = Math.round(Hd * (pos === "bottom" ? (red ? 0.98 : 0.965) : 0.74));
   const qrAvail = Math.max(Math.round(12 * dp), Math.min(qrBoxMax, qrBottom - cy));
-  const modDots = Math.max(2, Math.floor(qrAvail / qrTotal));
+  // Scannability floor: never below ~0.34mm/module (≈3 dots @203dpi, 4 @300).
+  const minMod = Math.max(3, Math.round(0.34 * dp));
+  const modDots = Math.max(minMod, Math.floor(qrAvail / qrTotal));
   const qrPx = qrTotal * modDots;
   const bmp = renderQrBytes(qr, modDots, QUIET);
   const qrX = leftM, qrY = Math.min(cy, qrBottom - qrPx);

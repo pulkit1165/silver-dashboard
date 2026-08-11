@@ -21,9 +21,13 @@ export async function POST(req: Request) {
   const printerId = String(body.printerId || "").trim();
   const w = Math.max(10, Number(body.w) || 70);
   const h = Math.max(10, Number(body.h) || 40);
-  const labels: LabelData[] = Array.isArray(body.labels) ? body.labels : [];
+  const allLabels: LabelData[] = Array.isArray(body.labels) ? body.labels : [];
+  // Drop labels with a blank QR token (the encoder throws on empty) so one bad record
+  // can't fail the whole batch.
+  const labels = allLabels.filter((l) => String(l?.qrToken ?? "").trim());
+  const skipped = allLabels.length - labels.length;
   if (!printerId) return NextResponse.json({ ok: false, error: "No printer selected." }, { status: 400 });
-  if (!labels.length) return NextResponse.json({ ok: false, error: "No labels to print." }, { status: 400 });
+  if (!labels.length) return NextResponse.json({ ok: false, error: skipped ? `All ${skipped} label(s) had a missing QR token — nothing queued.` : "No labels to print." }, { status: 400 });
 
   const lay = (body.layout ?? {}) as Record<string, unknown>;
   // The SAVED alignment (offsets/elements/design) is AUTHORITATIVE from the database
@@ -54,7 +58,12 @@ export async function POST(req: Request) {
     ...((enforcedDesignFor(sizeId) ?? Number(src.design)) === 2 ? { design: 2 } : {}),
   };
 
-  const jobs = labels.map((l) => ({ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }));
+  // Build defensively: if a single label fails to render, drop it rather than throwing
+  // the whole batch (belt-and-braces on top of the blank-token filter above).
+  const jobs = labels.flatMap((l) => {
+    try { return [{ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }]; }
+    catch { return []; }
+  });
   const ids = await enqueueJobs(printerId, jobs, user.name);
   // Audit which template (design) + lock code produced this batch.
   const effDesign = (enforcedDesignFor(sizeId) ?? (Number(src.design) === 2 ? 2 : 1)) === 2 ? 2 : 1;
@@ -64,5 +73,5 @@ export async function POST(req: Request) {
     summary: `Queued ${ids.length} label(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
     meta: { sizeId, design: effDesign, lockCode, count: ids.length, engine: "bridge" },
   }).catch(() => {});
-  return NextResponse.json({ ok: true, ids, queued: ids.length });
+  return NextResponse.json({ ok: true, ids, queued: ids.length, skipped });
 }

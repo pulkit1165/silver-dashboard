@@ -34,14 +34,20 @@ export async function POST(req: Request) {
         return NextResponse.json({ ok: true, message: "QR code regenerated", token });
       }
       case "generate-missing": {
+        // Pull each SKU's EXISTING qr_token too — for a SKU that already has a token
+        // (e.g. UI-created, printed labels out there), we MIRROR that same token into
+        // qr_codes so those labels keep scanning. Only mint a fresh token when the SKU
+        // genuinely has none. (Previously this always minted a NEW token and silently
+        // orphaned every already-printed label for that SKU.)
         const missing = (await sql`
-          SELECT s.id, s.sku_code FROM skus s
+          SELECT s.id, s.sku_code, s.qr_token FROM skus s
           LEFT JOIN qr_codes q ON q.sku_id=s.id AND q.status='active'
-          WHERE q.id IS NULL`) as unknown as { id: number; sku_code: string }[];
+          WHERE q.id IS NULL`) as unknown as { id: number; sku_code: string; qr_token: string | null }[];
         for (const m of missing) {
-          const token = genToken();
-          await sql`INSERT INTO qr_codes (sku_id,sku_code,token,status,created_by) VALUES (${m.id},${m.sku_code},${token},'active',${user.name})`;
-          await sql`UPDATE skus SET qr_token=${token} WHERE id=${m.id}`;
+          const existing = String(m.qr_token ?? "").trim();
+          const token = existing || genToken();
+          await sql`INSERT INTO qr_codes (sku_id,sku_code,token,tier,status,created_by) VALUES (${m.id},${m.sku_code},${token},'single','active',${user.name})`;
+          if (!existing) await sql`UPDATE skus SET qr_token=${token} WHERE id=${m.id}`;
         }
         if (missing.length) await logActivity({ actor: user.name, actorRole: user.role, action: "qr.generate", entity: "qr", summary: `Generated ${missing.length} missing QR code(s)`, meta: { count: missing.length } });
         return NextResponse.json({ ok: true, message: `Generated ${missing.length} QR code(s)`, count: missing.length });

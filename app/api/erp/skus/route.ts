@@ -26,13 +26,22 @@ export async function POST(req: Request) {
   const [exists] = await sql`SELECT id FROM skus WHERE sku_code=${String(b.sku_code)}`;
   if (exists) return NextResponse.json({ ok: false, error: "SKU code already exists." }, { status: 409 });
 
+  // Mint the token ONCE and write it to BOTH skus.qr_token AND a qr_codes row.
+  // Scanning validates only against qr_codes, so a SKU created without that row would
+  // print a QR that scans as "unknown". Creating the 'single' row here (mirroring the
+  // same token) makes the label scannable the moment it's printed.
+  const token = genToken();
   const [sku] = await sql`
     INSERT INTO skus (sku_code,name,category,brand,unit,price,min_stock,reorder_level,master_qty,single_qty,barcode_code,batch_tracked,serial_tracked,qr_token)
     VALUES (${String(b.sku_code)},${String(b.name)},${b.category ?? ""},${b.brand ?? ""},${b.unit ?? "PCS"},
             ${Number(b.price) || 0},${Number(b.min_stock) || 0},${Number(b.reorder_level) || 0},
             ${Number(b.master_qty) || 0},${Number(b.single_qty) || 1},${b.barcode_code ? String(b.barcode_code) : ""},
-            ${!!b.batch_tracked},${!!b.serial_tracked},${genToken()})
+            ${!!b.batch_tracked},${!!b.serial_tracked},${token})
     RETURNING *`;
+  try {
+    await sql`INSERT INTO qr_codes (sku_id,sku_code,token,tier,status,created_by)
+      VALUES (${(sku as { id: number }).id},${String(b.sku_code)},${token},'single','active',${user.name})`;
+  } catch { /* qr_codes row may already exist for a reused token; scanning still resolves it */ }
   await logActivity({
     actor: user.name, actorRole: user.role,
     action: "sku.create", entity: "sku", entityId: (sku as { id: number }).id,
