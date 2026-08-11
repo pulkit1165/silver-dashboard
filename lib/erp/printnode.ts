@@ -276,13 +276,19 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // Lot/Rack show their value if the SKU has one, else the field stays blank;
   // PKD defaults to TODAY (the print date) unless a date is supplied.
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
+  const pkdTxt = `PKD: ${l.pkd ? esc(l.pkd) : today}`;
+  // On the small green hero labels (70×40 / 65×35 / 50×30) PKD stands VERTICALLY in
+  // the narrow strip just LEFT of the QR (rotated, reading bottom-to-top) instead of
+  // taking a row in the detail column. That frees a row so the hero name sizes up,
+  // and lands PKD in a fixed, correct spot (no fragile aligner drag).
+  const pkdVertical = heroSmall;
   // Lot No / Rack No only print when the SKU actually has one — empty "Lot No:" /
   // "Rack No:" lines just waste rows, shrink the (hero) name and push content down
   // into the pre-printed address band. PKD (packed date) and the tax line always show.
   const allExtras: string[] = [
     "(Incl. of All Taxes)",
     ...(l.lot && String(l.lot).trim() ? [`Lot No: ${esc(l.lot)}`] : []),
-    `PKD: ${l.pkd ? esc(l.pkd) : today}`,
+    ...(pkdVertical ? [] : [pkdTxt]),
     ...(l.rack && String(l.rack).trim() ? [`Rack No: ${esc(l.rack)}`] : []),
   ];
 
@@ -545,6 +551,18 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   cy += elh("mrp", qtyF) + spread;
   // Right-column attribute lines (Incl of Taxes / Lot / PKD) under the MRP.
   { let ey = cy; for (const e of extras) { const k = extraKey(e); const { font, mag } = emFont(k, exF); emit(k, textX + tdx("extras") + tdx(k), ey + tdy("extras") + tdy(k), font, mag, fitText(esc(e), font, fw(mag))); ey += lh(font) * mag + spread; } }
+  // PKD stands vertically just LEFT of the QR on the small greens (rotated 90°,
+  // reading bottom-to-top). Light (never bold). Its own dx/dy aligner nudge still
+  // fine-tunes the fixed position; the vertical length is centred on the QR height.
+  if (pkdVertical) {
+    const { font, mag } = emFont("pkd", "1");
+    const fitPkd = esc(pkdTxt);
+    const vlen = fitPkd.length * (F_WIDTH[font] || 8) * mag; // vertical run of the rotated text
+    const px = Math.max(0, qrX - Math.round(2 * dp) + emx("pkd")); // 2mm left of the QR (+ aligner nudge)
+    let py = qrY + Math.max(0, Math.round((qrPx - vlen) / 2)) + emy("pkd"); // centre on the QR height
+    py = Math.max(top, Math.min(Hd - Math.round(1 * dp), py));
+    rows.push(`TEXT ${px},${py},"${font}",90,${mag},${mag},"${fitPkd}"`);
+  }
   // RED only: the Rack No block prints BELOW the QR, CENTRED under it. The LABEL sits
   // on line 1 and the actual RACK VALUE on line 2 (each centred, fitted to ~the QR
   // width) — so a long rack number never runs right into the Lot/PKD column. Empty
