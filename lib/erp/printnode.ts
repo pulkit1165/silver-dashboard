@@ -399,10 +399,15 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // prints BELOW the QR so it is never cut by a long name. The other attributes
   // (Incl of Taxes / Lot / PKD) stay in the right column under the MRP. The code no
   // longer takes a right-column line (it's above the QR).
-  const codeOverQr = red;
+  // Code sits centred directly ABOVE the QR on the red stock and on the 70×40 green
+  // (operator wants the SKU on top of the barcode). On the 70×40 the QR keeps its
+  // bottom-right hero position and the code just tucks above it; on red the whole
+  // code+QR block is pushed to the top.
+  const codeOverQr = red || (w === 70 && h === 40);
   const rackBelowQr = red;
-  // Push the code+QR block to the very top of the white zone (QR "up").
-  if (codeOverQr) qrY = Math.max(top, top + elh("code", codeF)); // code+QR pushed to the very top
+  // Push the code+QR block to the very top of the white zone (QR "up") — red only;
+  // the 70×40 keeps its fillBig QR position and only lifts the code above it.
+  if (codeOverQr && !fillBig) qrY = Math.max(top, top + elh("code", codeF));
   const rackLine = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
   const rackY = rackBelowQr ? qrY + qrPx + Math.round(0.8 * dp) : 0; // Rack sits a little higher, right under the QR
   // Right-column attributes: on red, everything EXCEPT Rack No (which prints below QR).
