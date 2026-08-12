@@ -29,10 +29,12 @@ export default function CasePacking({
   }
 
   async function loadPacking(id: number) {
-    const r = await fetch(`/api/erp/packing/${id}`);
-    const d = await r.json();
-    if (d.ok) setPacking(d.packing);
-    return d.ok ? (d.packing as OrderPacking) : null;
+    try {
+      const r = await fetch(`/api/erp/packing/${id}`);
+      const d = await r.json();
+      if (d.ok) setPacking(d.packing);
+      return d.ok ? (d.packing as OrderPacking) : null;
+    } catch { pushLog(false, "Couldn't load packing state — check your connection and retry."); return null; }
   }
 
   async function selectOrder(id: number) {
@@ -105,6 +107,8 @@ export default function CasePacking({
       } else {
         pushLog(false, d.error ?? "Rejected");
       }
+    } catch {
+      pushLog(false, "Network error while packing — nothing was recorded. Retry.");
     } finally {
       setBusy(false);
     }

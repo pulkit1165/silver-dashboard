@@ -49,6 +49,16 @@ export default function SavedSlips({ initial }: { initial: PackingSlipListRow[] 
   const completeCount = slips.filter((s) => s.is_complete).length;
   const reset = () => { setQ(""); setFrom(""); setTo(""); setStatus("all"); };
 
+  async function deleteSlip(s: PackingSlipListRow) {
+    if (!confirm(`Delete packing slip ${s.slip_no}${s.party ? ` (${s.party})` : ""}?\n\nThis removes the saved document only — any stock already dispatched stays dispatched. This can't be undone.`)) return;
+    setSlips((prev) => prev.filter((x) => x.id !== s.id)); // optimistic
+    try {
+      const r = await fetch(`/api/erp/packing-slips/${s.id}`, { method: "DELETE" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert("Could not delete: " + (d.error || `server ${r.status}`)); /* re-sync */ try { const rr = await fetch("/api/erp/packing-slips", { cache: "no-store" }); const dd = await rr.json(); if (Array.isArray(dd.slips)) setSlips(dd.slips); } catch { /* ignore */ } }
+    } catch { alert("Could not delete — network error."); }
+  }
+
   return (
     <>
       {/* filter bar */}
@@ -124,12 +134,21 @@ export default function SavedSlips({ initial }: { initial: PackingSlipListRow[] 
                   <td className="text-xs">{s.updated_by || "—"}</td>
                   <td className="whitespace-nowrap text-xs text-[var(--muted)]">{s.updated_at}</td>
                   <td className="text-right">
-                    <Link
-                      href={`/erp/packing-slip?open=${s.id}`}
-                      className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--accent-bg)] hover:text-[var(--accent-strong)]"
-                    >
-                      Open →
-                    </Link>
+                    <div className="flex items-center justify-end gap-1.5">
+                      <Link
+                        href={`/erp/packing-slip?open=${s.id}`}
+                        className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--accent-bg)] hover:text-[var(--accent-strong)]"
+                      >
+                        Open →
+                      </Link>
+                      <button
+                        onClick={() => deleteSlip(s)}
+                        title="Delete this saved slip"
+                        className="rounded-lg border border-[var(--border)] bg-white px-2.5 py-1.5 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger-bg)]"
+                      >
+                        🗑
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

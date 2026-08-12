@@ -40,6 +40,12 @@ export async function deleteAllPackingSlips(): Promise<number> {
   return (rows as unknown as unknown[]).length;
 }
 
+/** Delete ONE saved slip by id. Returns its slip_no if it existed, else null. */
+export async function deletePackingSlip(id: number): Promise<{ slip_no: string } | null> {
+  const [row] = (await getSql()`DELETE FROM packing_slips WHERE id=${id} RETURNING slip_no`) as unknown as Array<{ slip_no: string }>;
+  return row ?? null;
+}
+
 export async function getPackingSlip(idOrNo: string | number): Promise<PackingSlipRow | undefined> {
   const sql = getSql();
   const byId = typeof idOrNo === "number" || /^\d+$/.test(String(idOrNo));

@@ -241,7 +241,10 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   useEffect(() => { if (!available.includes(pickCase) && available.length) setPickCase(available[0]); }, [available, pickCase]);
   const totals = useMemo(() => {
     const all = [...completed.flatMap((c) => c.rows), ...activeRows];
-    return { box: completed.length + (activeCaseNo && activeRows.length ? 1 : 0), qty: all.reduce((a, r) => a + num(r.quantity), 0) };
+    // Count the open case as a box only once it actually has a dispatched item (matches
+    // what doneCase will accept); qty mirrors buildSlipItems (quantity, else pcs).
+    const openIsBox = !!activeCaseNo && activeRows.some((r) => num(r.qtyDispatched) > 0);
+    return { box: completed.length + (openIsBox ? 1 : 0), qty: all.reduce((a, r) => a + (num(r.quantity) || num(r.pcs)), 0) };
   }, [completed, activeRows, activeCaseNo]);
   const slipItems = useMemo(() => buildSlipItems(completed), [completed]);
   const slipQty = useMemo(() => slipItems.reduce((a, it) => a + it.qty, 0), [slipItems]);
@@ -542,7 +545,12 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
       {/* slip bar: open existing / new / save status */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
         <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Open slip</span>
-        <select className="ctl !w-auto" value={slipId ?? ""} onChange={(e) => e.target.value && openById(Number(e.target.value))}>
+        <select className="ctl !w-auto" value={slipId ?? ""} onChange={async (e) => {
+          if (!e.target.value) return;
+          // Flush unsaved work before switching so opening another slip can't discard it.
+          if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; await doSave(); }
+          openById(Number(e.target.value));
+        }}>
           <option value="">— select —</option>
           {slips.map((s) => <option key={s.id} value={s.id}>{s.slip_no} · {s.party || "—"} · {s.updated_by || ""}</option>)}
         </select>
@@ -572,7 +580,9 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
               <option value="">— select unpacked order —</option>
               {orders.map((o) => <option key={o.id} value={o.id}>{o.so_no} — {o.customer_name ?? "—"} ({o.status})</option>)}
             </select>
-            {hdr.salesOrderNo && !soId && <div className="mt-1 text-xs text-[var(--muted)]">From saved slip: <b>{hdr.salesOrderNo}</b> (not in the live unpacked list)</div>}
+            {/* Free-text SO No. for a manual/legacy slip whose order isn't in the live
+                unpacked list — without this, such a slip could never pass validate/export. */}
+            <input className="ctl mt-1" value={hdr.salesOrderNo} onChange={(e) => setHeader("salesOrderNo", e.target.value)} placeholder="or type Sales Order No. (e.g. SO26/0123)" />
           </Field>
           <Field label="Customer / Party Name" req>
             <input className="ctl" list="ps-party-list" value={hdr.partyName} onChange={(e) => setHeader("partyName", e.target.value)} placeholder="Type to search a party…" autoComplete="off" />
