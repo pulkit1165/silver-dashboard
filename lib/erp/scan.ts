@@ -141,6 +141,13 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
     });
     return { ok: false, message: "Scan rejected", error, eventId: id };
   }
+  // An INACTIVE SKU must never move stock — the tier-barcode (-S/-M) path resolves by
+  // sku_code and would otherwise skip this check (only the token path enforced it).
+  if (sku.status !== "active" && input.action !== "lookup") {
+    const error = `SKU ${sku.sku_code} is inactive.`;
+    const id = await recordEvent(sql, { token, skuId: sku.id, user: input.user, action: input.action, qty: input.qty ?? 0, status: "failure", error, device });
+    return { ok: false, message: "Scan rejected", error, eventId: id };
+  }
 
   // A tier-suffixed barcode (-S/-M) carries its own qty (single_qty/master_qty)
   // when the caller doesn't explicitly supply one — a plain qr_token scan has
@@ -156,6 +163,13 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
 
   try {
     await sql.begin(async (tx) => {
+      // Serialize concurrent scans of the SAME sku. Every stock/quantity guard here is a
+      // read-then-write (have=qtyAt→check→adjust; picked_qty→check→+qty), which without a
+      // lock lets two simultaneous scanners both pass the check and both write → oversold
+      // stock / over-dispatch beyond the order. This per-sku transaction advisory lock
+      // (auto-released at commit/rollback) makes those critical sections mutually exclusive;
+      // different SKUs still proceed in parallel. Pure lookups don't touch anything.
+      if (input.action !== "lookup") await tx`SELECT pg_advisory_xact_lock(${sku.id})`;
       switch (input.action) {
         case "lookup":
           message = `Identified ${sku.sku_code}`;
@@ -197,7 +211,10 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
         case "count": {
           const loc = await resolveLoc(tx, sku.id, input.warehouseId, input.binId);
           const have = await qtyAt(tx, sku.id, loc.warehouseId, loc.binId, batch);
-          const counted = input.qty ?? 0;
+          // A missing/non-numeric count must NOT be treated as 0 (that would zero the stock)
+          // nor as NaN (?? doesn't catch NaN → NaN would corrupt the inventory qty).
+          const counted = input.qty;
+          if (counted == null || !Number.isFinite(counted) || counted < 0) throw new Error("Enter a valid count quantity (0 or more).");
           const delta = counted - have;
           if (delta !== 0) {
             await adjustInventory(tx, sku.id, loc.warehouseId, loc.binId, batch, delta);
