@@ -793,14 +793,13 @@ export async function verifyDeliveryOrder(packageId: number): Promise<{ ok: true
 // auto-fills on a new slip instead of the user typing one.
 export async function nextPackingSlipNo(prefix = "PS26"): Promise<string> {
   const sql = getSql();
-  const rows = (await sql`
-    SELECT slip_no FROM packing_slips WHERE slip_no LIKE ${prefix + "/%"} ORDER BY id DESC LIMIT 50`) as unknown as Array<{ slip_no: string }>;
-  let max = 0;
-  for (const r of rows) {
-    const m = /\/(\d+)$/.exec(r.slip_no);
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `${prefix}/${String(max + 1).padStart(4, "0")}`;
+  // TRUE max across ALL slips for this prefix (was: only the last 50 by id, which could
+  // under-compute the max and hand out a number that already exists). One indexed query.
+  const [r] = (await sql`
+    SELECT COALESCE(MAX((regexp_replace(slip_no, '^.*/', ''))::int), 0) AS mx
+    FROM packing_slips
+    WHERE slip_no LIKE ${prefix + "/%"} AND slip_no ~ '/[0-9]+$'`) as unknown as Array<{ mx: number }>;
+  return `${prefix}/${String((Number(r?.mx) || 0) + 1).padStart(4, "0")}`;
 }
 
 // Bill No. lives inside packing_slips.data (JSON), not its own column — same
@@ -809,15 +808,12 @@ export async function nextPackingSlipNo(prefix = "PS26"): Promise<string> {
 // internal packing-slip reference, not the legal invoice number.
 export async function nextBillNo(prefix = "GC26/"): Promise<string> {
   const sql = getSql();
-  const rows = (await sql`
-    SELECT data->'hdr'->>'billNo' AS bill_no FROM packing_slips
-    WHERE data->'hdr'->>'billNo' LIKE ${prefix + "%"} ORDER BY id DESC LIMIT 50`) as unknown as Array<{ bill_no: string | null }>;
-  let max = 0;
-  for (const r of rows) {
-    const m = /(\d+)$/.exec(r.bill_no || "");
-    if (m) max = Math.max(max, Number(m[1]));
-  }
-  return `${prefix}${String(max + 1).padStart(6, "0")}`;
+  // TRUE max across all bill numbers for this prefix (was: last 50 by id only).
+  const [r] = (await sql`
+    SELECT COALESCE(MAX((regexp_replace(data->'hdr'->>'billNo', '^.*[^0-9]', ''))::int), 0) AS mx
+    FROM packing_slips
+    WHERE data->'hdr'->>'billNo' LIKE ${prefix + "%"} AND data->'hdr'->>'billNo' ~ '[0-9]+$'`) as unknown as Array<{ mx: number }>;
+  return `${prefix}${String((Number(r?.mx) || 0) + 1).padStart(6, "0")}`;
 }
 
 export async function updateDeliveryOrderHeader(

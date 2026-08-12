@@ -87,7 +87,11 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   const slipIdRef = useRef<number | null>(null);
   const serverAtRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
+  const savingRef = useRef(false); // serialize saves so a new slip's first save can't double-fire
   const lastEditRef = useRef(0);
+  // Row ids that already packed for real in the CURRENT case — so retrying "Done Case"
+  // after a partial failure never packs the same row (and deducts stock) twice.
+  const packedRowsRef = useRef<Set<string>>(new Set());
   useEffect(() => { stateRef.current = { hdr, activeCaseNo, activeRows, completed }; }, [hdr, activeCaseNo, activeRows, completed]);
   useEffect(() => { slipIdRef.current = slipId; }, [slipId]);
 
@@ -97,11 +101,14 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   const refreshList = async () => {
     try { const r = await fetch("/api/erp/packing-slips", { cache: "no-store" }); const d = await r.json(); setSlips(d.slips || []); } catch { /* ignore */ }
   };
-  function applyDoc(doc: SlipDoc) {
-    setHdr({ ...emptyHeader(), ...(doc.hdr || {}) });
-    setActiveCaseNo(doc.activeCaseNo ?? null);
-    setActiveRows(doc.activeRows || []);
-    setCompleted(doc.completed || []);
+  function applyDoc(doc: SlipDoc | null | undefined) {
+    // A legacy/partial/corrupt row can have null `data` — never let that white-screen the
+    // editor (the cast `as SlipDoc` hides it). Fall back to a clean empty doc.
+    const d = (doc && typeof doc === "object") ? doc : null;
+    setHdr({ ...emptyHeader(), ...((d?.hdr && typeof d.hdr === "object") ? d.hdr : {}) });
+    setActiveCaseNo(d?.activeCaseNo ?? null);
+    setActiveRows(Array.isArray(d?.activeRows) ? d!.activeRows : []);
+    setCompleted(Array.isArray(d?.completed) ? d!.completed : []);
   }
   async function openById(id: number) {
     try {
@@ -148,16 +155,36 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   async function doSave() {
     const s = stateRef.current;
     if (!s.hdr.slipNo.trim()) return;
+    if (savingRef.current) { dirtyRef.current = true; return; } // a save is in flight → retry next tick
+    savingRef.current = true;
     setSave("saving");
+    // Send the slip's id so the server UPDATES this slip (never creates a duplicate) and
+    // its last-seen timestamp so a concurrent edit is detected instead of silently lost.
+    const post = (expected: string | null) => fetch("/api/erp/packing-slips", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: slipIdRef.current || undefined, create: !slipIdRef.current, slipNo: s.hdr.slipNo.trim(), soNo: s.hdr.salesOrderNo, party: s.hdr.partyName, data: s, expectedUpdatedAt: expected }),
+    });
     try {
-      const r = await fetch("/api/erp/packing-slips", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ slipNo: s.hdr.slipNo.trim(), soNo: s.hdr.salesOrderNo, party: s.hdr.partyName, data: s }),
-      });
-      const d = await r.json();
-      if (d.ok) { setSlipId(d.id); serverAtRef.current = d.updated_at; setSave("saved"); }
-      else setSave("idle");
-    } catch { setSave("idle"); }
+      let r = await post(serverAtRef.current);
+      let d = await r.json().catch(() => ({}));
+      // 409 = someone else saved this same slip first. Re-read its latest timestamp and
+      // save our version on top (deliberate), so our work is never dropped nor silently
+      // clobbering — the write only lands after we've acknowledged their change.
+      if (r.status === 409 && d.conflict && slipIdRef.current) {
+        try {
+          const rr = await fetch(`/api/erp/packing-slips/${slipIdRef.current}`, { cache: "no-store" });
+          const dd = await rr.json();
+          if (dd.ok && dd.slip) { serverAtRef.current = dd.slip.updated_at; r = await post(dd.slip.updated_at); d = await r.json().catch(() => ({})); }
+        } catch { /* fall through to the failure handling below */ }
+      }
+      if (d.ok) {
+        slipIdRef.current = d.id; setSlipId(d.id); serverAtRef.current = d.updated_at;
+        // The number may have been reassigned to avoid a collision with another user's slip.
+        if (d.slipNo && d.slipNo !== s.hdr.slipNo.trim()) setHeader("slipNo", d.slipNo);
+        setSave("saved");
+      } else { dirtyRef.current = true; setSave("idle"); } // re-arm so a failed save is retried
+    } catch { dirtyRef.current = true; setSave("idle"); } // network blip: keep dirty → autosave retries
+    finally { savingRef.current = false; }
   }
 
   // load list + last opened slip (a ?open=<id> in the URL — e.g. from the Saved Slips
@@ -242,6 +269,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
       qtyOrdered: String(l.qty), qtyDispatched: "", quantity: "",
       pendingQty: String(l.qty),
     }));
+    packedRowsRef.current.clear(); // fresh case → nothing packed yet
     setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
   // A scan only PREVIEWS the item — it is not added to the case until the user
@@ -353,6 +381,10 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     if (!activeCaseNo) return;
     // Only rows that actually got a dispatched qty (scanned or hand-entered) are
     // packed — unscanned pre-seeded lines are dropped from the case.
+    // A row with a blank/zero/negative/non-numeric Qty Dispatched is invalid. Flag it
+    // loudly instead of silently dropping it from the case (which looked "packed").
+    const badQty = activeRows.filter((r) => String(r.qtyDispatched ?? "").trim() !== "" && !(num(r.qtyDispatched) > 0));
+    if (badQty.length) { flash(false, `${badQty.length} item(s) have an invalid Qty Dispatched (must be a positive number) — fix the highlighted cells.`); return; }
     const scanned = activeRows.filter((r) => num(r.qtyDispatched) > 0);
     if (scanned.length === 0) { flash(false, "Scan an item (or enter Qty Dispatched) before closing the case."); return; }
     const incomplete = scanned.filter((r) => rowMissingFields(r).length > 0);
@@ -373,7 +405,9 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     // already typed an exact qty per row, so overpack is allowed without an
     // extra confirm step (unlike scan-by-scan packing).
     setPacking(true);
-    const toPack = scanned;
+    // Skip rows that already packed on a previous (partially-failed) attempt — this is what
+    // stops a retry from deducting the same stock twice.
+    const toPack = scanned.filter((r) => !packedRowsRef.current.has(r.id));
     const failures: string[] = [];
     let skippedNoSku = 0;
     for (const r of toPack) {
@@ -388,16 +422,18 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
           }),
         });
         const pd = await pr.json();
-        if (!pd.ok) failures.push(`${r.itemCode}: ${pd.error ?? "failed"}`);
+        if (pd.ok) packedRowsRef.current.add(r.id); // remember success so a retry won't re-pack it
+        else failures.push(`${r.itemCode}: ${pd.error ?? "failed"}`);
       } catch { failures.push(`${r.itemCode}: network error`); }
     }
     setPacking(false);
 
     if (failures.length) {
-      flash(false, `Case ${activeCaseNo}: ${failures.length} item(s) failed to pack — fix and retry. ${failures.slice(0, 2).join("; ")}`);
+      flash(false, `Case ${activeCaseNo}: ${failures.length} item(s) failed to pack — fix and retry (already-packed items won't be re-packed). ${failures.slice(0, 2).join("; ")}`);
       return; // keep the case open so the user can fix and retry
     }
 
+    packedRowsRef.current.clear(); // case fully packed — reset for the next case
     setCompleted((cs) => [...cs, { caseNo: activeCaseNo, rows: scanned }].sort((a, b) => a.caseNo - b.caseNo));
     setActiveCaseNo(null); setActiveRows([]); touch();
     flash(true, `Case ${activeCaseNo} packed for real — now in Delivery Orders${skippedNoSku ? ` (${skippedNoSku} item(s) not in SKU master, Excel-only)` : ""}`);

@@ -29,22 +29,25 @@ export const fmtDate = (iso: string) => { const m = /^(\d{4})-(\d{2})-(\d{2})$/.
 export type SlipItem = { code: string; desc: string; mrp: string; cases: number[]; qty: number; ordered: number; dispatched: number };
 export function buildSlipItems(cases: Case[]): SlipItem[] {
   const map = new Map<string, SlipItem>();
-  for (const c of cases) for (const r of c.rows) {
-    const code = r.itemCode.trim() || "(blank)";
+  const str = (v: unknown) => String(v ?? ""); // legacy/hand-edited rows may miss fields → never .trim() undefined
+  for (const c of cases) for (const r of (c.rows ?? [])) {
+    const code = str(r.itemCode).trim() || "(blank)";
     const qty = num(r.quantity) || num(r.pcs);
     const ordered = num(r.qtyOrdered);
     const dispatched = num(r.qtyDispatched);
     const ex = map.get(code);
     if (ex) {
       ex.qty += qty;
-      // Ordered/Dispatched are order-line figures (same on every case row) — keep the value, don't double-count.
+      // Qty Ordered is an order-LINE total (identical on every case row) → keep it (max).
+      // Qty Dispatched is accumulated PER CASE (Case 1: 10, Case 2: 8) → SUM it, or an item
+      // split across cases would under-report the dispatched total on the legal slip.
       ex.ordered = Math.max(ex.ordered, ordered);
-      ex.dispatched = Math.max(ex.dispatched, dispatched);
+      ex.dispatched += dispatched;
       if (!ex.cases.includes(c.caseNo)) ex.cases.push(c.caseNo);
-      if (!ex.desc && r.itemDesc) ex.desc = r.itemDesc;
-      if (!ex.mrp && (r.mrp || r.mMrp)) ex.mrp = r.mrp || r.mMrp;
+      if (!ex.desc && r.itemDesc) ex.desc = str(r.itemDesc);
+      if (!ex.mrp && (r.mrp || r.mMrp)) ex.mrp = str(r.mrp || r.mMrp);
     } else {
-      map.set(code, { code, desc: r.itemDesc, mrp: r.mrp || r.mMrp, cases: [c.caseNo], qty, ordered, dispatched });
+      map.set(code, { code, desc: str(r.itemDesc), mrp: str(r.mrp || r.mMrp), cases: [c.caseNo], qty, ordered, dispatched });
     }
   }
   const items = [...map.values()];
