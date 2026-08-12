@@ -288,14 +288,19 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // taking a row in the detail column. That frees a row so the hero name sizes up,
   // and lands PKD in a fixed, correct spot (no fragile aligner drag).
   const pkdVertical = heroSmall;
-  // Lot No / Rack No only print when the SKU actually has one — empty "Lot No:" /
-  // "Rack No:" lines just waste rows, shrink the (hero) name and push content down
-  // into the pre-printed address band. PKD (packed date) and the tax line always show.
+  // Lot No / Rack No: on the small hero labels they only print when the SKU has a value
+  // (empty labelled lines would waste rows and shrink the hero name). The BIG 95×70 has
+  // ample room, so it ALWAYS shows "Lot No:" and "Rack No:" as labelled fields — blank
+  // for hand-writing, or filled when a value exists (this is what the client expects and
+  // was the "rack/lot don't show" complaint). PKD + the tax line always show.
+  const alwaysLotRack = w === 95 && h === 70;
+  const lotTxt = `Lot No: ${esc(l.lot ?? "")}`.trimEnd();
+  const rackTxt = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
   const allExtras: string[] = [
     "(Incl. of All Taxes)",
-    ...(l.lot && String(l.lot).trim() ? [`Lot No: ${esc(l.lot)}`] : []),
+    ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
     ...(pkdVertical ? [] : [pkdTxt]),
-    ...(l.rack && String(l.rack).trim() ? [`Rack No: ${esc(l.rack)}`] : []),
+    ...((l.rack && String(l.rack).trim()) || alwaysLotRack ? [rackTxt] : []),
   ];
 
   // Auto-fit: pick the LARGEST font tier [code, name, qty/mrp, extras] at which the
