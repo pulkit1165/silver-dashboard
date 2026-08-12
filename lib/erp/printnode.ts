@@ -293,7 +293,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // ample room, so it ALWAYS shows "Lot No:" and "Rack No:" as labelled fields — blank
   // for hand-writing, or filled when a value exists (this is what the client expects and
   // was the "rack/lot don't show" complaint). PKD + the tax line always show.
-  const alwaysLotRack = w === 95 && h === 70;
+  const alwaysLotRack = (w === 95 && h === 70) || (w === 70 && h === 40);
   const lotTxt = `Lot No: ${esc(l.lot ?? "")}`.trimEnd();
   const rackTxt = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
   const allExtras: string[] = [
@@ -375,9 +375,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
           { f: ["3", "3", "2", "2"], maxL: 4 },
           { f: ["2", "2", "2", "1"], maxL: 4 },
         ];
-    // 70×40 is short — force fewer attribute lines so the name can stay big (the gate
-    // still fills in extras below if there's room).
-    const KEEP = heroSmall ? 1 : 3;
+    // Reserve room for the attribute lines so they're never cut. The 70×40 must fit ALL
+    // its extras (Incl + Lot No + Rack No — PKD stands vertical beside the QR), so the
+    // name steps down enough that Rack No always lands above the address band. The tiny
+    // 65×35 / 50×30 keep just 1 (no room). Big green keeps 3.
+    const KEEP = (w === 70 && h === 40) ? allExtras.length : heroSmall ? 1 : 3;
     const codeRes = (nf: string) => heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf); // 70×40 code=name−1; big green code=name
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) { // prefer: name fully shown + the key attributes fit
@@ -456,7 +458,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
     const seenH = new Set<number>();
-    for (let bf = Number(start.font); bf >= (fillBig && heroSmall ? 2 : 1); bf--) {
+    for (let bf = Number(start.font); bf >= ((w === 70 && h === 40) ? 1 : (fillBig && heroSmall ? 2 : 1)); bf--) {
       for (let mag = (bf === Number(start.font) ? start.mag : 3); mag >= 1; mag--) {
         const hh = (F_HEIGHT[String(bf)] || 24) * mag;
         if (seenH.has(hh)) continue; seenH.add(hh);
