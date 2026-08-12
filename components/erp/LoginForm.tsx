@@ -3,7 +3,7 @@
 import { useState } from "react";
 
 export default function LoginForm({ next }: { next?: string }) {
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -16,7 +16,7 @@ export default function LoginForm({ next }: { next?: string }) {
       const r = await fetch("/api/erp/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ login, password }),
       });
       const d = await r.json();
       if (d.ok) {
@@ -35,12 +35,12 @@ export default function LoginForm({ next }: { next?: string }) {
   return (
     <form onSubmit={submit} className="flex flex-col gap-3">
       <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-        Email
+        Username or email
         <input
-          type="email" autoComplete="username" required value={email}
-          onChange={(e) => setEmail(e.target.value)}
+          type="text" autoComplete="username" required value={login}
+          onChange={(e) => setLogin(e.target.value)}
           className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2.5 text-sm outline-none focus:border-[var(--accent)]"
-          placeholder="you@silver.local"
+          placeholder="e.g. raju"
         />
       </label>
       <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">

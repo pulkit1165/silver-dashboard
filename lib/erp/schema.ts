@@ -9,6 +9,7 @@ export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").unique(),
+  username: text("username"), // login id (case-insensitive unique via a partial index)
   role: text("role").notNull(),
   passwordHash: text("password_hash"),
   active: boolean("active").default(true),

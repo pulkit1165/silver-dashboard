@@ -7,17 +7,21 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
-  const email = String(b.email ?? "").trim().toLowerCase();
+  // Accept either a username or an email in the same field (plus legacy `email`).
+  const id = String(b.login ?? b.username ?? b.email ?? "").trim().toLowerCase();
   const password = String(b.password ?? "");
-  if (!email || !password) {
-    return NextResponse.json({ ok: false, error: "Email and password are required." }, { status: 400 });
+  if (!id || !password) {
+    return NextResponse.json({ ok: false, error: "Username/email and password are required." }, { status: 400 });
   }
 
-  const [user] = await getSql()`SELECT id,name,role,email,password_hash FROM users WHERE lower(email)=${email} AND active=true`;
+  const [user] = await getSql()`
+    SELECT id,name,role,email,password_hash FROM users
+    WHERE (lower(username)=${id} OR lower(email)=${id}) AND active=true
+    LIMIT 1`;
   const u = user as { id: number; name: string; role: string; password_hash: string | null } | undefined;
-  // generic error message — don't reveal whether the email exists
+  // generic error message — don't reveal whether the account exists
   if (!u || !u.password_hash || !(await verifyPassword(password, u.password_hash))) {
-    return NextResponse.json({ ok: false, error: "Invalid email or password." }, { status: 401 });
+    return NextResponse.json({ ok: false, error: "Invalid username/email or password." }, { status: 401 });
   }
 
   const token = await signSession({ uid: u.id, role: u.role });
