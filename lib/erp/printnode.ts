@@ -199,6 +199,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // All the small/medium greens get the big-name "hero" fill (like the big green):
   // 70×40, 65×35 and the 50×30 (2-up). QR on the right replaces the old 1D barcode.
   const heroSmall = (w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30);
+  const medHero = w === 70 && h === 40;
+  // 70×40 (like red): the SKU code sits CENTRED above the QR and the name shifts up to
+  // the top — so the code leaves the text column and the name gets the top space. Defined
+  // early because the name-tier sizing below needs to know the code isn't in the column.
+  const codeOverQr = red || medHero;
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
@@ -208,7 +213,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // 70×40 green: the pre-printed address starts ~62% down, so keep content above it
   // (the earlier 0.72 overlapped the address). Other hero-small sizes keep 0.72.
   const bottom = Math.round(Hd * (red ? 0.94 : (w === 70 && h === 40) ? 0.62 : heroSmall ? 0.72 : pos === "bottom" ? 0.92 : 0.63));
-  const zoneH = Math.max(25, bottom - top);
+  // The TEXT must stay above the pre-printed address footer. On the 70×40 that footer
+  // starts higher than `bottom`, so the text block is fitted against `zoneBottom` (~0.50)
+  // while the QR still parks bottom-right using `bottom`. Other sizes: zoneBottom == bottom.
+  const zoneBottom = (w === 70 && h === 40) ? Math.round(Hd * 0.50) : bottom;
+  const zoneH = Math.max(25, zoneBottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
 
   // QR rendered as a BITMAP (like BarTender) with a built-in 4-module quiet zone,
@@ -223,7 +232,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // The big GREEN (95×70) and the 70×40 get the QR-right / text-left "hero" fill
   // layout (big bold name); the red keeps its QR-left layout.
   const fillBig = !red && ((w === 95 && h === 70) || heroSmall);
-  const maxBox = Math.min(zoneH - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? Math.min(20, h * 0.5) : bigLbl ? 32 : 28) * dp));
+  // The 70×40 QR parks bottom-right and can use the FULL label height (its column above
+  // is empty apart from the code) — so it isn't shrunk by the reduced text zone.
+  const qrHeightBudget = (w === 70 && h === 40) ? (bottom - top) : zoneH;
+  const maxBox = Math.min(qrHeightBudget - downShift - Math.round((tiny ? 0 : 1) * dp), Math.floor(Wd * (tiny ? 0.42 : 0.5)), Math.round((heroSmall ? Math.min(20, h * 0.5) : bigLbl ? 32 : 28) * dp));
   // QR size: per-element (aligner) mm wins, then legacy whole-block qrMM, else auto.
   const qrSzMM = (el.qr?.sz && el.qr.sz > 0) ? el.qr.sz : (opts.qrMM && opts.qrMM > 0 ? opts.qrMM : 0);
   // SCANNABILITY FLOOR: every module must be at least ~0.34mm (≈3 dots @203dpi, 4 @300)
@@ -296,12 +308,17 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const alwaysLotRack = (w === 95 && h === 70) || (w === 70 && h === 40);
   const lotTxt = `Lot No: ${esc(l.lot ?? "")}`.trimEnd();
   const rackTxt = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
-  const allExtras: string[] = [
-    "(Incl. of All Taxes)",
-    ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
-    ...(pkdVertical ? [] : [pkdTxt]),
-    ...((l.rack && String(l.rack).trim()) || alwaysLotRack ? [rackTxt] : []),
-  ];
+  // 70×40 white area is tiny — put Lot No + Rack No on ONE line so both show (blank for
+  // hand-writing) without spilling into the pre-printed address footer below.
+  const lotRackOne = `Lot No: ${esc(l.lot ?? "")}    Rack No: ${esc(l.rack ?? "")}`.replace(/\s+$/, "");
+  const allExtras: string[] = medHero
+    ? [lotRackOne] // 70×40: just the combined Lot/Rack line — the tax note is dropped to keep clear of the footer
+    : [
+        "(Incl. of All Taxes)",
+        ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
+        ...(pkdVertical ? [] : [pkdTxt]),
+        ...((l.rack && String(l.rack).trim()) || alwaysLotRack ? [rackTxt] : []),
+      ];
 
   // Auto-fit: pick the LARGEST font tier [code, name, qty/mrp, extras] at which the
   // code + qty + MRP + all four attribute lines + the (wrapped) name all fit the
@@ -380,7 +397,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // name steps down enough that Rack No always lands above the address band. The tiny
     // 65×35 / 50×30 keep just 1 (no room). Big green keeps 3.
     const KEEP = (w === 70 && h === 40) ? allExtras.length : heroSmall ? 1 : 3;
-    const codeRes = (nf: string) => heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf); // 70×40 code=name−1; big green code=name
+    // Code is ABOVE the QR (codeOverQr) → it takes NO column row; else 70×40 code=name−1, big green code=name.
+    const codeRes = (nf: string) => codeOverQr ? 0 : (heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf));
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) { // prefer: name fully shown + the key attributes fit
       const wr = wrapAll(esc(rawName), t.f[1], textW);
@@ -442,10 +460,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // prints BELOW the QR so it is never cut by a long name. The other attributes
   // (Incl of Taxes / Lot / PKD) stay in the right column under the MRP. The code no
   // longer takes a right-column line (it's above the QR).
-  const codeOverQr = red;
   const rackBelowQr = red;
-  // Push the code+QR block to the very top of the white zone (QR "up").
-  if (codeOverQr) qrY = Math.max(top, top + elh("code", codeF)); // code+QR pushed to the very top
+  // RED: push the code+QR block to the very top of the white zone (its QR is on the left,
+  // in the upper area). The 70×40 keeps its QR bottom-RIGHT (fillBig) with the code above it.
+  if (codeOverQr && !fillBig) qrY = Math.max(top, top + elh("code", codeF));
   const rackLine = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
   const rackY = rackBelowQr ? qrY + qrPx + Math.round(0.8 * dp) : 0; // Rack sits a little higher, right under the QR
   // Right-column attributes: on red, everything EXCEPT Rack No (which prints below QR).
@@ -491,7 +509,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // fills the sticker like the reference label, instead of a compact block at the
   // top. Smaller labels stay compact & centred against the QR.
   const totalLines = 1 + nameLines.length + 2 + extras.length;
-  const spread = fillBig ? Math.max(0, Math.min(Math.round((heroSmall ? 5 : 9) * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
+  // The 70×40 must NOT spread its lines down the zone — that pushed the lower lines into
+  // the pre-printed address footer. Keep it compact at the top; other fill labels spread.
+  const spread = (fillBig && !medHero) ? Math.max(0, Math.min(Math.round((heroSmall ? 5 : 9) * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
   let cy;
   if (fillBig) {
     cy = top;
@@ -573,9 +593,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   if (pkdVertical) {
     const { font, mag } = emFont("pkd", "1");
     const fitPkd = esc(pkdTxt);
-    const vlen = fitPkd.length * (F_WIDTH[font] || 8) * mag; // vertical run of the rotated text
-    const px = Math.max(0, qrX - Math.round(2 * dp) + emx("pkd")); // 2mm left of the QR (+ aligner nudge)
-    let py = qrY + Math.max(0, Math.round((qrPx - vlen) / 2)) + emy("pkd"); // centre on the QR height
+    const fontH = (F_HEIGHT[font] || 12) * mag; // rotated glyph height = its horizontal thickness
+    // Date stands vertically just LEFT of the QR, its RIGHT edge on the QR's left line and
+    // its TOP aligned to the QR's top — reading down the QR's left side.
+    const px = Math.max(0, qrX - fontH - Math.round(1 * dp) + emx("pkd"));
+    let py = qrY + emy("pkd"); // top-aligned to the QR
     py = Math.max(top, Math.min(Hd - Math.round(1 * dp), py));
     rows.push(`TEXT ${px},${py},"${font}",90,${mag},${mag},"${fitPkd}"`);
   }
