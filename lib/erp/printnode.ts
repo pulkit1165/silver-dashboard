@@ -206,7 +206,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // early because the name-tier sizing below needs to know the code isn't in the column.
   // The 95×70 big green does the same: code above the QR frees the whole left column so
   // the name/qty/MRP size UP and fill the label instead of leaving it half empty.
-  const codeOverQr = red || medHero || bigGreen;
+  // 70×40: the code goes ABOVE THE NAME in the left column (its own line), NOT over the QR
+  // — putting it over the bottom-right QR landed it on the name's line and clipped it.
+  const codeOverQr = red || bigGreen;
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
@@ -500,8 +502,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
 
   const baseH = (codeOverQr ? 0 : elh("code", codeF)) + nameLines.length * nlh(nameEff) + elh("qty", qtyF) + elh("mrp", qtyF);
   let nEx = 0;
-  if (rackBelowQr) {
-    nEx = colExtras.length; // red: the name was sized to fit them all, so always show Incl/Lot/PKD
+  if (rackBelowQr || medHero) {
+    // red + 70×40: the name was already sized to fit them, so ALWAYS show every extra
+    // (Lot/Rack line + PKD) — never drop PKD off a long-name label.
+    nEx = colExtras.length;
   } else {
     while (nEx < colExtras.length && baseH + (nEx + 1) * elh("extras", exF) <= fitRoom) nEx++;
   }
