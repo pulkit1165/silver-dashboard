@@ -172,22 +172,30 @@ export default function LabelAligner({
   const qrYa = (hero ? zoneBot - qrSize : zoneTop + Math.max(0, (zoneH - qrSize) / 2)) + oy;
   const textXa = (hero ? (heroSmall ? 4 : 1.5) : qrXa + qrSize + 2 - ox) + ox;
 
+  // 70×40: the SKU code sits ABOVE the QR (centred over it), the name gets the top of the
+  // left column, and PKD prints UNDER Rack No — mirroring buildTSPL so the preview matches.
+  const codeAboveQr = heroSmall && w === 70 && h === 40;
   // Stacked auto y-positions for the text block (starts at the top on hero labels).
   let ty = hero ? zoneTop + 1 : qrYa;
-  const codeYa = ty; ty += lhmm("code");
+  const codeWmm = String(sample.code || "").length * mmOf("code") * 0.62; // rough mono width
+  const codeXover = qrXa + Math.max(0, (qrSize - codeWmm) / 2);
+  const codeYa = codeAboveQr ? Math.max(zoneTop, qrYa - lhmm("code")) : ty;
+  if (!codeAboveQr) ty += lhmm("code");
   const nameYa = ty; ty += lhmm("name") * 1.7; // name ~ up to 2 lines
   const qtyYa = ty; ty += lhmm("qty");
   const mrpYa = ty;
 
   const box = (k: string, xa: number, ya: number) => ({ left: xa + (els[k]?.dx || 0), top: ya + (els[k]?.dy || 0) });
   const qrBox = { left: qrXa + (els.qr?.dx || 0), top: qrYa + (els.qr?.dy || 0), size: qrSize };
-  const codeB = box("code", textXa, codeYa), nameB = box("name", textXa, nameYa), qtyB = box("qty", textXa, qtyYa), mrpB = box("mrp", textXa, mrpYa);
-  // Attribute band split into independent lines (Incl / Lot / PKD / Rack).
+  const codeB = box("code", codeAboveQr ? codeXover : textXa, codeYa), nameB = box("name", textXa, nameYa), qtyB = box("qty", textXa, qtyYa), mrpB = box("mrp", textXa, mrpYa);
+  // Attribute band split into independent lines. Order: Incl, Lot, then PKD/Rack — on the
+  // 70×40 it's Rack then PKD (PKD under Rack); elsewhere PKD then Rack.
   const exTop = mrpYa + lhmm("mrp");
   const inclB = box("incl", textXa, exTop);
   const lotB = box("lot", textXa, exTop + lhmm("incl"));
-  const pkdB = box("pkd", textXa, exTop + lhmm("incl") + lhmm("lot"));
-  const rackB = box("rack", textXa, exTop + lhmm("incl") + lhmm("lot") + lhmm("pkd"));
+  const exY0 = exTop + lhmm("incl") + lhmm("lot");
+  const rackB = box("rack", textXa, codeAboveQr ? exY0 : exY0 + lhmm("pkd"));
+  const pkdB = box("pkd", textXa, codeAboveQr ? exY0 + lhmm("rack") : exY0);
 
   const selStyle = (k: ElKey) => sel === k ? { outline: "2px solid #e11d2a", outlineOffset: 2, borderRadius: 3 } : {};
 
