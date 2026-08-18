@@ -200,14 +200,17 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // 70×40, 65×35 and the 50×30 (2-up). QR on the right replaces the old 1D barcode.
   const heroSmall = (w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30);
   const medHero = w === 70 && h === 40;
+  const bigGreen = w === 95 && h === 70;
   // 70×40 (like red): the SKU code sits CENTRED above the QR and the name shifts up to
   // the top — so the code leaves the text column and the name gets the top space. Defined
   // early because the name-tier sizing below needs to know the code isn't in the column.
-  const codeOverQr = red || medHero;
+  // The 95×70 big green does the same: code above the QR frees the whole left column so
+  // the name/qty/MRP size UP and fill the label instead of leaving it half empty.
+  const codeOverQr = red || medHero || bigGreen;
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
-    : Math.round(Hd * (red ? 0.30 : heroSmall ? 0.05 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
+    : Math.round(Hd * (red ? 0.30 : medHero ? 0.025 : heroSmall ? 0.05 : pos === "bottom" ? 0.36 : 0.07)); // clear the banner/give the code top margin
   // Content zone kept comfortably clear of the pre-printed address band so it never
   // overprints it. The red 85×55 & 70×40 use more of their white area for big text.
   // 70×40 green: the pre-printed address starts ~62% down, so keep content above it
@@ -299,7 +302,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // the narrow strip just LEFT of the QR (rotated, reading bottom-to-top) instead of
   // taking a row in the detail column. That frees a row so the hero name sizes up,
   // and lands PKD in a fixed, correct spot (no fragile aligner drag).
-  const pkdVertical = heroSmall;
+  const pkdVertical = heroSmall && !medHero; // 70×40: PKD prints as a line BELOW Rack No (not vertical beside the QR)
   // Lot No / Rack No: on the small hero labels they only print when the SKU has a value
   // (empty labelled lines would waste rows and shrink the hero name). The BIG 95×70 has
   // ample room, so it ALWAYS shows "Lot No:" and "Rack No:" as labelled fields — blank
@@ -312,7 +315,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // hand-writing) without spilling into the pre-printed address footer below.
   const lotRackOne = `Lot No: ${esc(l.lot ?? "")}    Rack No: ${esc(l.rack ?? "")}`.replace(/\s+$/, "");
   const allExtras: string[] = medHero
-    ? [lotRackOne] // 70×40: just the combined Lot/Rack line — the tax note is dropped to keep clear of the footer
+    ? [lotRackOne, pkdTxt] // 70×40: combined Lot/Rack line, then PKD date BELOW it (tax note dropped on this tiny stock)
     : [
         "(Incl. of All Taxes)",
         ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
@@ -571,7 +574,8 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     const codeTxt = fitText(codeStr, font, Math.max(4 * dp, qrPx));
     const codeW = codeTxt.length * (F_WIDTH[font] || 16) * mag;
     const codeXc = qrX + Math.max(0, Math.round((qrPx - codeW) / 2)); // centre over the QR
-    const codeY = Math.max(top, qrY - elh("code", codeF));
+    // 70×40: lift the code a little higher above the QR (up to ~the name's top line).
+    const codeY = Math.max(top, qrY - elh("code", codeF) - (medHero ? Math.round(3 * dp) : 0));
     emit("code", codeXc + tdx("code"), codeY + tdy("code"), font, mag, codeTxt);
   } else {
     { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
