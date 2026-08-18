@@ -199,6 +199,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // All the small/medium greens get the big-name "hero" fill (like the big green):
   // 70×40, 65×35 and the 50×30 (2-up). QR on the right replaces the old 1D barcode.
   const heroSmall = (w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30);
+  const medHero = w === 70 && h === 40;
+  // 70×40 (like red): the SKU code sits ON TOP of the QR (centred above it), leaving the
+  // left column for the name. Defined early because the name-tier sizing needs to know
+  // the code isn't in the column.
+  const codeOverQr = red || medHero;
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
@@ -386,7 +391,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     // name steps down enough that Rack No always lands above the address band. The tiny
     // 65×35 / 50×30 keep just 1 (no room). Big green keeps 3.
     const KEEP = (w === 70 && h === 40) ? allExtras.length : heroSmall ? 1 : 3;
-    const codeRes = (nf: string) => heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf); // 70×40 code=name−1; big green code=name
+    const codeRes = (nf: string) => codeOverQr ? 0 : (heroSmall ? lh(String(Math.max(2, Number(nf) - 1))) : lh(nf)); // code over QR → no column row
     let bc: [string, string, string, string] | null = null;
     for (const t of bigTiers) { // prefer: name fully shown + the key attributes fit
       const wr = wrapAll(esc(rawName), t.f[1], textW);
@@ -448,10 +453,10 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // prints BELOW the QR so it is never cut by a long name. The other attributes
   // (Incl of Taxes / Lot / PKD) stay in the right column under the MRP. The code no
   // longer takes a right-column line (it's above the QR).
-  const codeOverQr = red;
+  // (codeOverQr defined earlier)
   const rackBelowQr = red;
   // Push the code+QR block to the very top of the white zone (QR "up").
-  if (codeOverQr) qrY = Math.max(top, top + elh("code", codeF)); // code+QR pushed to the very top
+  if (codeOverQr && !fillBig) qrY = Math.max(top, top + elh("code", codeF)); // RED only: push code+QR to the very top (its QR is upper-left). 70×40 keeps its QR bottom-right.
   const rackLine = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
   const rackY = rackBelowQr ? qrY + qrPx + Math.round(0.8 * dp) : 0; // Rack sits a little higher, right under the QR
   // Right-column attributes: on red, everything EXCEPT Rack No (which prints below QR).
@@ -558,8 +563,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     const { font, mag } = emFont("code", codeF);
     const codeTxt = fitText(codeStr, font, Math.max(4 * dp, qrPx));
     const codeW = codeTxt.length * (F_WIDTH[font] || 16) * mag;
-    const codeXc = qrX + Math.max(0, Math.round((qrPx - codeW) / 2)); // centre over the QR
-    const codeY = Math.max(top, qrY - elh("code", codeF));
+    let codeXc = qrX + Math.max(0, Math.round((qrPx - codeW) / 2)); // centre over the QR
+    codeXc = Math.max(0, Math.min(codeXc, Wd - rMar - codeW)); // never run past the right edge (fixes the code getting cut)
+    const codeY = Math.max(top, qrY - elh("code", codeF) - (medHero ? Math.round(4 * dp) : 0)); // 70×40: lift the code clear above the QR
     emit("code", codeXc + tdx("code"), codeY + tdy("code"), font, mag, codeTxt);
   } else {
     { const { font, mag } = emFont("code", codeF); emit("code", textX + tdx("code"), cy + tdy("code"), font, mag, fitText(codeStr, font, fw(mag))); }
