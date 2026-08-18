@@ -216,7 +216,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // The 70×40 pre-printed address footer starts HIGHER than `bottom` — fit the text block
   // against zoneBottom (~0.52) so the lower lines (MRP/Incl/Lot/Rack) never overprint it,
   // while the QR still parks bottom-right using `bottom`.
-  const zoneBottom = (w === 70 && h === 40) ? Math.round(Hd * 0.56) : bottom;
+  const zoneBottom = (w === 70 && h === 40) ? Math.round(Hd * 0.60) : bottom;
   const zoneH = Math.max(25, zoneBottom - top);
   const downShift = Math.round(2 * dp); // small nudge down so it doesn't clip the top edge
 
@@ -298,7 +298,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // the narrow strip just LEFT of the QR (rotated, reading bottom-to-top) instead of
   // taking a row in the detail column. That frees a row so the hero name sizes up,
   // and lands PKD in a fixed, correct spot (no fragile aligner drag).
-  const pkdVertical = heroSmall;
+  const pkdVertical = heroSmall && !medHero; // 70×40: PKD prints as a line UNDER Rack No (not vertical beside the QR)
   // Lot No / Rack No: on the small hero labels they only print when the SKU has a value
   // (empty labelled lines would waste rows and shrink the hero name). The BIG 95×70 has
   // ample room, so it ALWAYS shows "Lot No:" and "Rack No:" as labelled fields — blank
@@ -307,12 +307,14 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const alwaysLotRack = (w === 95 && h === 70) || (w === 70 && h === 40);
   const lotTxt = `Lot No: ${esc(l.lot ?? "")}`.trimEnd();
   const rackTxt = `Rack No: ${esc(l.rack ?? "")}`.trimEnd();
-  const allExtras: string[] = [
-    "(Incl. of All Taxes)",
-    ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
-    ...(pkdVertical ? [] : [pkdTxt]),
-    ...((l.rack && String(l.rack).trim()) || alwaysLotRack ? [rackTxt] : []),
-  ];
+  const allExtras: string[] = medHero
+    ? ["(Incl. of All Taxes)", lotTxt, rackTxt, pkdTxt] // 70×40: Incl, Lot, Rack, then PKD BELOW Rack
+    : [
+        "(Incl. of All Taxes)",
+        ...((l.lot && String(l.lot).trim()) || alwaysLotRack ? [lotTxt] : []),
+        ...(pkdVertical ? [] : [pkdTxt]),
+        ...((l.rack && String(l.rack).trim()) || alwaysLotRack ? [rackTxt] : []),
+      ];
 
   // Auto-fit: pick the LARGEST font tier [code, name, qty/mrp, extras] at which the
   // code + qty + MRP + all four attribute lines + the (wrapped) name all fit the
@@ -432,6 +434,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     qtyF = String(Math.max(2, Math.min(Number(qtyF0), Number(nameF) - 1)));
     exF = String(Math.min(Number(exF), Math.max(1, Number(nameF) - 1)));
   }
+  // 70×40: keep the attribute lines at font 1 so the reservation is small and the NAME
+  // can stay font 2 and wrap to two lines (instead of shrinking to a one-line font 1).
+  if (medHero) exF = "1";
 
   // CODE line: on the big green the PRODUCT NAME is the hero, so the code prints one
   // font-step SMALLER than the name (name always reads bigger). Shrink further only if
@@ -469,7 +474,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
     const start = emFont("name", nameF);
     const cands: { font: string; mag: number }[] = [];
     const seenH = new Set<number>();
-    for (let bf = Number(start.font); bf >= ((w === 70 && h === 40) ? 1 : (fillBig && heroSmall ? 2 : 1)); bf--) {
+    for (let bf = Number(start.font); bf >= ((w === 70 && h === 40) ? 2 : (fillBig && heroSmall ? 2 : 1)); bf--) {
       for (let mag = (bf === Number(start.font) ? start.mag : 3); mag >= 1; mag--) {
         const hh = (F_HEIGHT[String(bf)] || 24) * mag;
         if (seenH.has(hh)) continue; seenH.add(hh);
@@ -504,7 +509,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const totalLines = 1 + nameLines.length + 2 + extras.length;
   // 70×40: NO downward spread — pack the lines tightly from the top so they don't drift
   // into the address footer (and no big gaps). Other fill sizes still spread to fill.
-  const spread = (fillBig && !(w === 70 && h === 40)) ? Math.max(0, Math.min(Math.round((heroSmall ? 5 : 9) * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
+  // 70×40 spreads its lines to FILL the zone (down to just above the address) so there's
+  // no big empty band — capped so gaps stay tight.
+  const spread = fillBig ? Math.max(0, Math.min(Math.round((heroSmall ? 5 : 9) * dp), Math.floor((zoneH - contentH) / Math.max(1, totalLines)))) : 0;
   let cy;
   if (fillBig) {
     cy = top;
