@@ -200,10 +200,11 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // 70×40, 65×35 and the 50×30 (2-up). QR on the right replaces the old 1D barcode.
   const heroSmall = (w === 70 && h === 40) || (w === 65 && h === 35) || (w === 50 && h === 30);
   const medHero = w === 70 && h === 40;
+  const bigGreen = w === 95 && h === 70; // big green: code above QR + bigger name (fills the label)
   // 70×40 (like red): the SKU code sits ON TOP of the QR (centred above it), leaving the
   // left column for the name. Defined early because the name-tier sizing needs to know
   // the code isn't in the column.
-  const codeOverQr = red || medHero;
+  const codeOverQr = red || medHero || bigGreen;
   const pos = red || opts.pos === "bottom" ? "bottom" : "top";
   const top = opts.topMM != null
     ? Math.max(0, Math.round(opts.topMM * dp))
