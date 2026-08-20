@@ -43,7 +43,9 @@ export async function POST(req: Request) {
   const src = dbLay ?? { offsetX: Number(lay.offsetXmm) || 0, offsetY: Number(lay.offsetYmm) || 0, qrMM: Number(lay.qrMM) || 0, elements: (lay.elements as Record<string, unknown>) || undefined, design: defaultDesignFor(sizeId) };
   // dpi is authoritative from the Windows printer NAME (300 for a TTP-345, else 203).
   const name = printerId.slice(printerId.indexOf("::") + 2);
-  const dpi = /34\d|300\s*dpi/i.test(name) ? 300 : 203;
+  // Strict 300dpi detection (TTP-34x model or explicit "300 dpi") — a loose /34\d/ used
+  // to false-match a serial/renamed printer and render a 203dpi printer at 300dpi.
+  const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
 
   const opts: LayoutOpts = {
     pos: lay.pos === "bottom" ? "bottom" : "top",

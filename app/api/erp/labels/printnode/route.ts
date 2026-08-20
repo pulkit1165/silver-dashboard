@@ -51,7 +51,10 @@ export async function POST(req: Request) {
   let dpi = Number(lay.dpi) >= 280 ? Number(lay.dpi) : 203;
   try {
     const p = (await listPrinters()).find((x) => x.id === printerId);
-    if (p) dpi = /34\d|300\s*dpi/i.test(p.name) ? 300 : 203;
+    // Only a GENUINE 300dpi model (TTP-34x) or an explicit "300 dpi" → 300; the old
+    // /34\d/ false-matched any "34x" in a serial/port/renamed printer and rendered a
+    // 203dpi printer at 300dpi (squashed/oversized on the other PC). Default 203.
+    if (p) dpi = /\b34[5-9]\b|300\s*?dpi/i.test(p.name) ? 300 : 203;
   } catch { /* keep client/default dpi */ }
 
   const opts: LayoutOpts = {

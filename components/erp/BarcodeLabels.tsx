@@ -267,7 +267,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           // to the printer's real resolution instead of squashing into a corner
           layout: {
             pos: contentPos,
-            dpi: /34\d|300\s*dpi/i.test(pnPrinters.find((p) => p.id === pnPrinterId)?.name ?? "") ? 300 : 203,
+            dpi: /\b34[5-9]\b|300\s*?dpi/i.test(pnPrinters.find((p) => p.id === pnPrinterId)?.name ?? "") ? 300 : 203,
             density, speed,
             offsetXmm: layouts[sizeId]?.offsetX ?? 0,
             offsetYmm: layouts[sizeId]?.offsetY ?? 0,
