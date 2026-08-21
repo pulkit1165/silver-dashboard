@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import LabelAligner, { type Layout } from "./LabelAligner";
 import LabelSizePicker from "./LabelSizePicker";
+import { mrp } from "@/lib/format";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
@@ -434,7 +435,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               <div className="bl-name">{String(l.name).split("\n").map((ln, i) => <div key={i}>{ln}</div>)}</div>
               <div className="bl-qty">
                 {l.type === "master" ? `QTY: ${l.unitQty ?? l.masterQty} ${l.unit}` : `Qty. ${l.unitQty ?? (l.singleQty || 1)} ${l.unit}`}
-                {" · "}MRP.Rs.{l.price.toFixed(0)}/-
+                {" · "}MRP.Rs.{mrp(l.price)}/-
               </div>
               {showFull && <div className="bl-tax">(Incl. of All Taxes)</div>}
             </div>
@@ -887,7 +888,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           sizeId={sizeId} w={dims.w} h={dims.h}
           pos={dims.w === 85 && dims.h === 55 ? "bottom" : contentPos}
           sample={printable[0]
-            ? { code: printable[0].sku_code, name: printable[0].name, qty: `Qty. ${printable[0].singleQty || 1} ${printable[0].unit}`, mrp: `MRP.Rs.${Math.round(printable[0].price)}/-` }
+            ? { code: printable[0].sku_code, name: printable[0].name, qty: `Qty. ${printable[0].singleQty || 1} ${printable[0].unit}`, mrp: `MRP.Rs.${mrp(printable[0].price)}/-` }
             : { code: "HH12006", name: "CENTER STAND KIT SPL", qty: "Qty. 1 PCS", mrp: "MRP.Rs.570/-" }}
           initial={layouts[sizeId] ?? { offsetX: 0, offsetY: 0, qrMM: 0 }}
           onClose={() => setAlignOpen(false)}

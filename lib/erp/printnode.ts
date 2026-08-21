@@ -1,5 +1,6 @@
 import "server-only";
 import QRCode from "qrcode";
+import { mrp } from "@/lib/format";
 
 // PrintNode bridge: the dashboard (cloud) sends raw TSPL to the TSC label
 // printers via PrintNode's API. A small PrintNode client runs on each ERP PC
@@ -287,7 +288,7 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const big = bigLbl;
   const med = h >= (hires ? 30 : 38) || (!!opts.large && h >= 26);
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
-  const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
+  const mrpStr = `MRP.Rs.${mrp(l.price)}/-`;
 
   // Extra attributes printed below MRP (like the reference label), in this order:
   //   (Incl. of All Taxes) · Lot No · PKD (packed date) · Rack No.
@@ -738,7 +739,7 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
   const dx0 = qrX + qrPx + Math.round(4 * dp);
   const dW = Math.max(6 * dp, Wd - dx0 - rMar);
   const qtyStr = l.type === "master" ? `QTY:${l.masterQty} ${l.unit}` : `Qty.${l.singleQty || 1} ${l.unit}`;
-  const mrpStr = `MRP.Rs.${Math.round(l.price)}/-`;
+  const mrpStr = `MRP.Rs.${mrp(l.price)}/-`;
   const today = (() => { const d = new Date(); const p = (n: number) => String(n).padStart(2, "0"); return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`; })();
   const extras = ["(Incl. of All Taxes)", `Lot No: ${esc(l.lot ?? "")}`.trimEnd(), `PKD: ${l.pkd ? esc(l.pkd) : today}`, `Rack No: ${esc(l.rack ?? "")}`.trimEnd()];
   // Details start right below the name (to the right of the QR) so all six lines incl.

@@ -10,6 +10,15 @@ export function count(n: number): string {
   return new Intl.NumberFormat("en-US").format(n);
 }
 
+// MRP as printed on labels: KEEP the decimals (they're crucial) but show a clean whole
+// number when the amount is whole. Rounds to 2dp to clear float noise
+// (5.1000000000000005 → "5.10", 436.65000000000003 → "436.65"), drops trailing ".00"
+// (175 → "175", 175.5 → "175.50", 1.85 → "1.85").
+export function mrp(n: number): string {
+  const r = Math.round((Number(n) || 0) * 100) / 100;
+  return Number.isInteger(r) ? String(r) : r.toFixed(2);
+}
+
 // Two-decimal amount with thousands separators (e.g. 136.64, -149.73).
 export function num2(n: number): string {
   return new Intl.NumberFormat("en-IN", {

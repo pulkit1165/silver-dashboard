@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { mrp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -124,7 +125,7 @@ export async function POST(req: Request) {
       const textW = Math.max(10, x0 + cellW - pad - textX);
       const nameLines = wrap(l.name, bold, nameSize, textW).slice(0, 2);
       const qtyLine = (l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`)
-        + ` · MRP.Rs.${Math.round(l.price)}/-`;
+        + ` · MRP.Rs.${mrp(l.price)}/-`;
       let cy = topY;
       const gap = 2.5;
       const line = (text: string, f: typeof font, size: number) => {
@@ -164,7 +165,7 @@ export async function POST(req: Request) {
     const gap = 2.5;
     const nameLines = wrap(l.name, bold, nameSize, textW).slice(0, 2);
     const qtyLine = (l.type === "master" ? `QTY: ${l.masterQty} ${l.unit}` : `Qty. ${l.singleQty || 1} ${l.unit}`)
-      + ` · MRP.Rs.${Math.round(l.price)}/-`;
+      + ` · MRP.Rs.${mrp(l.price)}/-`;
 
     // top-anchored (bottom left blank for the pre-printed address)
     const topY = pos === "top" ? pageH - margin : margin + qrPt + 6;
