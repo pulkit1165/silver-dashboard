@@ -4,6 +4,7 @@ import { enqueueJobs } from "@/lib/erp/printBridge";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
+import { pricesByCode } from "@/lib/erp/queries";
 import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
@@ -60,9 +61,13 @@ export async function POST(req: Request) {
     ...((enforcedDesignFor(sizeId) ?? Number(src.design)) === 2 ? { design: 2 } : {}),
   };
 
+  // MRP is AUTHORITATIVE from the DB at print time — override the browser's cached price
+  // so an updated MRP always lands on the sticker.
+  const fresh = await pricesByCode(labels.map((l) => l.sku_code)).catch(() => ({} as Record<string, number>));
+  const priced = labels.map((l) => { const p = fresh[String(l.sku_code).toUpperCase()]; return p != null ? { ...l, price: p } : l; });
   // Build defensively: if a single label fails to render, drop it rather than throwing
   // the whole batch (belt-and-braces on top of the blank-token filter above).
-  const jobs = labels.flatMap((l) => {
+  const jobs = priced.flatMap((l) => {
     try { return [{ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }]; }
     catch { return []; }
   });

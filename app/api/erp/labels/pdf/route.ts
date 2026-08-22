@@ -3,6 +3,7 @@ import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
+import { pricesByCode } from "@/lib/erp/queries";
 import { mrp } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,9 @@ export async function POST(req: Request) {
   // template / bulletproof exact-size print); default = one label per die-cut page.
   const sheet: "a4" | "die" = body.sheet === "a4" ? "a4" : "die";
   if (!labels.length) return NextResponse.json({ ok: false, error: "No labels" }, { status: 400 });
+  // MRP authoritative from the DB at render time (browser may have cached an old price).
+  const freshPrices = await pricesByCode(labels.map((l) => l.sku_code)).catch(() => ({} as Record<string, number>));
+  for (const l of labels) { const p = freshPrices[String(l.sku_code).toUpperCase()]; if (p != null) l.price = p; }
 
   const doc = await PDFDocument.create();
   const font = await doc.embedFont(StandardFonts.Helvetica);

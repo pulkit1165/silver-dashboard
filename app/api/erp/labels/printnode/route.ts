@@ -3,6 +3,7 @@ import { printLabels, listPrinters, type LabelData, type LayoutOpts } from "@/li
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelLayouts, defaultDesignFor, enforcedDesignFor } from "@/lib/erp/labelLayout";
+import { pricesByCode } from "@/lib/erp/queries";
 import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
@@ -71,7 +72,11 @@ export async function POST(req: Request) {
     ...(Number(lay.topMM) >= 0 && lay.topMM !== "" && lay.topMM != null ? { topMM: Number(lay.topMM) } : {}),
     ...(Number(lay.leftMM) >= 0 && lay.leftMM !== "" && lay.leftMM != null ? { leftMM: Number(lay.leftMM) } : {}),
   };
-  const results = await printLabels(printerId, labels, w, h, opts);
+  // MRP is AUTHORITATIVE from the DB at print time — override the (possibly stale) price
+  // the browser cached so an updated MRP always lands on the sticker.
+  const fresh = await pricesByCode(labels.map((l) => l.sku_code)).catch(() => ({} as Record<string, number>));
+  const priced = labels.map((l) => { const p = fresh[String(l.sku_code).toUpperCase()]; return p != null ? { ...l, price: p } : l; });
+  const results = await printLabels(printerId, priced, w, h, opts);
   const sent = results.filter((r) => r.ok).length;
   // Audit which template (design) + lock code produced this batch, so a print can
   // always be traced back to its exact frozen layout.

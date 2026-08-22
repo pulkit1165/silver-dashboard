@@ -30,6 +30,22 @@ export async function getSku(id: number): Promise<Sku | undefined> {
   return row as Sku | undefined;
 }
 
+/**
+ * Current live MRP (skus.price) keyed by sku_code — used at PRINT time so a label
+ * always carries the latest MRP even if the browser cached an older price when the
+ * page was opened. Case-insensitive on the code.
+ */
+export async function pricesByCode(codes: string[]): Promise<Record<string, number>> {
+  const clean = [...new Set(codes.map((c) => String(c ?? "").trim()).filter(Boolean))];
+  if (!clean.length) return {};
+  const rows = (await getSql()`
+    SELECT sku_code, COALESCE(price, 0)::float8 AS price FROM skus
+    WHERE sku_code = ANY(${clean})`) as unknown as { sku_code: string; price: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[String(r.sku_code).toUpperCase()] = Number(r.price) || 0;
+  return out;
+}
+
 export type TokenState = "active" | "disabled" | "replaced" | "unknown";
 export type ScanTier = "single" | "master";
 
