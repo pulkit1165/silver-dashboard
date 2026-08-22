@@ -151,14 +151,29 @@ export async function syncMrpFromOracle(opts: {
     ? (opts.effectiveAt.length <= 10 ? `${opts.effectiveAt} 00:00:00` : opts.effectiveAt) : todayTs();
 
   let matched = 0;
-  const toSet: { id: number; code: string; mrp: number }[] = [];
+  const candidates: { id: number; code: string; mrp: number }[] = [];
   for (const s of skus) {
     const mrp = oracleMrp.get(String(s.sku_code).toUpperCase());
     if (mrp == null) continue;
     matched++;
     if (opts.onlyMissing && Number(s.price) > 0) continue; // keep existing
     if (Number(s.price) === mrp) continue;                  // no change
-    toSet.push({ id: s.id, code: s.sku_code, mrp });
+    candidates.push({ id: s.id, code: s.sku_code, mrp });
+  }
+
+  // Respect MANUAL overrides: if a SKU's LIVE MRP was last set by hand (its most-recent
+  // mrp_history row is NOT an Oracle sync), the operator deliberately chose that price —
+  // the sync must NOT overwrite it, or it fights the operator every day (the 7.20 vs 9.00
+  // tug-of-war). Only sync SKUs whose latest MRP came from Oracle or don't have one.
+  let toSet = candidates;
+  if (candidates.length) {
+    const ids = candidates.map((r) => r.id);
+    const latest = (await sql`
+      SELECT DISTINCT ON (sku_id) sku_id, COALESCE(note, '') AS note
+      FROM mrp_history WHERE sku_id = ANY(${ids})
+      ORDER BY sku_id, effective_at DESC, id DESC`) as unknown as { sku_id: number; note: string }[];
+    const manuallySet = new Set(latest.filter((r) => r.note !== "Synced from Oracle").map((r) => r.sku_id));
+    toSet = candidates.filter((r) => !manuallySet.has(r.id));
   }
 
   const CHUNK = 500;
