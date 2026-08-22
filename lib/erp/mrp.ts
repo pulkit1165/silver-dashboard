@@ -111,7 +111,8 @@ export async function setMrp(opts: {
     SELECT mrp FROM mrp_history WHERE sku_id=${skuId}
      ORDER BY effective_at DESC, id DESC LIMIT 1`;
   const effective = eff ? Number((eff as { mrp: number }).mrp) : mrp;
-  await sql`UPDATE skus SET price=${effective} WHERE id=${skuId}`;
+  // Setting an MRP by hand TSUNAMI-LOCKS it — the Oracle sync can never overwrite it after.
+  await sql`UPDATE skus SET price=${effective}, mrp_locked=true WHERE id=${skuId}`;
 
   return { ok: true, skuId, sku_code: skuCode, mrp, effective };
 }
@@ -145,35 +146,23 @@ export async function syncMrpFromOracle(opts: {
   const oracleMrp = await getOracleMrpByCode();
   if (oracleMrp.size === 0) return { updated: 0, matched: 0, oracleItems: 0 };
 
-  const skus = (await sql`SELECT id, sku_code, COALESCE(price, 0)::float8 AS price FROM skus`) as unknown as
-    { id: number; sku_code: string; price: number }[];
+  const skus = (await sql`SELECT id, sku_code, COALESCE(price, 0)::float8 AS price, COALESCE(mrp_locked, false) AS mrp_locked FROM skus`) as unknown as
+    { id: number; sku_code: string; price: number; mrp_locked: boolean }[];
   const effAt = opts.effectiveAt && /^\d{4}-\d{2}-\d{2}/.test(opts.effectiveAt)
     ? (opts.effectiveAt.length <= 10 ? `${opts.effectiveAt} 00:00:00` : opts.effectiveAt) : todayTs();
 
   let matched = 0;
-  const candidates: { id: number; code: string; mrp: number }[] = [];
+  const toSet: { id: number; code: string; mrp: number }[] = [];
   for (const s of skus) {
     const mrp = oracleMrp.get(String(s.sku_code).toUpperCase());
     if (mrp == null) continue;
     matched++;
+    // TSUNAMI-LOCK: a manually-set MRP is frozen — the sync must NEVER overwrite it (the
+    // 7.20-vs-9.00 tug-of-war). mrp_locked is set true whenever an operator sets an MRP.
+    if (s.mrp_locked) continue;
     if (opts.onlyMissing && Number(s.price) > 0) continue; // keep existing
     if (Number(s.price) === mrp) continue;                  // no change
-    candidates.push({ id: s.id, code: s.sku_code, mrp });
-  }
-
-  // Respect MANUAL overrides: if a SKU's LIVE MRP was last set by hand (its most-recent
-  // mrp_history row is NOT an Oracle sync), the operator deliberately chose that price —
-  // the sync must NOT overwrite it, or it fights the operator every day (the 7.20 vs 9.00
-  // tug-of-war). Only sync SKUs whose latest MRP came from Oracle or don't have one.
-  let toSet = candidates;
-  if (candidates.length) {
-    const ids = candidates.map((r) => r.id);
-    const latest = (await sql`
-      SELECT DISTINCT ON (sku_id) sku_id, COALESCE(note, '') AS note
-      FROM mrp_history WHERE sku_id = ANY(${ids})
-      ORDER BY sku_id, effective_at DESC, id DESC`) as unknown as { sku_id: number; note: string }[];
-    const manuallySet = new Set(latest.filter((r) => r.note !== "Synced from Oracle").map((r) => r.sku_id));
-    toSet = candidates.filter((r) => !manuallySet.has(r.id));
+    toSet.push({ id: s.id, code: s.sku_code, mrp });
   }
 
   const CHUNK = 500;

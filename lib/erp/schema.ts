@@ -41,6 +41,7 @@ export const skus = pgTable("skus", {
   brand: text("brand").default(""),
   unit: text("unit").default("PCS"),
   price: doublePrecision("price").default(0), // MRP / display price
+  mrpLocked: boolean("mrp_locked").default(false), // manual MRP is frozen — Oracle sync can't overwrite it
   purchasePrice: doublePrecision("purchase_price").default(0),
   sellingPrice: doublePrecision("selling_price").default(0),
   hsn: text("hsn").default(""),
