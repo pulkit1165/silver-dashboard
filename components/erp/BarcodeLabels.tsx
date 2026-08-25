@@ -19,6 +19,15 @@ type LabelType = "single" | "master";
 // second tier), in which case Single already covers it.
 const hasMaster = (masterQty: number, singleQty: number) => masterQty > (singleQty || 1);
 
+// TSPL SPEED, in inches/sec, for the TSC heads in use (TTP-244 / TTP-345). The
+// server clamps to this same 1–6 window. Slower = the head dwells longer on each
+// dot row, so QR modules form cleanly instead of smearing — that is why 2 is the
+// default. Faster empties a big batch sooner at some cost to scannability.
+const SPEED_MIN = 1;
+const SPEED_MAX = 6;
+const speedLabel = (v: number) =>
+  v <= 1 ? "Slowest" : v === 2 ? "Slow (best)" : v === 3 ? "Normal" : v === 4 ? "Fast" : v === 5 ? "Faster" : "Fastest";
+
 // The four physical label stocks Silver uses (width × height in mm). Any SKU can
 // print on any size. The chosen size drives the print @page size so ONE label
 // lands on ONE die-cut and sizes the on-screen preview 1:1.
@@ -86,9 +95,21 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   useEffect(() => {
     try {
       const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
-      const sv = Number(localStorage.getItem("erp_label_speed")); if (sv >= 1) setSpeed(sv);
+      const sv = Number(localStorage.getItem("erp_label_speed")); if (sv >= SPEED_MIN && sv <= SPEED_MAX) setSpeed(Math.round(sv));
     } catch { /* defaults */ }
   }, []);
+  // Nudge print speed by ±1 ips, clamped to what the head accepts. This is a
+  // PRINTER knob only: it is persisted to this browser and sent as layout.speed
+  // at print time, and is never written into the saved per-size layout — so
+  // changing it cannot move alignment, swap a design, break a lock, or alter
+  // what any other PC prints.
+  function bumpSpeed(delta: number) {
+    setSpeed((prev) => {
+      const v = Math.max(SPEED_MIN, Math.min(SPEED_MAX, Math.round(prev) + delta));
+      try { localStorage.setItem("erp_label_speed", String(v)); } catch { /* ignore */ }
+      return v;
+    });
+  }
   // Shared per-size alignment (visual aligner) — applied automatically on print.
   const [layouts, setLayouts] = useState<Record<string, Layout>>({});
   const [alignOpen, setAlignOpen] = useState(false);
@@ -696,15 +717,20 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
                 onChange={(e) => { const v = Math.max(1, Math.min(15, Number(e.target.value) || 8)); setDensity(v); try { localStorage.setItem("erp_label_density", String(v)); } catch { /* ignore */ } }}
                 className="w-14 rounded-md border border-[var(--border)] bg-white px-2 py-1 text-sm" />
             </label>
-            <label className="flex items-center gap-1 text-xs font-semibold text-[var(--muted)]" title="Print speed — slower prints crisper QR modules (better scanning).">
-              Speed
-              <select value={speed} onChange={(e) => { const v = Number(e.target.value); setSpeed(v); try { localStorage.setItem("erp_label_speed", String(v)); } catch { /* ignore */ } }}
-                className="rounded-md border border-[var(--border)] bg-white px-2 py-1 text-sm">
-                <option value={2}>Slow (best)</option>
-                <option value={3}>Normal</option>
-                <option value={4}>Fast</option>
-              </select>
-            </label>
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--muted)]"
+              title={`Print speed in inches/sec (TSPL SPEED ${SPEED_MIN}–${SPEED_MAX}). Slower = crisper QR modules and better scanning; faster = quicker batches. Applies to this PC's prints only — it does not change the saved layout, design or printer lock.`}>
+              ⚡ Speed
+              <div className="flex items-center overflow-hidden rounded-md border border-[var(--border)] bg-white">
+                <button type="button" onClick={() => bumpSpeed(-1)} disabled={speed <= SPEED_MIN}
+                  aria-label="Decrease print speed" title="Slower — crisper QR modules"
+                  className="px-2.5 py-1 text-sm font-bold hover:bg-[var(--surface-2)] disabled:opacity-30">−</button>
+                <span className="min-w-[3.5rem] border-x border-[var(--border)] px-2 py-1 text-center text-sm font-bold tabular-nums text-[var(--fg)]">{speed} ips</span>
+                <button type="button" onClick={() => bumpSpeed(1)} disabled={speed >= SPEED_MAX}
+                  aria-label="Increase print speed" title="Faster — quicker batches"
+                  className="px-2.5 py-1 text-sm font-bold hover:bg-[var(--surface-2)] disabled:opacity-30">+</button>
+              </div>
+              <span className="w-[3.75rem] text-[11px] font-bold">{speedLabel(speed)}</span>
+            </div>
             {(() => {
               const hasPrinter = engine === "printnode" ? !!pnPrinterId : !!brPrinterId;
               const offline = engine === "printnode"
