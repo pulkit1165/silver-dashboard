@@ -629,7 +629,9 @@ export function buildTSPL(l: LabelData, w: number, h: number, opts: LayoutOpts =
   // printer/media-specific — operator-tunable, with crisp defaults (a bit lower on
   // the finer 300 dpi head, slow speed so modules form cleanly without bleeding).
   const density = opts.density != null && opts.density >= 1 ? Math.min(15, Math.round(opts.density)) : (hires ? 8 : 9);
-  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
+  // Cap to the head's real max ips (203dpi TTP-244 = 4, 300dpi = 6) so an out-of-range
+  // SPEED is never sent (the printer would ignore it and stay at its default).
+  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(hires ? 6 : 4, opts.speed) : 3;
   // The 50×30 stock is 2-UP (two labels across per row) — print the QR+text twice,
   // offset by one label pitch, so BOTH die-cuts get their own barcode + text.
   const twoUp = w === 50 && h === 30;
@@ -751,7 +753,9 @@ function buildTSPLDesign2(l: LabelData, w: number, h: number, opts: LayoutOpts =
 
   // Assemble
   const density = opts.density != null && opts.density >= 1 ? Math.min(15, Math.round(opts.density)) : (hires ? 8 : 9);
-  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(6, opts.speed) : 2;
+  // Cap to the head's real max ips (203dpi TTP-244 = 4, 300dpi = 6) so an out-of-range
+  // SPEED is never sent (the printer would ignore it and stay at its default).
+  const speed = opts.speed != null && opts.speed >= 1 ? Math.min(hires ? 6 : 4, opts.speed) : 3;
   const head = [`SIZE ${w} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`, `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, ``].join("\r\n");
   const buf: Buffer[] = [Buffer.from(head, "ascii")];
   const qbx = Math.max(0, Math.min(Wd - bmp.sideDots, qrX + oxd));

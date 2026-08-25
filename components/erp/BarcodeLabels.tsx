@@ -24,9 +24,12 @@ const hasMaster = (masterQty: number, singleQty: number) => masterQty > (singleQ
 // dot row, so QR modules form cleanly instead of smearing — that is why 2 is the
 // default. Faster empties a big batch sooner at some cost to scannability.
 const SPEED_MIN = 1;
-const SPEED_MAX = 6;
+// TSC TTP-244 tops out at 4 ips — sending SPEED 5/6 is out of range and the printer
+// IGNORES it (falls back to its default), which is why "faster" did nothing. Cap at 4
+// so every setting is valid and actually applied.
+const SPEED_MAX = 4;
 const speedLabel = (v: number) =>
-  v <= 1 ? "Slowest" : v === 2 ? "Slow (best)" : v === 3 ? "Normal" : v === 4 ? "Fast" : v === 5 ? "Faster" : "Fastest";
+  v <= 1 ? "Slowest" : v === 2 ? "Slow · best QR" : v === 3 ? "Normal" : "Fast · max";
 
 // The four physical label stocks Silver uses (width × height in mm). Any SKU can
 // print on any size. The chosen size drives the print @page size so ONE label
@@ -91,7 +94,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Print-quality knobs for the QR (printer/media specific). Darkness = TSPL
   // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
   const [density, setDensity] = useState(8);
-  const [speed, setSpeed] = useState(2);
+  const [speed, setSpeed] = useState(3);
   useEffect(() => {
     try {
       const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
