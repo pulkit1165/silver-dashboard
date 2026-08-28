@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { listRecentJobs, listBridgePrinters, queueCounts, retryJob, cancelJob, cancelAllQueued } from "@/lib/erp/printBridge";
+import { listRecentJobs, listBridgePrinters, queueCounts, retryJob, cancelJob, cancelAllQueued, cancelQueuedForPrinter } from "@/lib/erp/printBridge";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,7 @@ export async function POST(req: Request) {
   const b = await req.json().catch(() => ({}));
   const action = String(b.action || "retry");
   if (action === "cancel-all") { const n = await cancelAllQueued(); return NextResponse.json({ ok: true, canceled: n }); }
+  if (action === "cancel-printer") { const n = await cancelQueuedForPrinter(String(b.printerId || "")); return NextResponse.json({ ok: true, canceled: n }); }
   const id = Number(b.id);
   if (!id) return NextResponse.json({ ok: false, error: "id required" }, { status: 400 });
   if (action === "cancel") await cancelJob(id);

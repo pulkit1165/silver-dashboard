@@ -214,6 +214,15 @@ export async function cancelAllQueued(): Promise<number> {
     WHERE status IN ('queued','printing') RETURNING id`) as unknown as { id: number }[];
   return rows.length;
 }
+// App → cancel pending jobs for ONE printer (the Stop button on the labels page).
+export async function cancelQueuedForPrinter(printerId: string): Promise<number> {
+  await ensure();
+  const pid = String(printerId || "").trim();
+  if (!pid) return 0;
+  const rows = (await getSql()`UPDATE print_jobs SET status='canceled', done_at=now()
+    WHERE printer_id=${pid} AND status IN ('queued','printing') RETURNING id`) as unknown as { id: number }[];
+  return rows.length;
+}
 
 // Requeue jobs stuck in 'printing' longer than `secs` (agent died mid-print).
 export async function requeueStale(secs = 120): Promise<number> {

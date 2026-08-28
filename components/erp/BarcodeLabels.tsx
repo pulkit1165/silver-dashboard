@@ -279,8 +279,32 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   const labelStyle = (roll || a4) ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
 
   // Print directly to a TSC label printer via PrintNode (raw TSPL, one job/label).
+  // ── Safety brake ──────────────────────────────────────────────────────────
+  // A single print action must never silently dump thousands of labels into a
+  // printer (the 28-Aug runaway: one click = ~10,000 labels). Hard-capped at
+  // MAX_PER_PRINT; a confirm is required above CONFIRM_OVER. The server enforces
+  // the same MAX_PER_PRINT so this can't be bypassed by a stale/edited client.
+  const MAX_PER_PRINT = 1000;
+  const CONFIRM_OVER = 200;
+  function guardBatch(n: number): boolean {
+    // One SKU at a time per printer — you can't mix items in a single print run.
+    const skus = new Set(printable.map((l) => l.sku_code));
+    if (skus.size > 1) {
+      setPnMsg({ ok: false, text: `⛔ Only one item (SKU) can be printed at a time on a printer. You have ${skus.size} items selected — keep just one, then print.` });
+      return false;
+    }
+    if (n > MAX_PER_PRINT) {
+      setPnMsg({ ok: false, text: `⛔ ${n} labels in one print is too many — the limit is ${MAX_PER_PRINT} at a time. Lower "Copies", then print again.` });
+      return false;
+    }
+    if (n > CONFIRM_OVER && typeof window !== "undefined" &&
+        !window.confirm(`You're about to print ${n} labels — that's a large batch. Continue?`)) return false;
+    return true;
+  }
+
   async function printToTsc() {
     if (!pnPrinterId || printable.length === 0) return;
+    if (!guardBatch(printable.length)) return;
     setPnBusy(true); setPnMsg(null);
     try {
       const r = await fetch("/api/erp/labels/printnode", {
@@ -346,6 +370,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Print via our own bridge: enqueue jobs, then poll the queue for done/failed.
   async function printToBridge() {
     if (!brPrinterId || printable.length === 0) return;
+    if (!guardBatch(printable.length)) return;
     // Enforce the printer↔size lock.
     const bp = brPrinters.find((x) => x.id === brPrinterId);
     if (bp?.locked && bp.labelSize && sizeId !== bp.labelSize) {
@@ -404,6 +429,27 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       } catch { /* retry */ }
     }
     setPnMsg({ ok: false, text: `⚠ Queued but no confirmation yet — is the print agent running on that PC? It'll print as soon as the agent picks it up.` });
+  }
+
+  // Emergency STOP: cancel every label still WAITING in the queue for the selected
+  // printer so the agent stops pulling them. Labels already handed to Windows/the
+  // printer buffer can't be recalled here — power-cycle the printer to flush those.
+  async function stopPrinting() {
+    if (!brPrinterId) return;
+    const bp = brPrinters.find((x) => x.id === brPrinterId);
+    if (typeof window !== "undefined" &&
+        !window.confirm(`Stop printing on ${bp?.code || bp?.name || "this printer"}?\n\nThis cancels all labels still waiting in the queue. Labels already inside the printer may finish — power the printer off/on to stop those instantly.`)) return;
+    setPnBusy(true);
+    try {
+      const r = await fetch("/api/erp/print/queue", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "cancel-printer", printerId: brPrinterId }),
+      });
+      const d = await r.json();
+      if (d.ok) setPnMsg({ ok: true, text: `⛔ Stopped — canceled ${d.canceled} waiting label${d.canceled === 1 ? "" : "s"}. Anything already in the printer will still finish; power the printer off/on to stop those.` });
+      else setPnMsg({ ok: false, text: d.error || "Could not stop the queue." });
+    } catch (e) { setPnMsg({ ok: false, text: String(e) }); }
+    finally { setPnBusy(false); }
   }
 
   // Exact-size PDF (one label per page, page = the die-cut). Printing this at
@@ -748,6 +794,13 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
                 </button>
               );
             })()}
+            {engine === "bridge" && brPrinterId && (
+              <button onClick={stopPrinting} disabled={pnBusy}
+                title="Emergency stop: cancel every label still waiting in the queue for this printer"
+                className="rounded-lg border-2 border-[var(--danger)] px-3 py-2 text-sm font-bold text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white disabled:opacity-50">
+                ⛔ Stop
+              </button>
+            )}
           </div>
           {engine === "printnode" && pnPrinters.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">

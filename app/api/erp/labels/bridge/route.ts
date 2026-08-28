@@ -30,6 +30,15 @@ export async function POST(req: Request) {
   if (!printerId) return NextResponse.json({ ok: false, error: "No printer selected." }, { status: 400 });
   if (!labels.length) return NextResponse.json({ ok: false, error: skipped ? `All ${skipped} label(s) had a missing QR token — nothing queued.` : "No labels to print." }, { status: 400 });
 
+  // ── Safety brake (server-authoritative — the client also guards, but this is
+  // the real gate) ─────────────────────────────────────────────────────────
+  // One SKU per print run, and never more than MAX_PER_PRINT labels at once, so
+  // one action can't dump thousands into a printer (the 28-Aug ~10k runaway).
+  const MAX_PER_PRINT = 1000;
+  const skuCount = new Set(labels.map((l) => String(l.sku_code || "").toUpperCase())).size;
+  if (skuCount > 1) return NextResponse.json({ ok: false, error: `Only one SKU can be printed at a time on a printer (received ${skuCount}). Print each item separately.` }, { status: 400 });
+  if (labels.length > MAX_PER_PRINT) return NextResponse.json({ ok: false, error: `Too many labels in one print: ${labels.length}. The maximum is ${MAX_PER_PRINT} at a time — reduce the copies and print again.` }, { status: 400 });
+
   const lay = (body.layout ?? {}) as Record<string, unknown>;
   // The SAVED alignment (offsets/elements/design) is AUTHORITATIVE from the database
   // — keyed by sizeId — so EVERY PC prints the SAME label regardless of what its
