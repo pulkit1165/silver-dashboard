@@ -84,11 +84,11 @@ export async function saveDraft(sizeId: string, doc: LabelDoc, actor?: string | 
   await ensureDesignTables();
   const sql = getSql();
   await sql`INSERT INTO label_designs (size_id, w, h, draft_doc, status, updated_by, updated_at)
-    VALUES (${sizeId}, ${Math.round(doc.w)}, ${Math.round(doc.h)}, ${sql.json(doc as object)},
+    VALUES (${sizeId}, ${Math.round(doc.w)}, ${Math.round(doc.h)}, ${sql.json(doc as never)},
             (CASE WHEN (SELECT approved_doc FROM label_designs WHERE size_id=${sizeId}) IS NULL THEN 'draft' ELSE 'approved' END),
             ${actor ?? null}, now())
     ON CONFLICT (size_id) DO UPDATE SET
-      draft_doc = ${sql.json(doc as object)}, w = ${Math.round(doc.w)}, h = ${Math.round(doc.h)},
+      draft_doc = ${sql.json(doc as never)}, w = ${Math.round(doc.w)}, h = ${Math.round(doc.h)},
       updated_by = ${actor ?? null}, updated_at = now()`;
 }
 
@@ -101,7 +101,7 @@ export async function approveDesign(sizeId: string, actor?: string | null): Prom
   if (!row || !row.draft_doc) return { ok: false, error: "No draft design to approve." };
   if (row.approved_doc) {
     await sql`INSERT INTO label_design_archive (size_id, snapshot, reason, archived_by)
-      VALUES (${sizeId}, ${sql.json(row.approved_doc as object)}, 'superseded by newly approved design', ${actor ?? null})`;
+      VALUES (${sizeId}, ${sql.json(row.approved_doc as never)}, 'superseded by newly approved design', ${actor ?? null})`;
   }
   await sql`UPDATE label_designs SET approved_doc = draft_doc, status = 'approved',
       approved_by = ${actor ?? null}, approved_at = now() WHERE size_id=${sizeId}`;
