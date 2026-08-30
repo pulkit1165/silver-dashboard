@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSku, inventoryForSku, getOrCreateTierToken } from "@/lib/erp/queries";
+import { getSql } from "@/lib/erp/db";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { qrSvg } from "@/lib/erp/qr";
@@ -20,7 +21,15 @@ export async function POST(req: Request) {
   }
 
   const body = await req.json().catch(() => ({}));
-  const ids: number[] = Array.isArray(body.skuIds) ? body.skuIds.map(Number) : [];
+  let ids: number[] = Array.isArray(body.skuIds) ? body.skuIds.map(Number) : [];
+  // Also accept SKU codes (used by the label designer's "Load SKU" / test print).
+  if (!ids.length && Array.isArray(body.codes) && body.codes.length) {
+    const clean = body.codes.map((c: unknown) => String(c).trim().toUpperCase()).filter(Boolean);
+    if (clean.length) {
+      const rows = (await getSql()`SELECT id FROM skus WHERE UPPER(sku_code) = ANY(${clean})`) as unknown as { id: number }[];
+      ids = rows.map((r) => Number(r.id));
+    }
+  }
   const today = pkd();
 
   const labels = await Promise.all(

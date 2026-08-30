@@ -56,6 +56,7 @@ export const NAV: NavGroup[] = [
           { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/skus/import-labels", label: "Backfill Barcode Info", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
+          { href: "/erp/labels/design", label: "Label Designer", icon: "🎨", roles: ["admin", "inventory"] },
           { href: "/erp/labels/printers", label: "Printers", icon: "🖨", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/print-queue", label: "Print Queue", icon: "🖨️", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/print-bridge", label: "Print Bridge (devices)", icon: "🌐", roles: ["admin", "inventory", "warehouse"] },

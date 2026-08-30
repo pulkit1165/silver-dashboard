@@ -1,0 +1,137 @@
+// ── Label design document (the "Photoshop file" for a label) ────────────────
+// A design is a list of freely-placed elements on a canvas the exact physical
+// size of the label (mm). It is RESOLUTION-INDEPENDENT: every position/size is in
+// millimetres, so the same doc renders identically at 203 or 300 dpi and on screen.
+// The SAME renderer (lib/erp/labelRender.ts) draws the on-screen preview AND the
+// bitmap that is sent to the printer — so what you see is exactly what prints.
+//
+// This module is pure data + formatting (no browser, no DB) so it can be imported
+// from the client editor, the renderer, and the server.
+
+export type ElField =
+  | "code" | "name" | "mrp" | "qty" | "lot" | "rack" | "pkd"
+  | "custom" | "address";
+
+export type ElKind = "text" | "qr" | "barcode" | "box" | "line";
+
+export type DesignEl = {
+  id: string;
+  kind: ElKind;
+  // text elements bind to a data field (or are static custom/address text)
+  field?: ElField;
+  text?: string;            // literal text for custom/address (and multi-line via \n)
+  // geometry — millimetres, top-left origin
+  x: number; y: number; w: number; h: number;
+  rot?: 0 | 90 | 180 | 270; // rotation
+  // text styling
+  font?: string;            // css font-family
+  sizeMM?: number;          // font size (cap height) in mm — dpi-independent
+  bold?: boolean;
+  italic?: boolean;
+  align?: "left" | "center" | "right";
+  lineh?: number;           // line-height multiplier (default 1.15)
+  invert?: boolean;         // white text on black (for a black bar)
+  // box / line styling
+  strokeMM?: number;        // line/box border thickness in mm
+  fill?: boolean;           // filled box (black)
+};
+
+export type LabelDoc = {
+  version: 1;
+  w: number;                // mm
+  h: number;                // mm
+  elements: DesignEl[];
+};
+
+// The data a label is filled with at render time (matches the print payload).
+export type LabelFill = {
+  sku_code?: string; name?: string; price?: number;
+  unit?: string; singleQty?: number; masterQty?: number;
+  lot?: string; rack?: string; pkd?: string;
+  qrSvg?: string;           // the real QR (SVG markup) for this SKU's token
+  address?: string;         // company address block (from settings / doc)
+};
+
+// Format a bound field into the exact text that prints. Prefixes match the
+// current labels (MRP.Rs. / Qty. / Lot: / Rack: / PKD:). "custom"/"address" use
+// the element's own text.
+export function fieldText(el: DesignEl, d: LabelFill): string {
+  const money = (n: unknown) => {
+    const r = Math.round((Number(n) || 0) * 100) / 100;
+    return Number.isInteger(r) ? String(r) : r.toFixed(2);
+  };
+  switch (el.field) {
+    case "code": return String(d.sku_code ?? "");
+    case "name": return String(d.name ?? "");
+    case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
+    case "qty": {
+      const q = d.singleQty ?? 1; const u = (d.unit ?? "PCS").trim();
+      return `Qty. ${q}${u ? " " + u : ""}`;
+    }
+    case "lot": return d.lot ? `Lot: ${d.lot}` : "";
+    case "rack": return d.rack ? `Rack: ${d.rack}` : "";
+    case "pkd": return d.pkd ? `PKD: ${d.pkd}` : "";
+    case "address": return String(el.text ?? d.address ?? "");
+    case "custom":
+    default: return String(el.text ?? "");
+  }
+}
+
+// Sample data for the editor preview (so the operator designs against realistic
+// content, not empty boxes).
+export const SAMPLE_FILL: LabelFill = {
+  sku_code: "HH12006", name: "CENTER STAND KIT SPL", price: 570,
+  unit: "PCS", singleQty: 1, masterQty: 1, lot: "L-2291", rack: "R-14", pkd: "08/26",
+  address: "SILVER INDUSTRIES\nPlot 12, Focal Point, Ludhiana 141010\nGSTIN 03ABCDE1234F1Z5",
+};
+
+const uid = () => Math.random().toString(36).slice(2, 9);
+
+// A reasonable STARTING layout for a fresh size (address at the bottom, code +
+// name top-left, QR top-right, MRP/qty row). The operator then rearranges freely.
+export function defaultDoc(w: number, h: number): LabelDoc {
+  const pad = Math.max(1.5, Math.round(w * 0.03));
+  const qrSize = Math.min(h * 0.5, 22);
+  const rightQrX = w - pad - qrSize;
+  const textW = rightQrX - pad - 1;
+  const addrH = Math.max(7, h * 0.24);
+  return {
+    version: 1, w, h,
+    elements: [
+      { id: uid(), kind: "text", field: "code", text: "", x: pad, y: pad, w: textW, h: 5,
+        font: "Arial", sizeMM: 3.6, bold: true, align: "left" },
+      { id: uid(), kind: "text", field: "name", x: pad, y: pad + 5.5, w: textW, h: 8,
+        font: "Arial", sizeMM: 3, bold: true, align: "left", lineh: 1.1 },
+      { id: uid(), kind: "qr", x: rightQrX, y: pad, w: qrSize, h: qrSize },
+      { id: uid(), kind: "text", field: "mrp", x: pad, y: h - addrH - 5.5, w: textW, h: 4.5,
+        font: "Arial", sizeMM: 3.2, bold: true, align: "left" },
+      { id: uid(), kind: "text", field: "qty", x: rightQrX, y: h - addrH - 5.5, w: qrSize + pad, h: 4.5,
+        font: "Arial", sizeMM: 3, bold: false, align: "right" },
+      { id: uid(), kind: "line", x: pad, y: h - addrH - 1, w: w - pad * 2, h: 0, strokeMM: 0.3 },
+      { id: uid(), kind: "text", field: "address", x: pad, y: h - addrH, w: w - pad * 2, h: addrH,
+        font: "Arial", sizeMM: 2.3, bold: false, align: "left", lineh: 1.15 },
+    ],
+  };
+}
+
+export function newElement(kind: ElKind, w: number, h: number): DesignEl {
+  const cx = w / 2, cy = h / 2;
+  const base = { id: uid(), kind, x: Math.max(0, cx - 15), y: Math.max(0, cy - 3), rot: 0 as const };
+  if (kind === "qr") return { ...base, w: 18, h: 18 };
+  if (kind === "barcode") return { ...base, w: 34, h: 10, field: "code" };
+  if (kind === "box") return { ...base, w: 24, h: 10, strokeMM: 0.4, fill: false };
+  if (kind === "line") return { ...base, w: 30, h: 0, strokeMM: 0.3 };
+  // text
+  return { ...base, w: 34, h: 5, kind: "text", field: "custom", text: "Text",
+    font: "Arial", sizeMM: 3, bold: false, align: "left", lineh: 1.15 };
+}
+
+// Font families offered in the editor. Kept to widely-available faces so a design
+// renders the same on every ERP PC (the browser rasterises the print bitmap).
+export const FONT_FAMILIES = [
+  "Arial", "Arial Narrow", "Helvetica", "Verdana", "Tahoma",
+  "Trebuchet MS", "Times New Roman", "Georgia", "Courier New", "Impact",
+];
+
+// Font-size choices (mm cap-height) shown as a dropdown, like a word processor.
+export const SIZE_CHOICES_MM = [1.5, 1.8, 2, 2.3, 2.6, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 10, 12];

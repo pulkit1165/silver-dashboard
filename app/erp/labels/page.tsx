@@ -22,7 +22,8 @@ export default async function BarcodeLabelsPage({
   return (
     <>
       <PageHeader title="Print Barcode Labels" subtitle="Search for SKUs, choose Single or Master, and print — A4 sheet or thermal roll." />
-      <div className="mb-3">
+      <div className="mb-3 flex flex-wrap gap-4">
+        <Link href="/erp/labels/design" className="text-sm font-semibold text-[var(--accent)]">🎨 Design labels (new visual designer) →</Link>
         <Link href="/erp/skus/import-labels" className="text-sm font-semibold text-[var(--accent)]">Bulk backfill barcode codes / master qty →</Link>
       </div>
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
