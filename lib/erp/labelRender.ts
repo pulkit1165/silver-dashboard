@@ -34,7 +34,21 @@ export async function renderDoc(
 
 function cssFont(el: DesignEl, dp: number): string {
   const px = Math.max(4, (el.sizeMM ?? 3) * dp * 1.33); // cap-height mm → px (~0.75 cap ratio)
-  return `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${px}px ${el.font || "Arial"}, sans-serif`;
+  return `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${px}px "${el.font || "Arial"}", sans-serif`;
+}
+
+// Force every font used in a design to finish downloading before we render/print,
+// so the print image never falls back to a different face (which would make labels
+// differ between PCs). Safe no-op outside the browser.
+export async function ensureFontsLoaded(doc: LabelDoc): Promise<void> {
+  if (typeof document === "undefined" || !document.fonts) return;
+  const fams = new Set<string>();
+  for (const el of doc.elements) if (el.kind === "text" && el.font) fams.add(el.font);
+  await Promise.all([...fams].flatMap((f) => [
+    document.fonts.load(`400 16px "${f}"`).catch(() => {}),
+    document.fonts.load(`700 16px "${f}"`).catch(() => {}),
+  ]));
+  await document.fonts.ready.catch(() => {});
 }
 
 // Word-wrap text to a box width (in px), splitting long words if needed.
@@ -68,7 +82,7 @@ export function textBoxHeightMM(el: DesignEl, raw: string): number {
   if (!measureCv) measureCv = document.createElement("canvas");
   const ctx = measureCv.getContext("2d")!;
   const DP = 10;
-  ctx.font = `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${(el.sizeMM ?? 3) * DP * 1.33}px ${el.font || "Arial"}, sans-serif`;
+  ctx.font = `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${(el.sizeMM ?? 3) * DP * 1.33}px "${el.font || "Arial"}", sans-serif`;
   return Math.max(1, wrapText(ctx, raw, el.w * DP).length) * lhMM;
 }
 

@@ -126,12 +126,18 @@ export function newElement(kind: ElKind, w: number, h: number): DesignEl {
     font: "Arial", sizeMM: 3, bold: false, align: "left", lineh: 1.15 };
 }
 
-// Font families offered in the editor. Kept to widely-available faces so a design
-// renders the same on every ERP PC (the browser rasterises the print bitmap).
-export const FONT_FAMILIES = [
-  "Arial", "Arial Narrow", "Helvetica", "Verdana", "Tahoma",
-  "Trebuchet MS", "Times New Roman", "Georgia", "Courier New", "Impact",
+// Font families offered in the editor, grouped for the dropdown. The "Web fonts"
+// are bundled/loaded by the app (see the <link> on the design page) so a label
+// renders IDENTICALLY on every ERP PC regardless of what's installed locally.
+// The "System" group are faces present on virtually every machine.
+export const FONT_GROUPS: { label: string; fonts: string[] }[] = [
+  { label: "Sans (web)", fonts: ["Roboto", "Open Sans", "Lato", "Montserrat", "Poppins", "Inter", "Work Sans", "Rubik", "PT Sans", "Barlow", "Archivo"] },
+  { label: "Condensed / bold display (web)", fonts: ["Roboto Condensed", "Barlow Condensed", "Archivo Narrow", "Oswald", "Bebas Neue", "Anton"] },
+  { label: "Serif (web)", fonts: ["Merriweather", "Roboto Slab", "PT Serif"] },
+  { label: "Mono (web)", fonts: ["Roboto Mono", "JetBrains Mono"] },
+  { label: "System", fonts: ["Arial", "Arial Narrow", "Verdana", "Tahoma", "Trebuchet MS", "Times New Roman", "Georgia", "Courier New", "Impact"] },
 ];
+export const FONT_FAMILIES = FONT_GROUPS.flatMap((g) => g.fonts);
 
 // Font-size choices (mm cap-height) shown as a dropdown, like a word processor.
 export const SIZE_CHOICES_MM = [1.5, 1.8, 2, 2.3, 2.6, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 10, 12];

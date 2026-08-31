@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { LABEL_SIZES } from "@/lib/erp/labelSizes";
 import {
   type LabelDoc, type DesignEl, type ElKind, type LabelFill,
-  defaultDoc, newElement, SAMPLE_FILL, FONT_FAMILIES, SIZE_CHOICES_MM,
+  defaultDoc, newElement, SAMPLE_FILL, FONT_GROUPS, SIZE_CHOICES_MM,
 } from "@/lib/erp/labelDoc";
-import { renderDoc, renderDocToTSPL } from "@/lib/erp/labelRender";
+import { renderDoc, renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
 
 type Br = { id: string; pc: string; name: string; online: boolean; code?: string };
 const snap = (v: number, step = 0.5) => Math.round(v / step) * step;
@@ -95,7 +95,7 @@ export default function LabelDesigner() {
     const cv = canvasRef.current; if (!cv) return;
     cv.width = Math.round(doc.w * scale); cv.height = Math.round(doc.h * scale);
     const ctx = cv.getContext("2d"); if (!ctx) return;
-    (async () => { await document.fonts.ready.catch(() => {}); if (!cancelled) await renderDoc(ctx, doc, fill, scale); })();
+    (async () => { await ensureFontsLoaded(doc); if (!cancelled) await renderDoc(ctx, doc, fill, scale); })();
     return () => { cancelled = true; };
   }, [doc, scale, fill]);
 
@@ -192,7 +192,7 @@ export default function LabelDesigner() {
       const name = brPrinters.find((p) => p.id === brPrinterId)?.name || "";
       const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
       const dp = dpi === 203 ? 8 : dpi / 25.4;
-      await document.fonts.ready.catch(() => {});
+      await ensureFontsLoaded(doc);
       const bmp = await renderDocToTSPL(doc, fill, dp);
       const r = await fetch("/api/erp/labels/print-raster", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -290,7 +290,11 @@ export default function LabelDesigner() {
                 <>
                   <label className="text-xs font-bold text-[var(--muted)]">Font</label>
                   <select value={sel.font || "Arial"} onChange={(e) => updateSel({ font: e.target.value })} className="rounded-lg border border-[var(--border)] px-2 py-1">
-                    {FONT_FAMILIES.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                    {FONT_GROUPS.map((g) => (
+                      <optgroup key={g.label} label={g.label}>
+                        {g.fonts.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
+                      </optgroup>
+                    ))}
                   </select>
                   <label className="text-xs font-bold text-[var(--muted)]">Text size</label>
                   <div className="flex items-center gap-1">
