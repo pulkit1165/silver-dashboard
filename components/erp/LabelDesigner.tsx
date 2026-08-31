@@ -9,7 +9,11 @@ import { renderDoc, renderDocToTSPL } from "@/lib/erp/labelRender";
 
 type Br = { id: string; pc: string; name: string; online: boolean; code?: string };
 const snap = (v: number, step = 0.5) => Math.round(v / step) * step;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 const sizes = LABEL_SIZES.filter((s) => s.w > 0 && s.h > 0);
+const isContent = (k: ElKind) => k === "text" || k === "qr" || k === "barcode";
+const rectsHit = (ax: number, ay: number, aw: number, ah: number, b: DesignEl) =>
+  ax < b.x + b.w && ax + aw > b.x && ay < b.y + Math.max(b.h, 0.5) && ay + Math.max(ah, 0.5) > b.y;
 
 export default function LabelDesigner() {
   const [sizeId, setSizeId] = useState(sizes[0]?.id ?? "big-95x70");
@@ -30,6 +34,29 @@ export default function LabelDesigner() {
   const dragRef = useRef<null | { id: string; mode: "move" | "resize"; px: number; py: number; ox: number; oy: number; ow: number; oh: number }>(null);
 
   const sel = doc.elements.find((e) => e.id === selId) || null;
+  const docRef = useRef(doc); docRef.current = doc; // fresh doc for collision during a drag
+  // would placing `id` at x,y (w×h mm) overlap another CONTENT element (text/qr/barcode)?
+  const collides = (id: string, x: number, y: number, w: number, h: number) =>
+    docRef.current.elements.some((e) => e.id !== id && isContent(e.kind) && rectsHit(x, y, w, h, e));
+  // elements that overlap another field or spill outside the label (flagged red, block approve)
+  const problems = useMemo(() => {
+    const bad = new Set<string>();
+    const cs = doc.elements.filter((e) => isContent(e.kind));
+    for (let i = 0; i < cs.length; i++) {
+      const a = cs[i];
+      if (a.x < -0.01 || a.y < -0.01 || a.x + a.w > doc.w + 0.01 || a.y + a.h > doc.h + 0.01) bad.add(a.id);
+      for (let j = i + 1; j < cs.length; j++) if (rectsHit(a.x, a.y, a.w, a.h, cs[j])) { bad.add(a.id); bad.add(cs[j].id); }
+    }
+    return bad;
+  }, [doc]);
+  // clamp a typed geometry value so the element stays inside the label
+  const setGeom = (k: "x" | "y" | "w" | "h", val: number) => {
+    if (!sel) return;
+    const { x, y, w, h } = sel;
+    const nv = k === "x" ? clamp(val, 0, doc.w - w) : k === "y" ? clamp(val, 0, doc.h - h)
+      : k === "w" ? clamp(val, 1, doc.w - x) : clamp(val, 0, doc.h - y);
+    updateSel({ [k]: nv } as Partial<DesignEl>);
+  };
 
   // ── load design for the chosen size ───────────────────────────────────────
   const load = useCallback(async (sid: string) => {
@@ -83,13 +110,13 @@ export default function LabelDesigner() {
   };
   const removeSel = () => { if (!sel) return; setDoc((d) => ({ ...d, elements: d.elements.filter((e) => e.id !== sel.id) })); setSelId(null); };
   const dupeSel = () => { if (!sel) return; const c = { ...sel, id: Math.random().toString(36).slice(2, 9), x: sel.x + 2, y: sel.y + 2 }; setDoc((d) => ({ ...d, elements: [...d.elements, c] })); setSelId(c.id); };
-  const reorder = (dir: -1 | 1) => {
+  // scale the selected text up/down through the size list (the A− / A+ buttons)
+  const stepSize = (dir: 1 | -1) => {
     if (!sel) return;
-    setDoc((d) => {
-      const i = d.elements.findIndex((e) => e.id === sel.id); const j = i + dir;
-      if (i < 0 || j < 0 || j >= d.elements.length) return d;
-      const els = [...d.elements]; [els[i], els[j]] = [els[j], els[i]]; return { ...d, elements: els };
-    });
+    const cur = sel.sizeMM ?? 3;
+    let i = 0, best = Infinity;
+    SIZE_CHOICES_MM.forEach((s, idx) => { const d = Math.abs(s - cur); if (d < best) { best = d; i = idx; } });
+    updateSel({ sizeMM: SIZE_CHOICES_MM[clamp(i + dir, 0, SIZE_CHOICES_MM.length - 1)] });
   };
 
   // ── drag / resize (pointer) ───────────────────────────────────────────────
@@ -101,9 +128,24 @@ export default function LabelDesigner() {
   };
   const onMove = (e: PointerEvent) => {
     const dr = dragRef.current; if (!dr) return;
+    const D = docRef.current;
+    const el = D.elements.find((x) => x.id === dr.id); if (!el) return;
     const dx = (e.clientX - dr.px) / scale, dy = (e.clientY - dr.py) / scale;
-    if (dr.mode === "move") mutate(dr.id, { x: Math.max(0, snap(dr.ox + dx)), y: Math.max(0, snap(dr.oy + dy)) });
-    else mutate(dr.id, { w: Math.max(1, snap(dr.ow + dx)), h: Math.max(0, snap(dr.oh + dy)) });
+    if (dr.mode === "move") {
+      // keep the element fully INSIDE the label
+      const nx = clamp(snap(dr.ox + dx), 0, Math.max(0, D.w - el.w));
+      const ny = clamp(snap(dr.oy + dy), 0, Math.max(0, D.h - el.h));
+      if (!isContent(el.kind)) { mutate(dr.id, { x: nx, y: ny }); return; }
+      // block overlap: try the full move, else slide along one free axis, else stay
+      if (!collides(dr.id, nx, ny, el.w, el.h)) mutate(dr.id, { x: nx, y: ny });
+      else if (!collides(dr.id, nx, el.y, el.w, el.h)) mutate(dr.id, { x: nx });
+      else if (!collides(dr.id, el.x, ny, el.w, el.h)) mutate(dr.id, { y: ny });
+      // else: neighbouring field in the way — hold position
+    } else {
+      const w = clamp(snap(dr.ow + dx), 3, D.w - el.x);
+      const h = clamp(snap(dr.oh + dy), el.kind === "line" ? 0 : 2, D.h - el.y);
+      if (!isContent(el.kind) || !collides(dr.id, el.x, el.y, w, h)) mutate(dr.id, { w, h });
+    }
   };
   const onUp = () => { dragRef.current = null; window.removeEventListener("pointermove", onMove); };
 
@@ -123,6 +165,7 @@ export default function LabelDesigner() {
   };
   const saveDraft = async () => { if (await post("save", { doc })) { setMsg({ ok: true, text: "Draft saved. It does NOT print yet — approve it to go live." }); setStatus((s) => (s === "approved" ? "approved" : "draft")); } };
   const approve = async () => {
+    if (problems.size > 0) { setMsg({ ok: false, text: `Fix the ${problems.size} field(s) highlighted RED (overlapping another field, or outside the label) before approving.` }); return; }
     if (!confirm("Approve & DEPLOY this design? From now on this size prints the new design (the old one is archived). Only do this once you've test-printed and it looks right.")) return;
     if (await post("save", { doc })) if (await post("approve")) { setMsg({ ok: true, text: "✓ Approved — this design is now LIVE for printing." }); setStatus("approved"); }
   };
@@ -208,7 +251,11 @@ export default function LabelDesigner() {
               {/* selection / drag overlays */}
               {doc.elements.map((el) => (
                 <div key={el.id} onPointerDown={(e) => onDown(e, el, "move")}
-                  className={`absolute cursor-move ${selId === el.id ? "outline outline-2 outline-[var(--accent)]" : "hover:outline hover:outline-1 hover:outline-[var(--accent)]/50"}`}
+                  className={`absolute cursor-move ${
+                    problems.has(el.id) ? "outline outline-2 outline-[var(--danger)]"
+                    : selId === el.id ? "outline outline-2 outline-[var(--accent)]"
+                    : isContent(el.kind) ? "outline outline-1 outline-dashed outline-[var(--border)] hover:outline-[var(--accent)]"
+                    : "hover:outline hover:outline-1 hover:outline-[var(--accent)]"}`}
                   style={{ left: el.x * scale, top: el.y * scale, width: Math.max(6, el.w * scale), height: Math.max(6, (el.h || 1) * scale) }}>
                   {selId === el.id && (
                     <span onPointerDown={(e) => onDown(e, el, "resize")}
@@ -219,6 +266,7 @@ export default function LabelDesigner() {
             </div>
           </div>
           <p className="mt-1 text-xs text-[var(--muted)]">Actual size {doc.w}×{doc.h} mm · drag boxes to place · drag the corner to resize · this is exactly what prints.</p>
+          {problems.size > 0 && <p className="mt-1 text-xs font-bold text-[var(--danger)]">⚠ {problems.size} field(s) overlap or spill outside the label (outlined red) — fix before approving.</p>}
         </div>
 
         {/* properties */}
@@ -228,10 +276,8 @@ export default function LabelDesigner() {
               <div className="flex items-center justify-between">
                 <span className="font-bold capitalize">{sel.kind}{sel.field && sel.field !== "custom" ? ` · ${sel.field}` : ""}</span>
                 <div className="flex gap-1">
-                  <button onClick={dupeSel} title="Duplicate" className="rounded border border-[var(--border)] px-1.5 text-xs">⧉</button>
-                  <button onClick={() => reorder(1)} title="Bring forward" className="rounded border border-[var(--border)] px-1.5 text-xs">▲</button>
-                  <button onClick={() => reorder(-1)} title="Send back" className="rounded border border-[var(--border)] px-1.5 text-xs">▼</button>
-                  <button onClick={removeSel} title="Delete" className="rounded border border-[var(--danger)] px-1.5 text-xs text-[var(--danger)]">🗑</button>
+                  <button onClick={dupeSel} title="Duplicate" className="rounded border border-[var(--border)] px-1.5 text-xs">⧉ Copy</button>
+                  <button onClick={removeSel} title="Delete" className="rounded border border-[var(--danger)] px-1.5 text-xs text-[var(--danger)]">🗑 Delete</button>
                 </div>
               </div>
 
@@ -246,10 +292,15 @@ export default function LabelDesigner() {
                   <select value={sel.font || "Arial"} onChange={(e) => updateSel({ font: e.target.value })} className="rounded-lg border border-[var(--border)] px-2 py-1">
                     {FONT_FAMILIES.map((f) => <option key={f} value={f} style={{ fontFamily: f }}>{f}</option>)}
                   </select>
-                  <label className="text-xs font-bold text-[var(--muted)]">Size</label>
-                  <select value={sel.sizeMM ?? 3} onChange={(e) => updateSel({ sizeMM: Number(e.target.value) })} className="rounded-lg border border-[var(--border)] px-2 py-1">
-                    {SIZE_CHOICES_MM.map((s) => <option key={s} value={s}>{s} mm</option>)}
-                  </select>
+                  <label className="text-xs font-bold text-[var(--muted)]">Text size</label>
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => stepSize(-1)} title="Smaller" className="rounded border border-[var(--border)] px-2 py-1 text-sm font-bold">A−</button>
+                    <select value={SIZE_CHOICES_MM.includes(sel.sizeMM ?? 3) ? (sel.sizeMM ?? 3) : ""} onChange={(e) => updateSel({ sizeMM: Number(e.target.value) })} className="flex-1 rounded-lg border border-[var(--border)] px-2 py-1">
+                      {!SIZE_CHOICES_MM.includes(sel.sizeMM ?? 3) && <option value="">{(sel.sizeMM ?? 3).toFixed(1)} mm</option>}
+                      {SIZE_CHOICES_MM.map((s) => <option key={s} value={s}>{s} mm</option>)}
+                    </select>
+                    <button onClick={() => stepSize(1)} title="Bigger" className="rounded border border-[var(--border)] px-2 py-1 text-base font-bold">A+</button>
+                  </div>
                   <div className="flex gap-1">
                     <button onClick={() => updateSel({ bold: !sel.bold })} className={`flex-1 rounded border px-2 py-1 font-bold ${sel.bold ? "bg-[var(--accent)] text-white" : "border-[var(--border)]"}`}>B</button>
                     <button onClick={() => updateSel({ italic: !sel.italic })} className={`flex-1 rounded border px-2 py-1 italic ${sel.italic ? "bg-[var(--accent)] text-white" : "border-[var(--border)]"}`}>I</button>
@@ -269,7 +320,7 @@ export default function LabelDesigner() {
               <div className="grid grid-cols-4 gap-1 text-xs">
                 {(["x", "y", "w", "h"] as const).map((k) => (
                   <label key={k} className="font-bold text-[var(--muted)]">{k.toUpperCase()}
-                    <input type="number" step={0.5} value={(sel as unknown as Record<string, number>)[k]} onChange={(e) => updateSel({ [k]: Number(e.target.value) } as Partial<DesignEl>)} className="mt-0.5 w-full rounded border border-[var(--border)] px-1 py-0.5" />
+                    <input type="number" step={0.5} value={(sel as unknown as Record<string, number>)[k]} onChange={(e) => setGeom(k, Number(e.target.value))} className="mt-0.5 w-full rounded border border-[var(--border)] px-1 py-0.5" />
                   </label>
                 ))}
               </div>

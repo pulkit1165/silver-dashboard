@@ -37,6 +37,41 @@ function cssFont(el: DesignEl, dp: number): string {
   return `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${px}px ${el.font || "Arial"}, sans-serif`;
 }
 
+// Word-wrap text to a box width (in px), splitting long words if needed.
+export function wrapText(ctx: CanvasRenderingContext2D, raw: string, boxW: number): string[] {
+  const lines: string[] = [];
+  for (const para of raw.split("\n")) {
+    const words = para.split(/\s+/); let cur = "";
+    for (let wd of words) {
+      // hard-break a single word that is wider than the box
+      while (ctx.measureText(wd).width > boxW && wd.length > 1) {
+        let cut = wd.length;
+        while (cut > 1 && ctx.measureText(wd.slice(0, cut)).width > boxW) cut--;
+        if (cur) { lines.push(cur); cur = ""; }
+        lines.push(wd.slice(0, cut)); wd = wd.slice(cut);
+      }
+      const test = cur ? cur + " " + wd : wd;
+      if (ctx.measureText(test).width > boxW && cur) { lines.push(cur); cur = wd; }
+      else cur = test;
+    }
+    lines.push(cur);
+  }
+  return lines;
+}
+
+// Number of lines a text element wraps to, and the mm height it occupies — used
+// by the editor to keep boxes from overlapping and to grow the selection frame.
+let measureCv: HTMLCanvasElement | null = null;
+export function textBoxHeightMM(el: DesignEl, raw: string): number {
+  const lhMM = (el.sizeMM ?? 3) * 1.33 * (el.lineh ?? 1.15);
+  if (!raw) return lhMM;
+  if (!measureCv) measureCv = document.createElement("canvas");
+  const ctx = measureCv.getContext("2d")!;
+  const DP = 10;
+  ctx.font = `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${(el.sizeMM ?? 3) * DP * 1.33}px ${el.font || "Arial"}, sans-serif`;
+  return Math.max(1, wrapText(ctx, raw, el.w * DP).length) * lhMM;
+}
+
 function drawText(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, dp: number) {
   const raw = fieldText(el, fill);
   if (!raw) return;
@@ -44,25 +79,17 @@ function drawText(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, 
   ctx.textBaseline = "top";
   const boxX = el.x * dp, boxY = el.y * dp, boxW = el.w * dp;
   const lineH = (el.sizeMM ?? 3) * dp * 1.33 * (el.lineh ?? 1.15);
-  // word-wrap each explicit line to the box width
-  const lines: string[] = [];
-  for (const para of raw.split("\n")) {
-    const words = para.split(/\s+/); let cur = "";
-    for (const wd of words) {
-      const test = cur ? cur + " " + wd : wd;
-      if (ctx.measureText(test).width > boxW && cur) { lines.push(cur); cur = wd; }
-      else cur = test;
-    }
-    lines.push(cur);
-  }
-  if (el.invert) {
-    ctx.fillStyle = "#000";
-    ctx.fillRect(boxX, boxY, boxW, Math.max(lineH * lines.length, el.h * dp));
-    ctx.fillStyle = "#fff";
-  } else ctx.fillStyle = "#000";
+  const lines = wrapText(ctx, raw, boxW);
+  const boxH = Math.max((el.h || 0) * dp, lineH * lines.length);
+  // CLIP to the element's box so text never spills into its neighbours or off-label.
+  ctx.save();
+  ctx.beginPath(); ctx.rect(boxX, boxY, boxW, boxH); ctx.clip();
+  if (el.invert) { ctx.fillStyle = "#000"; ctx.fillRect(boxX, boxY, boxW, boxH); ctx.fillStyle = "#fff"; }
+  else ctx.fillStyle = "#000";
   ctx.textAlign = el.align || "left";
   const tx = el.align === "center" ? boxX + boxW / 2 : el.align === "right" ? boxX + boxW : boxX;
   lines.forEach((ln, i) => ctx.fillText(ln, tx, boxY + i * lineH));
+  ctx.restore();
   ctx.fillStyle = "#000";
 }
 
