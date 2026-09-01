@@ -32,11 +32,6 @@ export async function renderDoc(
   ctx.restore();
 }
 
-function cssFont(el: DesignEl, dp: number): string {
-  const px = Math.max(4, (el.sizeMM ?? 3) * dp * 1.33); // cap-height mm → px (~0.75 cap ratio)
-  return `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${px}px "${el.font || "Arial"}", sans-serif`;
-}
-
 // Force every font used in a design to finish downloading before we render/print,
 // so the print image never falls back to a different face (which would make labels
 // differ between PCs). Safe no-op outside the browser.
@@ -89,12 +84,24 @@ export function textBoxHeightMM(el: DesignEl, raw: string): number {
 function drawText(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, dp: number) {
   const raw = fieldText(el, fill);
   if (!raw) return;
-  ctx.font = cssFont(el, dp);
   ctx.textBaseline = "top";
   const boxX = el.x * dp, boxY = el.y * dp, boxW = el.w * dp;
-  const lineH = (el.sizeMM ?? 3) * dp * 1.33 * (el.lineh ?? 1.15);
+  const setFont = (mm: number) => { ctx.font = `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${Math.max(4, mm * dp * 1.33)}px "${el.font || "Arial"}", sans-serif`; };
+  const lh = (mm: number) => mm * dp * 1.33 * (el.lineh ?? 1.15);
+  let sMM = el.sizeMM ?? 3;
+  // AUTO-FIT: shrink the font until the wrapped text fits the box height, so a very
+  // long name (or any field) always fits its box instead of being cut off. Width is
+  // already handled by wrapping/hard-breaking. Never grows past the chosen size.
+  if (el.fit && (el.h || 0) > 0) {
+    for (; sMM > 1.2; sMM -= 0.1) {
+      setFont(sMM);
+      if (wrapText(ctx, raw, boxW).length * lh(sMM) <= el.h * dp + 0.5) break;
+    }
+  }
+  setFont(sMM);
+  const lineH = lh(sMM);
   const lines = wrapText(ctx, raw, boxW);
-  const boxH = Math.max((el.h || 0) * dp, lineH * lines.length);
+  const boxH = el.fit ? el.h * dp : Math.max((el.h || 0) * dp, lineH * lines.length);
   // CLIP to the element's box so text never spills into its neighbours or off-label.
   ctx.save();
   ctx.beginPath(); ctx.rect(boxX, boxY, boxW, boxH); ctx.clip();

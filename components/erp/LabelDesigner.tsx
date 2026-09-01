@@ -26,6 +26,7 @@ export default function LabelDesigner() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [fill, setFill] = useState<LabelFill>(SAMPLE_FILL);
+  const [testLong, setTestLong] = useState(false);
   const [testCode, setTestCode] = useState("");
   const [brPrinters, setBrPrinters] = useState<Br[]>([]);
   const [brPrinterId, setBrPrinterId] = useState("");
@@ -34,6 +35,10 @@ export default function LabelDesigner() {
   const dragRef = useRef<null | { id: string; mode: "move" | "resize"; px: number; py: number; ox: number; oy: number; ow: number; oh: number }>(null);
 
   const sel = doc.elements.find((e) => e.id === selId) || null;
+  // Preview data: optionally force a very long name to see auto-fit shrink in action.
+  const effFill: LabelFill = testLong
+    ? { ...fill, name: "HYDRAULIC DISC BRAKE CALIPER ASSEMBLY FRONT-LEFT WITH MOUNTING BRACKET AND BOLTS (LONG NAME TEST)" }
+    : fill;
   const docRef = useRef(doc); docRef.current = doc; // fresh doc for collision during a drag
   // would placing `id` at x,y (w×h mm) overlap another CONTENT element (text/qr/barcode)?
   const collides = (id: string, x: number, y: number, w: number, h: number) =>
@@ -95,9 +100,10 @@ export default function LabelDesigner() {
     const cv = canvasRef.current; if (!cv) return;
     cv.width = Math.round(doc.w * scale); cv.height = Math.round(doc.h * scale);
     const ctx = cv.getContext("2d"); if (!ctx) return;
-    (async () => { await ensureFontsLoaded(doc); if (!cancelled) await renderDoc(ctx, doc, fill, scale); })();
+    (async () => { await ensureFontsLoaded(doc); if (!cancelled) await renderDoc(ctx, doc, effFill, scale); })();
     return () => { cancelled = true; };
-  }, [doc, scale, fill]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc, scale, fill, testLong]);
 
   // ── element mutation helpers ──────────────────────────────────────────────
   const mutate = (id: string, patch: Partial<DesignEl>) =>
@@ -223,7 +229,7 @@ export default function LabelDesigner() {
       const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
       const dp = dpi === 203 ? 8 : dpi / 25.4;
       await ensureFontsLoaded(doc);
-      const bmp = await renderDocToTSPL(doc, fill, dp);
+      const bmp = await renderDocToTSPL(doc, effFill, dp);
       const r = await fetch("/api/erp/labels/print-raster", {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies: Math.max(1, copies), skuCode: fill.sku_code, ...bmp }),
@@ -342,6 +348,11 @@ export default function LabelDesigner() {
                       <button key={a} onClick={() => updateSel({ align: a })} className={`flex-1 rounded border px-2 py-1 text-xs ${sel.align === a ? "bg-[var(--accent)] text-white" : "border-[var(--border)]"}`}>{a[0].toUpperCase()}</button>
                     ))}
                   </div>
+                  <label className="flex items-center gap-1.5 rounded-lg bg-[var(--surface-2)] px-2 py-1.5 text-xs font-bold">
+                    <input type="checkbox" checked={!!sel.fit} onChange={(e) => updateSel({ fit: e.target.checked })} />
+                    Auto‑fit — shrink long text to the box
+                  </label>
+                  {sel.fit && <p className="text-[11px] text-[var(--muted)]">Size above is the MAX; long values shrink to fit this box, short ones stay big.</p>}
                 </>
               )}
 
@@ -372,6 +383,9 @@ export default function LabelDesigner() {
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2">
         <input value={testCode} onChange={(e) => setTestCode(e.target.value)} placeholder="SKU code for real QR / test" className="w-48 rounded-lg border border-[var(--border)] px-2 py-1.5 text-sm" />
         <button onClick={loadSku} className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold">Load SKU</button>
+        <label className="flex items-center gap-1.5 text-xs font-bold" title="Preview a very long product name to check auto-fit shrinking">
+          <input type="checkbox" checked={testLong} onChange={(e) => setTestLong(e.target.checked)} /> Long‑name test
+        </label>
         <select value={brPrinterId} onChange={(e) => setBrPrinterId(e.target.value)} className="rounded-lg border border-[var(--border)] px-2 py-1.5 text-sm">
           <option value="">Test printer…</option>
           {brPrinters.map((p) => <option key={p.id} value={p.id} disabled={!p.online}>{(p.code || p.name)}{p.online ? "" : " (offline)"}</option>)}

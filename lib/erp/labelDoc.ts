@@ -30,6 +30,7 @@ export type DesignEl = {
   italic?: boolean;
   align?: "left" | "center" | "right";
   lineh?: number;           // line-height multiplier (default 1.15)
+  fit?: boolean;            // AUTO-FIT: shrink the font so any-length text fits the box
   invert?: boolean;         // white text on black (for a black bar)
   // box / line styling
   strokeMM?: number;        // line/box border thickness in mm
@@ -101,7 +102,7 @@ export function defaultDoc(w: number, h: number): LabelDoc {
       { id: uid(), kind: "text", field: "code", text: "", x: pad, y: pad, w: textW, h: 5,
         font: "Arial", sizeMM: 3.6, bold: true, align: "left" },
       { id: uid(), kind: "text", field: "name", x: pad, y: pad + 5.5, w: textW, h: 8,
-        font: "Arial", sizeMM: 3, bold: true, align: "left", lineh: 1.1 },
+        font: "Arial", sizeMM: 3, bold: true, align: "left", lineh: 1.1, fit: true },
       { id: uid(), kind: "qr", x: rightQrX, y: pad, w: qrSize, h: qrSize },
       { id: uid(), kind: "text", field: "mrp", x: pad, y: h - addrH - 5.5, w: textW, h: 4.5,
         font: "Arial", sizeMM: 3.2, bold: true, align: "left" },
