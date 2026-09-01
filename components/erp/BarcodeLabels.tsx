@@ -393,10 +393,18 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     if (!approvedDoc || !brPrinterId) return;
     setPnBusy(true); setPnMsg(null);
     try {
+      // Always render the FRESHEST approved design (a tab left open can hold a stale
+      // version after a re-approve — this guarantees the latest is what prints).
+      let doc = approvedDoc;
+      try {
+        const dr = await fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" });
+        const dd = await dr.json();
+        if (dd?.design?.approved_doc) { doc = dd.design.approved_doc as LabelDoc; setApprovedDoc(doc); }
+      } catch { /* keep the cached one */ }
       const nm = brPrinters.find((x) => x.id === brPrinterId)?.name || "";
       const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(nm) ? 300 : 203;
       const dp = dpi === 203 ? 8 : dpi / 25.4;
-      await ensureFontsLoaded(approvedDoc);
+      await ensureFontsLoaded(doc);
       // group identical labels (same QR token) so N copies print from one bitmap
       const groups = new Map<string, { fill: LabelFill; count: number; sku: string }>();
       for (const l of printable) {
@@ -412,12 +420,12 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       }
       let queued = 0;
       for (const g of groups.values()) {
-        const bmp = await renderDocToTSPL(approvedDoc, g.fill, dp);
+        const bmp = await renderDocToTSPL(doc, g.fill, dp);
         const r = await fetch("/api/erp/labels/print-raster", {
           method: "POST", headers: { "content-type": "application/json" },
           // Image labels have large solid black areas → print SLOW + moderate density
           // so the thermal head cools between rows (fast/too-dark = ghosting/blur).
-          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed: 2, density: 10, ...bmp }),
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies: g.count, skuCode: g.sku, speed: 2, density: 10, ...bmp }),
         });
         const d = await r.json();
         if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }
