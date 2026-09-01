@@ -9,7 +9,7 @@
 // from the client editor, the renderer, and the server.
 
 export type ElField =
-  | "code" | "name" | "mrp" | "qty" | "lot" | "rack" | "pkd"
+  | "code" | "name" | "header" | "mrp" | "qty" | "lot" | "rack" | "pkd"
   | "custom" | "address";
 
 export type ElKind = "text" | "qr" | "barcode" | "box" | "line";
@@ -73,16 +73,16 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
   };
   switch (el.field) {
     case "code": return String(d.sku_code ?? "");
-    // NAME BLOCK: line 1 = the price-list HEADER (part type), then the specific
-    // variant on the next line(s). The header prefix is stripped from the name so it
-    // isn't repeated. Auto-fit makes short names big and wraps long ones to line 3.
+    // Header (part type) and Name (variant) are SEPARATE fields so their sizes can be
+    // set independently. `header` = the price-list category; `name` = the specific
+    // variant with the header prefix stripped (falls back to the full name).
+    case "header": return String(d.header ?? "").trim();
     case "name": {
       const full = String(d.name ?? "");
       const hdr = String(d.header ?? "").trim();
       if (!hdr) return full;
-      const variant = full.toUpperCase().startsWith(hdr.toUpperCase())
+      return full.toUpperCase().startsWith(hdr.toUpperCase())
         ? full.slice(hdr.length).replace(/^[\s\-/]+/, "").trim() : full;
-      return variant ? `${hdr}\n${variant}` : hdr;
     }
     case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
     case "qty": {
@@ -122,8 +122,10 @@ export function defaultDoc(w: number, h: number): LabelDoc {
     elements: [
       { id: uid(), kind: "text", field: "code", text: "", x: pad, y: pad, w: textW, h: 5,
         font: "Arial", sizeMM: 3.6, bold: true, align: "left" },
-      { id: uid(), kind: "text", field: "name", x: pad, y: pad + 5.5, w: textW, h: 8,
-        font: "Arial", sizeMM: 3, bold: true, align: "left", lineh: 1.1, fit: true },
+      { id: uid(), kind: "text", field: "header", x: pad, y: pad + 5.5, w: textW, h: 4.5,
+        font: "Arial", sizeMM: 3, bold: true, align: "left", fit: true },
+      { id: uid(), kind: "text", field: "name", x: pad, y: pad + 10.5, w: textW, h: 7,
+        font: "Arial", sizeMM: 3.2, bold: true, align: "left", lineh: 1.1, fit: true },
       { id: uid(), kind: "qr", x: rightQrX, y: pad, w: qrSize, h: qrSize },
       { id: uid(), kind: "text", field: "mrp", x: pad, y: h - addrH - 5.5, w: textW, h: 4.5,
         font: "Arial", sizeMM: 3.2, bold: true, align: "left" },

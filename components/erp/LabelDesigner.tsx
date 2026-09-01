@@ -264,7 +264,8 @@ export default function LabelDesigner() {
         <div className="flex w-40 flex-col gap-1.5">
           <p className="text-xs font-bold text-[var(--muted)]">ADD TO LABEL</p>
           <button onClick={() => addEl("text", "code")} className="ADDBTN">＋ SKU code</button>
-          <button onClick={() => addEl("text", "name")} className="ADDBTN">＋ Product name</button>
+          <button onClick={() => addEl("text", "header")} className="ADDBTN">＋ Header (part type)</button>
+          <button onClick={() => addEl("text", "name")} className="ADDBTN">＋ Name (variant)</button>
           <button onClick={() => addEl("text", "mrp")} className="ADDBTN">＋ MRP</button>
           <button onClick={() => addEl("text", "qty")} className="ADDBTN">＋ Qty</button>
           <button onClick={() => addEl("text", "lot")} className="ADDBTN">＋ Lot no</button>
