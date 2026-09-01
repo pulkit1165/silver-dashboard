@@ -216,7 +216,7 @@ export default function LabelDesigner() {
       const d = await r.json();
       const l = (d.labels || [])[0];
       if (!l) { setMsg({ ok: false, text: `SKU ${code} not found.` }); return; }
-      setFill({ sku_code: l.sku_code, name: l.name, price: l.price, unit: l.unit || "PCS", singleQty: l.singleQty ?? 1, masterQty: l.masterQty ?? 1, lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvgSingle || l.qrSvg, qrMatrix: l.qrMatrixSingle, address: fill.address });
+      setFill({ sku_code: l.sku_code, name: l.name, header: l.header, price: l.price, unit: l.unit || "PCS", singleQty: l.singleQty ?? 1, masterQty: l.masterQty ?? 1, lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvgSingle || l.qrSvg, qrMatrix: l.qrMatrixSingle, address: fill.address });
       setMsg({ ok: true, text: `Loaded ${l.sku_code} — preview now shows its real QR & data.` });
     } catch { setMsg({ ok: false, text: "Could not load that SKU." }); }
   };

@@ -38,6 +38,7 @@ export const skus = pgTable("skus", {
   skuCode: text("sku_code").unique().notNull(),
   name: text("name").notNull(),
   category: text("category").default(""),
+  header: text("header"), // price-list category header (line 1 of the label name block)
   brand: text("brand").default(""),
   unit: text("unit").default("PCS"),
   price: doublePrecision("price").default(0), // MRP / display price

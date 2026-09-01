@@ -43,7 +43,7 @@ export async function POST(req: Request) {
         getOrCreateTierToken(sku.id, sku.sku_code, "master"),
       ]);
       return {
-        skuId: sku.id, sku_code: sku.sku_code, name: sku.name,
+        skuId: sku.id, sku_code: sku.sku_code, name: sku.name, header: sku.header ?? "",
         unit: sku.unit, price: sku.price, masterQty: sku.master_qty, singleQty: sku.single_qty || 1,
         rack: loc?.bin_code ?? "", lot: loc?.batch ?? "", pkd: today,
         qrTokenSingle, qrTokenMaster,

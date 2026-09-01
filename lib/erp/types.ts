@@ -3,6 +3,7 @@ export interface Sku {
   sku_code: string;
   name: string;
   category: string;
+  header?: string; // price-list category header (line 1 of the label name block)
   brand: string;
   unit: string;
   price: number;

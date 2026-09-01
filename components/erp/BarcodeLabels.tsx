@@ -11,7 +11,7 @@ import type { LabelDoc, LabelFill } from "@/lib/erp/labelDoc";
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type QrMatrix = { size: number; data: number[] };
 type Label = {
-  skuId: number; sku_code: string; name: string; unit: string;
+  skuId: number; sku_code: string; name: string; header?: string; unit: string;
   price: number; masterQty: number; singleQty: number; rack: string; lot: string; pkd: string;
   qrTokenSingle: string; qrTokenMaster: string; qrSvgSingle: string; qrSvgMaster: string;
   qrMatrixSingle?: QrMatrix; qrMatrixMaster?: QrMatrix;
@@ -405,7 +405,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         if (g) { g.count++; continue; }
         groups.set(key, {
           count: 1, sku: l.sku_code,
-          fill: { sku_code: l.sku_code, name: l.name, price: l.price, unit: unitOverride || l.unit,
+          fill: { sku_code: l.sku_code, name: l.name, header: l.header, price: l.price, unit: unitOverride || l.unit,
             singleQty: l.unitQty ?? l.singleQty, masterQty: l.unitQty ?? l.masterQty,
             lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvg, qrMatrix: l.qrMatrix },
         });

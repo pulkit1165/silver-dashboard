@@ -46,7 +46,7 @@ export type LabelDoc = {
 
 // The data a label is filled with at render time (matches the print payload).
 export type LabelFill = {
-  sku_code?: string; name?: string; price?: number;
+  sku_code?: string; name?: string; header?: string; price?: number;
   unit?: string; singleQty?: number; masterQty?: number;
   lot?: string; rack?: string; pkd?: string;
   qrSvg?: string;           // the real QR (SVG markup) for this SKU's token
@@ -73,7 +73,17 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
   };
   switch (el.field) {
     case "code": return String(d.sku_code ?? "");
-    case "name": return String(d.name ?? "");
+    // NAME BLOCK: line 1 = the price-list HEADER (part type), then the specific
+    // variant on the next line(s). The header prefix is stripped from the name so it
+    // isn't repeated. Auto-fit makes short names big and wraps long ones to line 3.
+    case "name": {
+      const full = String(d.name ?? "");
+      const hdr = String(d.header ?? "").trim();
+      if (!hdr) return full;
+      const variant = full.toUpperCase().startsWith(hdr.toUpperCase())
+        ? full.slice(hdr.length).replace(/^[\s\-/]+/, "").trim() : full;
+      return variant ? `${hdr}\n${variant}` : hdr;
+    }
     case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
     case "qty": {
       const q = d.singleQty ?? 1; const u = (d.unit ?? "PCS").trim();
@@ -92,7 +102,7 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
 // Sample data for the editor preview (so the operator designs against realistic
 // content, not empty boxes).
 export const SAMPLE_FILL: LabelFill = {
-  sku_code: "HH12006", name: "CENTER STAND KIT SPL", price: 570,
+  sku_code: "HH12006", name: "CENTER STAND KIT SPL", header: "CENTER STAND KIT", price: 570,
   unit: "PCS", singleQty: 1, masterQty: 1, lot: "L-2291", rack: "R-14", pkd: "08/26",
   address: "SILVER INDUSTRIES\nPlot 12, Focal Point, Ludhiana 141010\nGSTIN 03ABCDE1234F1Z5",
 };
