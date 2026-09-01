@@ -3,7 +3,7 @@ import { getSku, inventoryForSku, getOrCreateTierToken } from "@/lib/erp/queries
 import { getSql } from "@/lib/erp/db";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { qrSvg } from "@/lib/erp/qr";
+import { qrSvg, qrMatrix } from "@/lib/erp/qr";
 import { pkd } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +48,9 @@ export async function POST(req: Request) {
         rack: loc?.bin_code ?? "", lot: loc?.batch ?? "", pkd: today,
         qrTokenSingle, qrTokenMaster,
         qrSvgSingle: await qrSvg(qrTokenSingle, 200), qrSvgMaster: await qrSvg(qrTokenMaster, 200),
+        // Raw module matrix per tier — the designer/labels renderer draws it as a
+        // crisp, uniform-module bitmap (scannable), not a scaled image.
+        qrMatrixSingle: qrMatrix(qrTokenSingle), qrMatrixMaster: qrMatrix(qrTokenMaster),
       };
     }),
   );

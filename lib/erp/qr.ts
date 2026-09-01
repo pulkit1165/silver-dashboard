@@ -16,3 +16,12 @@ export async function qrSvg(token: string, size = 200): Promise<string> {
 export async function qrDataUrl(token: string, size = 320): Promise<string> {
   return QRCode.toDataURL(token, { margin: 4, width: size, errorCorrectionLevel: "M" });
 }
+
+// The raw QR module matrix (no quiet zone) so the label renderer can draw uniform,
+// integer-dot modules with its own baked-in quiet zone — the ONLY way a printed QR
+// scans reliably on cheap hardware scanners (scaling an image gives uneven modules).
+export function qrMatrix(token: string): { size: number; data: number[] } {
+  const qr = QRCode.create(token, { errorCorrectionLevel: "M" });
+  const data = qr.modules.data as unknown as ArrayLike<number>;
+  return { size: qr.modules.size, data: Array.from(data, (b) => (b ? 1 : 0)) };
+}

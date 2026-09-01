@@ -9,10 +9,12 @@ import { renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
 import type { LabelDoc, LabelFill } from "@/lib/erp/labelDoc";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
+type QrMatrix = { size: number; data: number[] };
 type Label = {
   skuId: number; sku_code: string; name: string; unit: string;
   price: number; masterQty: number; singleQty: number; rack: string; lot: string; pkd: string;
   qrTokenSingle: string; qrTokenMaster: string; qrSvgSingle: string; qrSvgMaster: string;
+  qrMatrixSingle?: QrMatrix; qrMatrixMaster?: QrMatrix;
 };
 type LabelType = "single" | "master";
 
@@ -280,6 +282,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const t = (type[i.id] === "master" && hasMaster(l.masterQty, l.singleQty) ? "master" : "single") as LabelType;
     const qrToken = t === "master" ? l.qrTokenMaster : l.qrTokenSingle;
     const qrSvg = t === "master" ? l.qrSvgMaster : l.qrSvgSingle;
+    const qrMatrix = t === "master" ? l.qrMatrixMaster : l.qrMatrixSingle;
     // Precedence: Label Master (structured lines) → per-SKU name override → SKU name.
     const m = labelMaster[l.sku_code];
     const masterName = m ? [m.line1, m.line2, m.line3].filter(Boolean).join("\n") : "";
@@ -289,7 +292,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const unit = m?.units || l.unit;
     // Per-SKU saved quantity (units × count). When set it drives the printed Qty number.
     const unitQty = m?.unitQty && m.unitQty > 0 ? m.unitQty : undefined;
-    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, lot, rack, unit, unitQty, type: t, qrToken, qrSvg, key: `${i.id}-${t}-${n}` }));
+    return Array.from({ length: Math.max(1, copies) }, (_, n) => ({ ...l, name, lot, rack, unit, unitQty, type: t, qrToken, qrSvg, qrMatrix, key: `${i.id}-${t}-${n}` }));
   });
 
   const labelStyle = (roll || a4) ? { width: `${dims.w}mm`, height: `${dims.h}mm` } : undefined;
@@ -404,7 +407,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           count: 1, sku: l.sku_code,
           fill: { sku_code: l.sku_code, name: l.name, price: l.price, unit: unitOverride || l.unit,
             singleQty: l.unitQty ?? l.singleQty, masterQty: l.unitQty ?? l.masterQty,
-            lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvg },
+            lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvg, qrMatrix: l.qrMatrix },
         });
       }
       let queued = 0;

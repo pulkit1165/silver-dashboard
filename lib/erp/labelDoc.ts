@@ -50,6 +50,7 @@ export type LabelFill = {
   unit?: string; singleQty?: number; masterQty?: number;
   lot?: string; rack?: string; pkd?: string;
   qrSvg?: string;           // the real QR (SVG markup) for this SKU's token
+  qrMatrix?: { size: number; data: number[] }; // raw module matrix (preferred — scannable)
   address?: string;         // company address block (from settings / doc)
 };
 

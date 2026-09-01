@@ -126,6 +126,21 @@ function loadImg(src: string): Promise<HTMLImageElement> {
 async function drawQr(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, dp: number) {
   const box = Math.min(el.w, el.h) * dp;
   const x = el.x * dp, y = el.y * dp;
+  // PREFERRED: draw the module matrix directly as UNIFORM integer-dot squares with a
+  // 4-module quiet zone. This is the only way a printed QR scans reliably (a scaled
+  // image gives uneven modules). Matches the proven buildTSPL QR-bitmap method.
+  const m = fill.qrMatrix;
+  if (m && m.size > 0 && m.data?.length === m.size * m.size) {
+    const quiet = 4, total = m.size + quiet * 2;
+    const modDots = Math.max(1, Math.floor(box / total)); // integer dots per module
+    const qpx = total * modDots;
+    ctx.fillStyle = "#fff"; ctx.fillRect(x, y, qpx, qpx); // quiet zone (white)
+    ctx.fillStyle = "#000";
+    for (let r = 0; r < m.size; r++) for (let c = 0; c < m.size; c++) {
+      if (m.data[r * m.size + c]) ctx.fillRect(x + (c + quiet) * modDots, y + (r + quiet) * modDots, modDots, modDots);
+    }
+    return;
+  }
   const svg = fill.qrSvg;
   if (svg) {
     // base64 (with proper UTF-8) is the reliable way to load an SVG into an <img>;
