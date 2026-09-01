@@ -3,7 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-type Sku = { sku_code: string; name: string; unit: string; category: string };
+type Sku = { sku_code: string; name: string; unit: string; category: string; header?: string };
 type Row = { line1: string; line2: string; line3: string; units: string; lot: string; rack: string };
 const BLANK: Row = { line1: "", line2: "", line3: "", units: "", lot: "", rack: "" };
 
