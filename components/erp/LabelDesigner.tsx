@@ -223,6 +223,17 @@ export default function LabelDesigner() {
     if (await post("save", { doc })) if (await post("approve")) { setMsg({ ok: true, text: "✓ Approved — this design is now LIVE for printing." }); setStatus("approved"); }
   };
   const revert = async () => { if (!confirm("Discard this draft and go back to the currently-approved design?")) return; if (await post("revert")) load(sizeId); };
+  const unlock = async () => {
+    if (!confirm("Unlock this size so you can approve a NEW design? The current design keeps printing until you approve the new one.")) return;
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch("/api/erp/labels/lock", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "unlock", sizeId }) });
+      const d = await r.json();
+      if (d.ok) { setLocked(false); setMsg({ ok: true, text: "🔓 Unlocked — you can now Approve & deploy your new design." }); }
+      else setMsg({ ok: false, text: d.error || "Unlock failed." });
+    } catch (e) { setMsg({ ok: false, text: String(e) }); }
+    finally { setBusy(false); }
+  };
 
   // ── load a real SKU so the preview/test uses the real QR + data ───────────
   const loadSku = async () => {
@@ -269,6 +280,7 @@ export default function LabelDesigner() {
         <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${locked ? "bg-[var(--danger)] text-white" : status === "approved" ? "bg-[var(--accent-2)] text-white" : "bg-[var(--surface-2)]"}`}>
           {locked ? "🔒 LOCKED — old design keeps printing" : status === "approved" ? "● Approved (live)" : status === "draft" ? "◔ Draft (not printing)" : "New"}
         </span>
+        {locked && <button onClick={unlock} disabled={busy} className="rounded-lg border border-[var(--danger)] px-3 py-1 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white disabled:opacity-50">🔓 Unlock to approve</button>}
         <div className="ml-auto flex items-center gap-1">
           <button onClick={() => setScale((s) => Math.max(4, s - 1))} className="rounded border border-[var(--border)] px-2 py-1 text-sm font-bold">−</button>
           <span className="w-16 text-center text-xs font-bold">{scale} px/mm</span>
@@ -310,7 +322,8 @@ export default function LabelDesigner() {
                     : selId === el.id ? "outline outline-2 outline-[var(--accent)]"
                     : isContent(el.kind) ? "outline outline-1 outline-dashed outline-[var(--border)] hover:outline-[var(--accent)]"
                     : "hover:outline hover:outline-1 hover:outline-[var(--accent)]"}`}
-                  style={{ left: el.x * scale, top: el.y * scale, width: Math.max(6, el.w * scale), height: Math.max(6, (el.h || 1) * scale) }}>
+                  style={{ left: el.x * scale, top: el.y * scale, width: Math.max(6, el.w * scale), height: Math.max(6, (el.h || 1) * scale),
+                    transform: el.rot ? `rotate(${el.rot}deg)` : undefined, transformOrigin: "0 0" }}>
                   {selId === el.id && (
                     <span onPointerDown={(e) => onDown(e, el, "resize")}
                       className="absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize rounded-sm border border-white bg-[var(--accent)]" />
