@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import LabelAligner, { type Layout } from "./LabelAligner";
 import LabelSizePicker from "./LabelSizePicker";
 import { mrp } from "@/lib/format";
+import { renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
+import type { LabelDoc, LabelFill } from "@/lib/erp/labelDoc";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
 type Label = {
@@ -95,6 +97,20 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
   const [density, setDensity] = useState(8);
   const [speed, setSpeed] = useState(3);
+  // The APPROVED custom design for the current size (from the Label Designer). When
+  // present, printing renders it as an image (WYSIWYG) instead of the old auto-layout.
+  const [approvedDoc, setApprovedDoc] = useState<LabelDoc | null>(null);
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      try {
+        const r = await fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" });
+        const d = await r.json();
+        if (live) setApprovedDoc(d?.design?.approved_doc ?? null);
+      } catch { if (live) setApprovedDoc(null); }
+    })();
+    return () => { live = false; };
+  }, [sizeId]);
   useEffect(() => {
     try {
       const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
@@ -368,6 +384,46 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   }
 
   // Print via our own bridge: enqueue jobs, then poll the queue for done/failed.
+  // Print the size's APPROVED custom design: render each unique label to the printer
+  // bitmap in the browser (real fonts, exactly the preview) and enqueue copies.
+  async function printApprovedRaster() {
+    if (!approvedDoc || !brPrinterId) return;
+    setPnBusy(true); setPnMsg(null);
+    try {
+      const nm = brPrinters.find((x) => x.id === brPrinterId)?.name || "";
+      const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(nm) ? 300 : 203;
+      const dp = dpi === 203 ? 8 : dpi / 25.4;
+      await ensureFontsLoaded(approvedDoc);
+      // group identical labels (same QR token) so N copies print from one bitmap
+      const groups = new Map<string, { fill: LabelFill; count: number; sku: string }>();
+      for (const l of printable) {
+        const key = l.qrToken || l.sku_code;
+        const g = groups.get(key);
+        if (g) { g.count++; continue; }
+        groups.set(key, {
+          count: 1, sku: l.sku_code,
+          fill: { sku_code: l.sku_code, name: l.name, price: l.price, unit: unitOverride || l.unit,
+            singleQty: l.unitQty ?? l.singleQty, masterQty: l.unitQty ?? l.masterQty,
+            lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvg },
+        });
+      }
+      let queued = 0;
+      for (const g of groups.values()) {
+        const bmp = await renderDocToTSPL(approvedDoc, g.fill, dp);
+        const r = await fetch("/api/erp/labels/print-raster", {
+          method: "POST", headers: { "content-type": "application/json" },
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed, density, ...bmp }),
+        });
+        const d = await r.json();
+        if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }
+        queued += d.queued || 0;
+      }
+      setPnMsg({ ok: true, text: `✓ Queued ${queued} label${queued === 1 ? "" : "s"} using the approved design — printing…` });
+      fetch("/api/erp/labels/log-print", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ skuCodes: [...new Set(printable.map((l) => l.sku_code))], labelCount: printable.length }) }).catch(() => {});
+    } catch (e) { setPnMsg({ ok: false, text: String(e) }); }
+    finally { setPnBusy(false); }
+  }
+
   async function printToBridge() {
     if (!brPrinterId || printable.length === 0) return;
     if (!guardBatch(printable.length)) return;
@@ -377,6 +433,8 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       setPnMsg({ ok: false, text: `🔒 ${bp.code || bp.name} is locked to ${LABEL_SIZES.find((s) => s.id === bp.labelSize)?.label ?? bp.labelSize} — select that size or unlock the printer.` });
       return;
     }
+    // NEW: if this size has an approved custom design, print it as an image (WYSIWYG).
+    if (approvedDoc) { await printApprovedRaster(); return; }
     setPnBusy(true); setPnMsg(null);
     try {
       const r = await fetch("/api/erp/labels/bridge", {
@@ -716,6 +774,11 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
                 className={`px-2.5 py-1 ${engine === "bridge" ? "bg-[var(--accent)] text-white" : "bg-white hover:bg-[var(--surface-2)]"}`}>Direct (our bridge)</button>
             </div>
           </div>
+          {approvedDoc && (
+            <div className="mb-2 rounded-lg bg-[var(--accent-2)]/15 px-3 py-2 text-xs font-bold text-[var(--accent-strong)]">
+              🎨 This size prints your <b>approved custom design</b> from the Label Designer{engine === "printnode" ? " — switch to “Direct (our bridge)” to print it (PrintNode still uses the old layout)." : "."} The on‑screen preview below still shows the old layout — open the Designer to see the real one.
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-3">
             <label className="flex items-center gap-2 text-sm font-semibold">
               Printer

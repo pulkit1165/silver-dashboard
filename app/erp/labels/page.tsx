@@ -21,6 +21,9 @@ export default async function BarcodeLabelsPage({
   }));
   return (
     <>
+      {/* Web fonts for rendering approved custom label designs (same set as the designer). */}
+      <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+      <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&family=Open+Sans:wght@400;700&family=Lato:wght@400;700&family=Montserrat:wght@400;700&family=Poppins:wght@400;700&family=Inter:wght@400;700&family=Work+Sans:wght@400;700&family=Rubik:wght@400;700&family=PT+Sans:wght@400;700&family=Barlow:wght@400;700&family=Archivo:wght@400;700&family=Roboto+Condensed:wght@400;700&family=Barlow+Condensed:wght@400;700&family=Archivo+Narrow:wght@400;700&family=Oswald:wght@400;700&family=Bebas+Neue&family=Anton&family=Merriweather:wght@400;700&family=Roboto+Slab:wght@400;700&family=PT+Serif:wght@400;700&family=Roboto+Mono:wght@400;700&family=JetBrains+Mono:wght@400;700&display=swap" />
       <PageHeader title="Print Barcode Labels" subtitle="Search for SKUs, choose Single or Master, and print — A4 sheet or thermal roll." />
       <div className="mb-3 flex flex-wrap gap-4">
         <Link href="/erp/labels/design" className="text-sm font-semibold text-[var(--accent)]">🎨 Design labels (new visual designer) →</Link>
