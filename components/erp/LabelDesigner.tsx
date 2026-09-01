@@ -149,6 +149,36 @@ export default function LabelDesigner() {
   };
   const onUp = () => { dragRef.current = null; window.removeEventListener("pointermove", onMove); };
 
+  // Nudge an element by dx/dy mm (arrow keys), with the same clamp + no-overlap rules.
+  const nudgeById = (id: string, dxmm: number, dymm: number) => {
+    const D = docRef.current;
+    const el = D.elements.find((x) => x.id === id); if (!el) return;
+    const nx = clamp(snap(el.x + dxmm), 0, Math.max(0, D.w - el.w));
+    const ny = clamp(snap(el.y + dymm), 0, Math.max(0, D.h - el.h));
+    if (!isContent(el.kind)) { mutate(id, { x: nx, y: ny }); return; }
+    if (!collides(id, nx, ny, el.w, el.h)) mutate(id, { x: nx, y: ny });
+    else if (dxmm !== 0 && !collides(id, nx, el.y, el.w, el.h)) mutate(id, { x: nx });
+    else if (dymm !== 0 && !collides(id, el.x, ny, el.w, el.h)) mutate(id, { y: ny });
+  };
+  // Arrow keys move the selected element (Shift = bigger step); ignored while typing.
+  useEffect(() => {
+    if (!selId) return;
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable)) return;
+      const step = e.shiftKey ? 2 : 0.5;
+      let dx = 0, dy = 0;
+      if (e.key === "ArrowUp") dy = -step; else if (e.key === "ArrowDown") dy = step;
+      else if (e.key === "ArrowLeft") dx = -step; else if (e.key === "ArrowRight") dx = step;
+      else return;
+      e.preventDefault();
+      nudgeById(selId, dx, dy);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selId]);
+
   // ── actions ───────────────────────────────────────────────────────────────
   const post = async (action: string, extra: Record<string, unknown> = {}) => {
     setBusy(true); setMsg(null);
@@ -265,7 +295,7 @@ export default function LabelDesigner() {
               ))}
             </div>
           </div>
-          <p className="mt-1 text-xs text-[var(--muted)]">Actual size {doc.w}×{doc.h} mm · drag boxes to place · drag the corner to resize · this is exactly what prints.</p>
+          <p className="mt-1 text-xs text-[var(--muted)]">Actual size {doc.w}×{doc.h} mm · drag boxes to place · drag the corner to resize · arrow keys nudge (Shift = bigger step) · this is exactly what prints.</p>
           {problems.size > 0 && <p className="mt-1 text-xs font-bold text-[var(--danger)]">⚠ {problems.size} field(s) overlap or spill outside the label (outlined red) — fix before approving.</p>}
         </div>
 
