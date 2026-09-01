@@ -57,6 +57,15 @@ export type LabelFill = {
 // Format a bound field into the exact text that prints. Prefixes match the
 // current labels (MRP.Rs. / Qty. / Lot: / Rack: / PKD:). "custom"/"address" use
 // the element's own text.
+// Normalise a packed date to DD-MM-YYYY (e.g. "01-Sep-2026" → "01-09-2026").
+const _MON: Record<string, string> = { jan: "01", feb: "02", mar: "03", apr: "04", may: "05", jun: "06", jul: "07", aug: "08", sep: "09", oct: "10", nov: "11", dec: "12" };
+function fmtPkd(s: string): string {
+  if (!s) return "";
+  const m = s.match(/^(\d{1,2})[-/ ]([A-Za-z]{3,})[-/ ](\d{2,4})$/);
+  if (m) { const mm = _MON[m[2].slice(0, 3).toLowerCase()] ?? m[2]; return `${m[1].padStart(2, "0")}-${mm}-${m[3]}`; }
+  return s; // already numeric / unknown → leave as-is
+}
+
 export function fieldText(el: DesignEl, d: LabelFill): string {
   const money = (n: unknown) => {
     const r = Math.round((Number(n) || 0) * 100) / 100;
@@ -70,9 +79,10 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
       const q = d.singleQty ?? 1; const u = (d.unit ?? "PCS").trim();
       return `Qty. ${q}${u ? " " + u : ""}`;
     }
-    case "lot": return d.lot ? `Lot: ${d.lot}` : "";
-    case "rack": return d.rack ? `Rack: ${d.rack}` : "";
-    case "pkd": return d.pkd ? `PKD: ${d.pkd}` : "";
+    // Lot/Rack: ALWAYS show the label; the number stays blank when the SKU has none.
+    case "lot": return `Lot No - ${d.lot ?? ""}`;
+    case "rack": return `Rack No - ${d.rack ?? ""}`;
+    case "pkd": return `PKD DATE - ${fmtPkd(String(d.pkd ?? ""))}`;
     case "address": return String(el.text ?? d.address ?? "");
     case "custom":
     default: return String(el.text ?? "");

@@ -212,7 +212,10 @@ export function packToTSPL(canvas: HTMLCanvasElement): { widthBytes: number; hei
       const p = (yy * W + xx) * 4;
       const a = data[p + 3];
       const lum = 0.299 * data[p] + 0.587 * data[p + 1] + 0.114 * data[p + 2];
-      if (a > 24 && lum < 128) bytes[row + (xx >> 3)] &= ~(0x80 >> (xx & 7)); // black → clear bit
+      // Threshold biased toward black (176, not 128) so anti-aliased text edges print
+      // as SOLID strokes instead of thin/faded ones. QR is drawn with hard-edged
+      // integer squares (pure black/white), so this doesn't affect it.
+      if (a > 24 && lum < 176) bytes[row + (xx >> 3)] &= ~(0x80 >> (xx & 7)); // black → clear bit
     }
   }
   // base64 (browser-safe)

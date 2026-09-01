@@ -415,7 +415,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         const bmp = await renderDocToTSPL(approvedDoc, g.fill, dp);
         const r = await fetch("/api/erp/labels/print-raster", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed, density, ...bmp }),
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed, density: Math.max(Number(density) || 8, 12), ...bmp }),
         });
         const d = await r.json();
         if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }
