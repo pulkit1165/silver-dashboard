@@ -43,7 +43,7 @@ export default async function SkuMasterPage({
           <table className="rtable">
             <thead>
               <tr>
-                <th>SKU</th><th>Category</th><th>Brand</th>
+                <th>SKU</th><th>Header (label line 1)</th><th>Category</th><th>Brand</th>
                 <th className="!text-right">Price</th><th className="!text-right">On hand</th>
                 <th>Status</th><th>QR token</th>
               </tr>
@@ -55,6 +55,7 @@ export default async function SkuMasterPage({
                     <Link href={`/erp/skus/${s.id}`} className="font-semibold text-[var(--accent)] hover:underline">{s.name}</Link>
                     <div className="font-mono text-xs text-[var(--muted)]">{s.sku_code}</div>
                   </td>
+                  <td className="text-xs font-semibold">{s.header || <span className="text-[var(--muted-2)]">—</span>}</td>
                   <td>{s.category}</td>
                   <td>{s.brand}</td>
                   <td className="num-cell">{s.price.toFixed(2)}</td>

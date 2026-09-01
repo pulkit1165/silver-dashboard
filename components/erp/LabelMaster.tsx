@@ -29,15 +29,18 @@ export default function LabelMaster({
   const [rows, setRows] = useState<Record<string, Row>>(master);
   const [sel, setSel] = useState<string | null>(skus[0]?.sku_code ?? null);
   const [draft, setDraft] = useState<Row>(master[skus[0]?.sku_code ?? ""] ?? BLANK);
+  // header (price-list category) is stored on the SKU itself — line 1 of the name block
+  const [headers, setHeaders] = useState<Record<string, string>>(() => Object.fromEntries(skus.map((s) => [s.sku_code, s.header ?? ""])));
+  const [headerDraft, setHeaderDraft] = useState<string>(skus[0]?.header ?? "");
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   const selSku = useMemo(() => skus.find((s) => s.sku_code === sel) ?? null, [skus, sel]);
-  const dirty = sel != null && JSON.stringify(draft) !== JSON.stringify(rows[sel] ?? BLANK);
+  const dirty = sel != null && (JSON.stringify(draft) !== JSON.stringify(rows[sel] ?? BLANK) || headerDraft !== (headers[sel] ?? ""));
 
   function pick(code: string) {
-    setSel(code); setDraft(rows[code] ?? BLANK); setMsg(null);
+    setSel(code); setDraft(rows[code] ?? BLANK); setHeaderDraft(headers[code] ?? ""); setMsg(null);
   }
   function submitSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -49,10 +52,10 @@ export default function LabelMaster({
     try {
       const r = await fetch("/api/erp/labels/master", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ skuCode: sel, ...draft }),
+        body: JSON.stringify({ skuCode: sel, ...draft, header: headerDraft }),
       });
       const d = await r.json();
-      if (d.ok) { setRows((m) => ({ ...m, [sel]: draft })); setMsg("Saved ✓"); setTimeout(() => setMsg(null), 1800); }
+      if (d.ok) { setRows((m) => ({ ...m, [sel]: draft })); setHeaders((h) => ({ ...h, [sel]: headerDraft })); setMsg("Saved ✓"); setTimeout(() => setMsg(null), 1800); }
       else setMsg(d.error || "Save failed");
     } catch (e) { setMsg(String(e)); }
     finally { setSaving(false); }
@@ -109,6 +112,10 @@ export default function LabelMaster({
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--accent-strong)] sm:col-span-2">🏷 Header (name line 1 · part type)
+                <input value={headerDraft} disabled={!editable} onChange={(e) => setHeaderDraft(e.target.value)} placeholder="e.g. AIR HOSE PIPE" className={inp} />
+                <span className="text-[11px] font-normal normal-case text-[var(--muted)]">Prints as <b>line 1</b> of the label; the part name (variant) prints below it. Blank = just the name.</span>
+              </label>
               <label className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)] sm:col-span-2">Line 1 (Label Desc.)
                 <input value={draft.line1} disabled={!editable} onChange={(e) => setDraft((d) => ({ ...d, line1: e.target.value }))} className={inp} /></label>
               <label className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)] sm:col-span-2">Line 2 (Label Desc.1)

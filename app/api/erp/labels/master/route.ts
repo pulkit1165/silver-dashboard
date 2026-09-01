@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 import { getLabelMasters, saveLabelMaster } from "@/lib/erp/labelMaster";
+import { getSql } from "@/lib/erp/db";
 
 export const dynamic = "force-dynamic";
 
@@ -24,5 +25,10 @@ export async function POST(req: Request) {
     line1: b.line1, line2: b.line2, line3: b.line3, units: b.units, lot: b.lot, rack: b.rack,
     unitQty: Number(b.unitQty) || 0,
   }, user.name);
+  // Header (name line-1 / part type) lives on the SKU itself.
+  if (typeof b.header === "string") {
+    const h = b.header.trim();
+    await getSql()`UPDATE skus SET header = ${h || null} WHERE sku_code = ${skuCode}`;
+  }
   return NextResponse.json({ ok: true });
 }
