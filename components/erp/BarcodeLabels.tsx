@@ -414,7 +414,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         groups.set(key, {
           count: 1, sku: l.sku_code,
           fill: { sku_code: l.sku_code, name: l.name, header: l.header, price: l.price, unit: unitOverride || l.unit,
-            singleQty: l.unitQty ?? l.singleQty, masterQty: l.unitQty ?? l.masterQty,
+            singleQty: l.unitQty ?? l.singleQty, masterQty: l.unitQty ?? l.masterQty, tier: l.type,
             lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvg, qrMatrix: l.qrMatrix },
         });
       }

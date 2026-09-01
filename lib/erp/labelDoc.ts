@@ -47,7 +47,7 @@ export type LabelDoc = {
 // The data a label is filled with at render time (matches the print payload).
 export type LabelFill = {
   sku_code?: string; name?: string; header?: string; price?: number;
-  unit?: string; singleQty?: number; masterQty?: number;
+  unit?: string; singleQty?: number; masterQty?: number; tier?: "single" | "master";
   lot?: string; rack?: string; pkd?: string;
   qrSvg?: string;           // the real QR (SVG markup) for this SKU's token
   qrMatrix?: { size: number; data: number[] }; // raw module matrix (preferred — scannable)
@@ -86,7 +86,9 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
     }
     case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
     case "qty": {
-      const q = d.singleQty ?? 1; const u = (d.unit ?? "PCS").trim();
+      // Master label shows the CARTON qty (masterQty); single shows the piece qty.
+      const q = d.tier === "master" ? (d.masterQty ?? d.singleQty ?? 1) : (d.singleQty ?? 1);
+      const u = (d.unit ?? "PCS").trim();
       return `Qty. ${q}${u ? " " + u : ""}`;
     }
     // Lot/Rack: ALWAYS show the label; the number stays blank when the SKU has none.
