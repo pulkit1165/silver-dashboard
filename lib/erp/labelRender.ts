@@ -16,7 +16,11 @@ export async function renderDoc(
   ctx.save();
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "#000"; ctx.strokeStyle = "#000";
-  for (const el of doc.elements) {
+  // Draw QR/barcode LAST (on top) so a line or box placed over them can never
+  // corrupt the code — the QR always stays clean and scannable. (stable sort)
+  const ordered = [...doc.elements].sort((a, b) =>
+    ((a.kind === "qr" || a.kind === "barcode") ? 1 : 0) - ((b.kind === "qr" || b.kind === "barcode") ? 1 : 0));
+  for (const el of ordered) {
     ctx.save();
     // rotation about the element's top-left
     if (el.rot) { ctx.translate(el.x * dp, el.y * dp); ctx.rotate((el.rot * Math.PI) / 180); ctx.translate(-el.x * dp, -el.y * dp); }
