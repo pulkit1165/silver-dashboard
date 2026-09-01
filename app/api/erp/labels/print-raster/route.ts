@@ -27,7 +27,7 @@ export async function POST(req: Request) {
   const bytesB64 = String(b.bytesB64 || "");
   const copies = Math.max(1, Math.round(Number(b.copies) || 1));
   const skuCode = String(b.skuCode || "").trim();
-  const density = Number(b.density) >= 1 && Number(b.density) <= 15 ? Math.round(Number(b.density)) : 12;
+  const density = Number(b.density) >= 1 && Number(b.density) <= 15 ? Math.round(Number(b.density)) : 10;
 
   if (!printerId) return NextResponse.json({ ok: false, error: "No printer selected." }, { status: 400 });
   if (!widthBytes || !heightDots || !bytesB64) return NextResponse.json({ ok: false, error: "Empty bitmap." }, { status: 400 });
@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const name = printerId.slice(printerId.indexOf("::") + 2);
   const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
   const hires = dpi >= 280;
-  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 3;
+  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 2;
 
   const raw = Buffer.from(bytesB64, "base64");
   if (raw.length !== widthBytes * heightDots)

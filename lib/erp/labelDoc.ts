@@ -82,7 +82,7 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
     // Lot/Rack: ALWAYS show the label; the number stays blank when the SKU has none.
     case "lot": return `Lot No - ${d.lot ?? ""}`;
     case "rack": return `Rack No - ${d.rack ?? ""}`;
-    case "pkd": return `PKD DATE - ${fmtPkd(String(d.pkd ?? ""))}`;
+    case "pkd": return `PKD - ${fmtPkd(String(d.pkd ?? ""))}`;
     case "address": return String(el.text ?? d.address ?? "");
     case "custom":
     default: return String(el.text ?? "");

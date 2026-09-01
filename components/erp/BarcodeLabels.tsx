@@ -415,7 +415,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         const bmp = await renderDocToTSPL(approvedDoc, g.fill, dp);
         const r = await fetch("/api/erp/labels/print-raster", {
           method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed, density: Math.max(Number(density) || 8, 12), ...bmp }),
+          // Image labels have large solid black areas → print SLOW + moderate density
+          // so the thermal head cools between rows (fast/too-dark = ghosting/blur).
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: approvedDoc.w, h: approvedDoc.h, copies: g.count, skuCode: g.sku, speed: 2, density: 10, ...bmp }),
         });
         const d = await r.json();
         if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }
