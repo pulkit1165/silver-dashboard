@@ -88,11 +88,13 @@ function drawText(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, 
   const boxX = el.x * dp, boxY = el.y * dp, boxW = el.w * dp;
   const setFont = (mm: number) => { ctx.font = `${el.italic ? "italic " : ""}${el.bold ? "700 " : "400 "}${Math.max(4, mm * dp * 1.33)}px "${el.font || "Arial"}", sans-serif`; };
   const lh = (mm: number) => mm * dp * 1.33 * (el.lineh ?? 1.15);
+  // The NAME always auto-fits (it's the field with wildly varying length); other
+  // fields auto-fit only if the operator turned it on. AUTO-FIT shrinks the font
+  // until the wrapped text fits the box height, so a long name can never overflow
+  // its box and overprint the QR / MRP / address. Never grows past the chosen size.
+  const doFit = el.fit === true || el.field === "name";
   let sMM = el.sizeMM ?? 3;
-  // AUTO-FIT: shrink the font until the wrapped text fits the box height, so a very
-  // long name (or any field) always fits its box instead of being cut off. Width is
-  // already handled by wrapping/hard-breaking. Never grows past the chosen size.
-  if (el.fit && (el.h || 0) > 0) {
+  if (doFit && (el.h || 0) > 0) {
     for (; sMM > 1.2; sMM -= 0.1) {
       setFont(sMM);
       if (wrapText(ctx, raw, boxW).length * lh(sMM) <= el.h * dp + 0.5) break;
@@ -101,7 +103,7 @@ function drawText(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFill, 
   setFont(sMM);
   const lineH = lh(sMM);
   const lines = wrapText(ctx, raw, boxW);
-  const boxH = el.fit ? el.h * dp : Math.max((el.h || 0) * dp, lineH * lines.length);
+  const boxH = doFit ? el.h * dp : Math.max((el.h || 0) * dp, lineH * lines.length);
   // CLIP to the element's box so text never spills into its neighbours or off-label.
   ctx.save();
   ctx.beginPath(); ctx.rect(boxX, boxY, boxW, boxH); ctx.clip();
@@ -126,12 +128,18 @@ async function drawQr(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFi
   const x = el.x * dp, y = el.y * dp;
   const svg = fill.qrSvg;
   if (svg) {
+    // base64 (with proper UTF-8) is the reliable way to load an SVG into an <img>;
+    // the old ";utf8," data-URL silently failed to load in Chrome → no QR printed.
     let img = qrImgCache.get(svg);
-    if (!img) { img = await loadImg("data:image/svg+xml;utf8," + encodeURIComponent(svg)); qrImgCache.set(svg, img); }
+    if (!img) {
+      const b64 = typeof btoa === "function" ? btoa(unescape(encodeURIComponent(svg))) : "";
+      img = await loadImg("data:image/svg+xml;base64," + b64);
+      qrImgCache.set(svg, img);
+    }
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(img, x, y, box, box);
   } else {
-    // placeholder checker when no QR data (editor with no SKU chosen)
+    // placeholder checker ONLY in the editor when no SKU is loaded (never at print).
     ctx.strokeStyle = "#000"; ctx.strokeRect(x, y, box, box);
     const n = 6, c = box / n;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((i + j) % 2 === 0) ctx.fillRect(x + i * c, y + j * c, c, c);
