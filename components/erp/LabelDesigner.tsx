@@ -116,13 +116,30 @@ export default function LabelDesigner() {
   };
   const removeSel = () => { if (!sel) return; setDoc((d) => ({ ...d, elements: d.elements.filter((e) => e.id !== sel.id) })); setSelId(null); };
   const dupeSel = () => { if (!sel) return; const c = { ...sel, id: Math.random().toString(36).slice(2, 9), x: sel.x + 2, y: sel.y + 2 }; setDoc((d) => ({ ...d, elements: [...d.elements, c] })); setSelId(c.id); };
+  // free vertical space below an element (down to the next element or the label edge)
+  const spaceBelow = (el: DesignEl): number => {
+    let limit = doc.h;
+    for (const o of doc.elements) {
+      if (o.id === el.id) continue;
+      if (o.x < el.x + el.w && o.x + o.w > el.x && o.y >= el.y) limit = Math.min(limit, o.y);
+    }
+    return Math.max(1, limit - el.y - 0.3);
+  };
+  // Set the font size. With Auto-fit ON the text can only be as tall as the box, so
+  // we also GROW the box downward into any free space (never over the next element).
+  const applySize = (mm: number) => {
+    if (!sel) return;
+    if (sel.fit === false) { updateSel({ sizeMM: mm }); return; }
+    const oneLine = mm * 1.33 * (sel.lineh ?? 1.15) + 0.4; // mm one line needs
+    updateSel({ sizeMM: mm, h: Math.max(sel.h, Math.min(spaceBelow(sel), oneLine)) });
+  };
   // scale the selected text up/down through the size list (the A− / A+ buttons)
   const stepSize = (dir: 1 | -1) => {
     if (!sel) return;
     const cur = sel.sizeMM ?? 3;
     let i = 0, best = Infinity;
     SIZE_CHOICES_MM.forEach((s, idx) => { const d = Math.abs(s - cur); if (d < best) { best = d; i = idx; } });
-    updateSel({ sizeMM: SIZE_CHOICES_MM[clamp(i + dir, 0, SIZE_CHOICES_MM.length - 1)] });
+    applySize(SIZE_CHOICES_MM[clamp(i + dir, 0, SIZE_CHOICES_MM.length - 1)]);
   };
 
   // ── drag / resize (pointer) ───────────────────────────────────────────────
@@ -336,7 +353,7 @@ export default function LabelDesigner() {
                   <label className="text-xs font-bold text-[var(--muted)]">Text size</label>
                   <div className="flex items-center gap-1">
                     <button onClick={() => stepSize(-1)} title="Smaller" className="rounded border border-[var(--border)] px-2 py-1 text-sm font-bold">A−</button>
-                    <select value={SIZE_CHOICES_MM.includes(sel.sizeMM ?? 3) ? (sel.sizeMM ?? 3) : ""} onChange={(e) => updateSel({ sizeMM: Number(e.target.value) })} className="flex-1 rounded-lg border border-[var(--border)] px-2 py-1">
+                    <select value={SIZE_CHOICES_MM.includes(sel.sizeMM ?? 3) ? (sel.sizeMM ?? 3) : ""} onChange={(e) => applySize(Number(e.target.value))} className="flex-1 rounded-lg border border-[var(--border)] px-2 py-1">
                       {!SIZE_CHOICES_MM.includes(sel.sizeMM ?? 3) && <option value="">{(sel.sizeMM ?? 3).toFixed(1)} mm</option>}
                       {SIZE_CHOICES_MM.map((s) => <option key={s} value={s}>{s} mm</option>)}
                     </select>
@@ -353,7 +370,7 @@ export default function LabelDesigner() {
                     <input type="checkbox" checked={!!sel.fit} onChange={(e) => updateSel({ fit: e.target.checked })} />
                     Auto‑fit — shrink long text to the box
                   </label>
-                  {sel.fit && <p className="text-[11px] text-[var(--muted)]">Size above is the MAX; long values shrink to fit this box, short ones stay big.</p>}
+                  {sel.fit && <p className="text-[11px] text-[var(--muted)]">Auto-fit ON: size is the MAX and the box grows into free space. For a bigger fixed size, <b>uncheck Auto-fit</b> — or drag the box taller / move the box below it down.</p>}
                 </>
               )}
 
