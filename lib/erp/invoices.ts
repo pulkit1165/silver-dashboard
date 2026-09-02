@@ -41,6 +41,7 @@ export interface InvoiceRow {
   irn: string;
   ack_no: string;
   ewb_no: string;
+  ewb_valid_until: string;
   created_by: string | null;
   created_at: string;
 }
@@ -85,13 +86,14 @@ export interface CompanySettings {
   invoice_prefix: string;
   invoice_next_no: number;
   terms: string;
+  ewb_threshold: number;
 }
 
 const COMPANY_DEFAULT: CompanySettings = {
   id: 1, legal_name: "SILVER INDUSTRIES", trade_name: "", gstin: "", state_code: "",
   address: "", city: "", pincode: "", phone: "", email: "", msme_no: "",
   bank_name: "", bank_account: "", bank_ifsc: "", bank_branch: "",
-  invoice_prefix: "GC26/", invoice_next_no: 1, terms: "",
+  invoice_prefix: "GC26/", invoice_next_no: 1, terms: "", ewb_threshold: 50000,
 };
 
 // ── Company settings ─────────────────────────────────────────────────────────
@@ -107,18 +109,18 @@ export async function saveCompanySettings(patch: Partial<CompanySettings>): Prom
   await sql`
     INSERT INTO company_settings (id, legal_name, trade_name, gstin, state_code, address, city,
       pincode, phone, email, msme_no, bank_name, bank_account, bank_ifsc, bank_branch,
-      invoice_prefix, invoice_next_no, terms)
+      invoice_prefix, invoice_next_no, terms, ewb_threshold)
     VALUES (1, ${next.legal_name}, ${next.trade_name}, ${next.gstin}, ${next.state_code},
       ${next.address}, ${next.city}, ${next.pincode}, ${next.phone}, ${next.email}, ${next.msme_no},
       ${next.bank_name}, ${next.bank_account}, ${next.bank_ifsc}, ${next.bank_branch},
-      ${next.invoice_prefix}, ${next.invoice_next_no}, ${next.terms})
+      ${next.invoice_prefix}, ${next.invoice_next_no}, ${next.terms}, ${next.ewb_threshold})
     ON CONFLICT (id) DO UPDATE SET
       legal_name=EXCLUDED.legal_name, trade_name=EXCLUDED.trade_name, gstin=EXCLUDED.gstin,
       state_code=EXCLUDED.state_code, address=EXCLUDED.address, city=EXCLUDED.city,
       pincode=EXCLUDED.pincode, phone=EXCLUDED.phone, email=EXCLUDED.email, msme_no=EXCLUDED.msme_no,
       bank_name=EXCLUDED.bank_name, bank_account=EXCLUDED.bank_account, bank_ifsc=EXCLUDED.bank_ifsc,
       bank_branch=EXCLUDED.bank_branch, invoice_prefix=EXCLUDED.invoice_prefix,
-      invoice_next_no=EXCLUDED.invoice_next_no, terms=EXCLUDED.terms`;
+      invoice_next_no=EXCLUDED.invoice_next_no, terms=EXCLUDED.terms, ewb_threshold=EXCLUDED.ewb_threshold`;
 }
 
 // ── List / read ──────────────────────────────────────────────────────────────
@@ -202,6 +204,9 @@ async function gatherDraft(sql: Sql, soId: number) {
       GROUP BY pl.so_line_id
     ) vp ON vp.so_line_id = l.id
     WHERE l.so_id = ${soId}
+      -- Retailer (K) lines are billed by the other firm, never here.
+      AND NOT COALESCE(l.is_k, false)
+      AND COALESCE((SELECT bill_type FROM sales_orders WHERE id = ${soId}), '') <> 'K'
     ORDER BY l.id`) as unknown as Array<{
     so_line_id: number; sku_id: number; billable: number; sku_code: string; description: string;
     mrp: number; hsn: string; unit: string; gst_rate: number;

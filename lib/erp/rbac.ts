@@ -111,9 +111,18 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
+        label: "GST Compliance", icon: "🧮",
+        children: [
+          { href: "/erp/gst/gstr1", label: "GSTR-1 Export", icon: "📤", roles: ["admin", "accounts"] },
+          { href: "/erp/gst/eway-bills", label: "e-Way Bills", icon: "🚛", roles: ["admin", "accounts", "sales", "dispatch"] },
+          { href: "/erp/gst/gstr2b", label: "GSTR-2B Reconcile", icon: "🔗", roles: ["admin", "accounts"] },
+        ],
+      },
+      {
         label: "Administration", icon: "⚿",
         children: [
           { href: "/erp/users", label: "Users & Roles", icon: "⚿", roles: ["admin"] },
+          { href: "/erp/masters/company", label: "Company Settings", icon: "🏢", roles: ["admin"] },
           { href: "/connection", label: "Oracle Link", icon: "⚙", roles: ["admin", "accounts"] },
         ],
       },
@@ -148,11 +157,13 @@ const WRITERS: Record<string, Role[]> = {
   dispatch: ["admin", "dispatch", "warehouse"],
   purchase: ["admin", "purchase"],
   vendors: ["admin", "purchase"],
-  customers: ["admin", "sales"],
+  customers: ["admin", "sales", "accounts"],
   invoices: ["admin", "accounts", "sales"],
   users: ["admin"],
   labels: ["admin", "inventory", "warehouse"],
   rates: ["admin", "sales", "accounts"],
+  company_settings: ["admin"],
+  gst: ["admin", "accounts"],
 };
 
 export function canWrite(role: Role, module: keyof typeof WRITERS): boolean {

@@ -95,7 +95,9 @@ export async function validateToken(rawToken: string) {
   const openOrders = await getSql()`
     SELECT so.so_no, so.status, so.invoice_no, l.qty, l.picked_qty, l.packed_qty, l.dispatched_qty
     FROM so_lines l JOIN sales_orders so ON so.id=l.so_id
-    WHERE l.sku_id=${sku.id} AND so.status IN ('confirmed','picked','packed','partially dispatched')`;
+    WHERE l.sku_id=${sku.id} AND so.status IN ('confirmed','picked','packed','partially dispatched')
+      -- Retailer (K) lines/orders are fulfilled by the other firm — never our queue.
+      AND NOT (COALESCE(so.bill_type,'')='K' OR COALESCE(l.is_k,false))`;
   return { ok: true as const, token, sku: await skuView(sku), openOrders, tier: resolved.tier };
 }
 

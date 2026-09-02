@@ -28,7 +28,10 @@ function unifiedCte(db: ReturnType<typeof getRawSql>) {
            COALESCE(c.name, '—') AS customer,
            COALESCE(NULLIF(so.salesman_name, ''), '') AS salesman,
            COALESCE(so.transporter, '') AS transporter, ''::text AS state,
-           COALESCE(so.total, 0)::float8 AS value,
+           -- On an O/K order, our panel value is only OUR (non-K) portion.
+           (CASE WHEN so.bill_type = 'O/K'
+                 THEN COALESCE(so.total,0) - COALESCE((SELECT SUM(qty * COALESCE(price,0)) FROM so_lines WHERE so_id = so.id AND is_k), 0)
+                 ELSE COALESCE(so.total,0) END)::float8 AS value,
            CASE
              WHEN so.status = 'cancelled' THEN 'cancelled'
              WHEN so.status = 'decoded' THEN 'not-punched'
