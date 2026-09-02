@@ -98,6 +98,7 @@ export const NAV: NavGroup[] = [
         label: "Purchase", icon: "↙",
         children: [
           { href: "/erp/purchase", label: "Purchase Orders", icon: "↙", roles: ["admin", "purchase", "accounts"] },
+          { href: "/erp/purchase/vendor-compare", label: "Vendor Comparison", icon: "⚖", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/grn", label: "Goods Receipts", icon: "📥", roles: ["admin", "purchase", "warehouse", "accounts"] },
           { href: "/erp/vendor-bills", label: "Vendor Bills", icon: "🧾", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/vendors", label: "Vendors", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },

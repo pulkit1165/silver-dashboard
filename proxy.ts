@@ -21,9 +21,13 @@ export async function proxy(req: NextRequest) {
   const isPrintAgent = pathname.startsWith("/api/erp/print/agent/");
   // Public agent installer download (no secrets — the token is entered separately).
   const isAgentDownload = pathname.startsWith("/agent/");
+  // Vercel Cron jobs (and their manual-trigger twins) authenticate with
+  // Authorization: Bearer <CRON_SECRET> inside the route, not a login session —
+  // Vercel's scheduler has no session cookie to send, so this must bypass the gate.
+  const isCronRoute = pathname.startsWith("/api/cron/") || pathname === "/api/sync/oracle";
 
   if (!session) {
-    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook || isPrintAgent || isAgentDownload) return NextResponse.next();
+    if (isLogin || isAuthApi || isPublicExport || isWhatsappWebhook || isPrintAgent || isAgentDownload || isCronRoute) return NextResponse.next();
     if (pathname.startsWith("/api")) {
       return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
     }

@@ -73,3 +73,74 @@ then Neon prod).
 - **Phase 2** — proactive dept-to-dept notifications from `activity_log` + a rule
   table + a scheduler (daily summary, payment-due, reorder). Needs approved templates.
 - **Phase 3** — interactive Approve/Reject buttons that write back to the ERP.
+
+## Phase 2, shipped: low-stock alert to the purchase dept
+
+Daily cron (`vercel.json` → `/api/cron/stock-alerts`, 3:30 UTC = 9:00 AM IST) runs
+`runStockAlertScan()` (`lib/erp/stock-alerts.ts`). Logic:
+- Flags any active SKU where `qty <= reorder_level` (self-creates `stock_alert_state`
+  to track what's already been notified — no `db:push` needed, same pattern as
+  `activity_log`/`print_jobs`).
+- Sends **at most one** WhatsApp template per purchase contact per run, and only
+  when a SKU is newly breached, has escalated (reorder → low → out), or hasn't
+  been re-notified in 24h — never one message per SKU. This is also the main cost
+  lever: Meta bills per 24-hour conversation, not per message, so batching
+  everything into one send per contact per day keeps this to (at most) a handful
+  of billed conversations a day, not one per SKU.
+- The template carries only a count; recipients reply (e.g. "which items?") to
+  get the full list from the existing Ask-AI bot for free, inside the 24h window
+  the template just opened — no second template needed for the detail.
+- Every send is logged to `whatsapp_messages` and one summary row to `activity_log`
+  (`action: "whatsapp.stock_alert"`).
+
+### One-time setup for this feature
+1. **Register purchase-dept numbers** with `role='purchase'` (same table/pattern
+   as above):
+   ```sql
+   INSERT INTO whatsapp_contacts (phone, name, role, opt_in, active)
+   VALUES ('9198XXXXXXXX', 'Purchase — Ramesh', 'purchase', true, true);
+   ```
+   Keep this list small (2–4 numbers) — each additional recipient is its own
+   billable conversation every time an alert fires.
+2. **Create the Meta message template** — WhatsApp Manager → Message Templates →
+   Create:
+   - **Category: Utility.** This is the single biggest cost lever. A stock-level
+     alert to your own staff is a legitimate operational/utility notification —
+     do *not* let it get filed as Marketing, which Meta prices noticeably higher.
+   - **Name:** `low_stock_alert` (must match `WHATSAPP_STOCK_ALERT_TEMPLATE`,
+     defaults to this if unset).
+   - **Language:** English (`en`) — set `WHATSAPP_STOCK_ALERT_LANG` if you pick
+     a different one.
+   - **Body** (keep it short and low-variable — templates with a long/dynamic-
+     looking variable, e.g. a stuffed SKU list, are the ones Meta tends to reject
+     or query on review):
+     ```
+     ⚠️ Stock Alert: {{1}} item(s) are at or below reorder level as of {{2}}.
+     Reply and ask "which items" for the full list.
+     ```
+     (`{{1}}` = count, `{{2}}` = date — exactly what `runStockAlertScan()` sends.)
+   - Submit for review (usually minutes, occasionally up to ~24h).
+3. **Set `skus.reorder_level`** for the SKUs you want covered — the alert is
+   silent for any SKU where it's still 0 (the import default), by design (avoids
+   an alert flood on a catalogue where most items were never given a threshold).
+
+### Keeping WhatsApp cost as low as possible, generally
+- **Utility, not Marketing, category** for anything operational — biggest lever,
+  see above.
+- **One conversation window per recipient per period**, not per event — Meta
+  bills per 24h window for template-opened conversations, so batch triggers
+  instead of firing a template per SKU/event (this is why the digest above is
+  built the way it is; apply the same rule to any future Phase 2 notification).
+- **Small, fixed recipient lists** — a role-scoped `whatsapp_contacts` row set
+  (e.g. `role='purchase'`), not a broadcast to all staff.
+- **Push detail into free-form replies**, not more templates — a reply inside
+  the 24h window a template just opened is free and can go through the existing
+  Ask-AI bot; only pay for the template that starts the conversation.
+- **Direct Meta Cloud API** (already the architecture here) — a BSP layer
+  (Twilio/Gupshup/etc.) adds its own per-message markup on top of Meta's rate;
+  staying direct avoids that entirely.
+- **Test against a Meta test number** during template development so iterating
+  on wording doesn't burn paid conversations on the production number.
+- Meta's exact per-category/per-country rates change over time — check the live
+  card in WhatsApp Manager → Account Tools → Pricing before relying on a number
+  from anywhere else, including this doc.

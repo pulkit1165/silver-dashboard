@@ -129,8 +129,28 @@ export const vendors = pgTable("vendors", {
   paymentTerms: text("payment_terms"),
   rating: doublePrecision("rating").default(0),
   status: text("status").default("pending"),
+  // Sourcing/service overrides (auto lead time comes from PO→GRN history later).
+  leadDays: integer("lead_days"),
+  creditDays: integer("credit_days"),
   createdAt: createdAt(),
 });
+
+// Vendor catalog: each vendor's items + their cost price (CP). Many vendors can
+// carry the same SKU at different CPs → the basis for vendor comparison/sourcing.
+export const vendorItems = pgTable(
+  "vendor_items",
+  {
+    id: serial("id").primaryKey(),
+    vendorId: integer("vendor_id").notNull(),
+    skuId: integer("sku_id").notNull(),
+    cp: doublePrecision("cp").default(0),
+    moq: doublePrecision("moq").default(0),
+    note: text("note").default(""),
+    updatedBy: text("updated_by"),
+    updatedAt: text("updated_at").default(sql`now()`),
+  },
+  (t) => ({ uniq: uniqueIndex("vendor_items_uniq").on(t.vendorId, t.skuId), bySku: index("vendor_items_sku_idx2").on(t.skuId) }),
+);
 
 export const customers = pgTable("customers", {
   id: serial("id").primaryKey(),
