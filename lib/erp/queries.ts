@@ -532,7 +532,7 @@ export async function createSalesOrder(input: {
   source?: string;
   lines: Array<{
     skuId: number; qty: number; price: number;
-    mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
+    mrp?: number; discountPct?: number; rateType?: string; focQty?: number; isK?: boolean;
   }>;
 }): Promise<(SalesOrder & { lines: SoLine[] }) | CreditLimitExceeded> {
   const sql = getSql();
@@ -574,9 +574,9 @@ export async function createSalesOrder(input: {
       ${input.salesmanId ?? null}, ${input.source ?? "manual"})
     RETURNING id`;
   for (const l of input.lines) {
-    await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
+    await sql`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty, is_k)
       VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price}, ${l.mrp ?? l.price}, ${l.discountPct ?? 0},
-        ${l.rateType ?? "MRP"}, ${l.focQty ?? 0})`;
+        ${l.rateType ?? "MRP"}, ${l.focQty ?? 0}, ${l.isK ?? false})`;
   }
   return (await getSalesOrder(so.id as number))!;
 }

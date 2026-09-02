@@ -66,6 +66,7 @@ export async function POST(req: Request) {
       discountPct: l.discount_pct != null ? Number(l.discount_pct) : undefined,
       rateType: typeof l.rate_type === "string" ? l.rate_type : undefined,
       focQty: l.foc_qty != null ? Number(l.foc_qty) : undefined,
+      isK: l.is_k === true,
     })),
   });
   if ("error" in result && result.error === "CREDIT_LIMIT_EXCEEDED") {

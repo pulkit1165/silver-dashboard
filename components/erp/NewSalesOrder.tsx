@@ -23,18 +23,19 @@ interface Line {
   itemRates: RateRow[];
   partyRates: RateRow[];
   loadingRates: boolean;
+  isK: boolean; // O/K split: this line belongs to the other firm (K)
 }
 
 const emptyLine = (): Line => ({
   skuId: null, qty: 1, price: 0, rateType: "MRP", netApplied: false, focQty: 0,
-  itemRates: [], partyRates: [], loadingRates: false,
+  itemRates: [], partyRates: [], loadingRates: false, isK: false,
 });
 
 export default function NewSalesOrder({ customers, skus }: { customers: CustomerOption[]; skus: SkuOption[] }) {
   const router = useRouter();
   const [customerId, setCustomerId] = useState<number | null>(null);
   const [orderDate, setOrderDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [billType, setBillType] = useState("K");
+  const [billType, setBillType] = useState("O"); // default OURS; pick K / O/K to route to the retailer firm
   const [remarks, setRemarks] = useState("");
   const [lines, setLines] = useState<Line[]>([emptyLine()]);
   const [busy, setBusy] = useState(false);
@@ -188,6 +189,8 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
             return {
               sku_id: l.skuId, qty: l.qty, price: l.price,
               mrp, discount_pct: discountPct, rate_type: l.rateType, foc_qty: l.focQty,
+              // whole-K order → every line is K; O/K → per-line tick; O → none
+              is_k: billType === "K" ? true : billType === "O/K" ? !!l.isK : false,
             };
           }),
         }),
@@ -312,6 +315,15 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     title="Free of cost / promotional quantity"
                   />
                 </F>
+                {billType === "O/K" && (
+                  <F label="Firm">
+                    <button type="button" onClick={() => updateLine(idx, { isK: !line.isK })}
+                      title="Tick K to route this item to the Silver Retailer Network (the other firm)"
+                      className={`${inp} font-bold ${line.isK ? "bg-[var(--danger)] text-white" : "bg-[var(--surface-2)]"}`}>
+                      {line.isK ? "K · retailer" : "O · ours"}
+                    </button>
+                  </F>
+                )}
                 <div className="flex items-end justify-between gap-2">
                   <div className="text-sm font-bold">₹{(line.qty * line.price).toFixed(2)}</div>
                   {lines.length > 1 && (
