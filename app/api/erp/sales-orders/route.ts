@@ -17,6 +17,7 @@ interface LineInput {
   discount_pct?: unknown;
   rate_type?: unknown;
   foc_qty?: unknown;
+  is_k?: unknown;
 }
 
 export async function POST(req: Request) {
