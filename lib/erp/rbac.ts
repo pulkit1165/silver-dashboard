@@ -134,7 +134,11 @@ export function isFolder(e: NavEntry): e is NavFolder {
   return (e as NavFolder).children !== undefined;
 }
 
+// External/restricted roles (the retailer firm) see ONLY pages that name them
+// explicitly — never the "all" pages (dashboard, activity, etc.).
+const RESTRICTED: Role[] = ["retailer"];
 export function canSee(role: Role, item: NavItem): boolean {
+  if (RESTRICTED.includes(role)) return item.roles !== "all" && item.roles.includes(role);
   return item.roles === "all" || item.roles.includes(role);
 }
 

@@ -33,9 +33,21 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // The retailer firm is locked to the Silver Retailer Network panel only — no
+  // access to the rest of the ERP (dashboard, other orders, masters, etc.).
+  const RETAILER_HOME = "/erp/sales/silver-retailer-network";
+  const isRetailer = session.role === "retailer";
+
   if (isLogin) {
     const url = req.nextUrl.clone();
-    url.pathname = "/erp";
+    url.pathname = isRetailer ? RETAILER_HOME : "/erp";
+    url.search = "";
+    return NextResponse.redirect(url);
+  }
+  if (isRetailer && !pathname.startsWith(RETAILER_HOME) && !pathname.startsWith("/api/erp/auth/")) {
+    if (pathname.startsWith("/api")) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+    const url = req.nextUrl.clone();
+    url.pathname = RETAILER_HOME;
     url.search = "";
     return NextResponse.redirect(url);
   }
