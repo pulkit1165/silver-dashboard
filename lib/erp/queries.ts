@@ -476,7 +476,8 @@ async function ensureSalesOrderCols() {
       ADD COLUMN IF NOT EXISTS discount_pct double precision DEFAULT 0,
       ADD COLUMN IF NOT EXISTS rate_type text DEFAULT 'MRP',
       ADD COLUMN IF NOT EXISTS foc_qty double precision DEFAULT 0,
-      ADD COLUMN IF NOT EXISTS cancelled_qty double precision DEFAULT 0`);
+      ADD COLUMN IF NOT EXISTS cancelled_qty double precision DEFAULT 0,
+      ADD COLUMN IF NOT EXISTS is_k boolean DEFAULT false`);
     soColsEnsured = true;
   } catch { /* columns may already exist (drizzle push) — ignore */ }
 }

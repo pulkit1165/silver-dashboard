@@ -43,6 +43,8 @@ function unifiedCte(db: ReturnType<typeof getRawSql>) {
                            FROM so_lines WHERE so_id = so.id) q)
            END AS status_key
       FROM sales_orders so LEFT JOIN customers c ON c.id = so.customer_id
+      -- A whole 'K' order belongs to the other firm → never shown on our panel.
+      WHERE COALESCE(so.bill_type,'') <> 'K'
     UNION ALL
     -- Legacy Oracle orders (VW_SALE_D header + transporter from the GST line view)
     SELECT sd.data->>'TRMID', sd.data->>'TRMID', 'oracle'::text,

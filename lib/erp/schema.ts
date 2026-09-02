@@ -321,6 +321,10 @@ export const soLines = pgTable("so_lines", {
   discountPct: doublePrecision("discount_pct").default(0),
   rateType: text("rate_type").default("MRP"),
   focQty: doublePrecision("foc_qty").default(0),
+  // This line belongs to the OTHER firm (K) — used on O/K split orders. Whole-order
+  // K is expressed by sales_orders.bill_type='K'. K lines route to the Silver
+  // Retailer Network panel, are hidden from our Sales panel, and aren't billed here.
+  isK: boolean("is_k").default(false),
 });
 
 // A "case" (carton/box) that items get packed into for dispatch. package_no holds

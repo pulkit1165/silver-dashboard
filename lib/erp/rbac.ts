@@ -1,10 +1,10 @@
 // Roles, module access, and the ERP navigation map (single source of truth).
 export type Role =
   | "admin" | "sales" | "purchase" | "inventory" | "warehouse"
-  | "dispatch" | "accounts" | "vendor" | "viewer";
+  | "dispatch" | "accounts" | "vendor" | "retailer" | "viewer";
 
 export const ROLES: Role[] = [
-  "admin", "sales", "purchase", "inventory", "warehouse", "dispatch", "accounts", "vendor", "viewer",
+  "admin", "sales", "purchase", "inventory", "warehouse", "dispatch", "accounts", "vendor", "retailer", "viewer",
 ];
 
 // A leaf is a single page (a link). A folder is a module that opens a flyout
@@ -86,6 +86,7 @@ export const NAV: NavGroup[] = [
         label: "Sales", icon: "↗",
         children: [
           { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
+          { href: "/erp/sales/silver-retailer-network", label: "Silver Retailer Network", icon: "🤝", roles: ["admin", "sales", "accounts", "retailer"] },
           { href: "/erp/sales/decode", label: "Upload / Decode Order", icon: "⬆", roles: ["admin", "sales"] },
           { href: "/erp/sales/decoded", label: "Decode Orders", icon: "📥", roles: ["admin", "sales"] },
           { href: "/erp/deliveries", label: "Delivery Orders", icon: "🚚", roles: ["admin", "sales", "dispatch", "warehouse", "accounts"] },
