@@ -1,7 +1,7 @@
 import PageHeader from "@/components/PageHeader";
 import VendorCatalogTools from "@/components/erp/VendorCatalogTools";
 import { getGroupVendorMatrix, getVendorGroupMatrix, getPricedGroups } from "@/lib/erp/vendorCatalog";
-import { listVendors } from "@/lib/erp/queries";
+import { getVendors } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +13,7 @@ export default async function VendorComparePage() {
   if (!ALLOWED.has(user.role)) return <><PageHeader title="Vendor Comparison" /><p className="text-sm text-[var(--muted)]">No access.</p></>;
 
   const [vendors, groups, gvm, vgm] = await Promise.all([
-    listVendors(), getPricedGroups(), getGroupVendorMatrix(), getVendorGroupMatrix(),
+    getVendors(), getPricedGroups(), getGroupVendorMatrix(), getVendorGroupMatrix(),
   ]);
 
   // group → vendors, sorted by group
