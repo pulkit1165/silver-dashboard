@@ -86,6 +86,46 @@ export async function sendText(to: string, body: string): Promise<{ ok: boolean;
   }
 }
 
+// ── Outbound: send a template message ────────────────────────────────────────
+// Required for any BUSINESS-initiated message (proactive alerts) sent outside
+// the 24h window since the recipient's last inbound message — sendText() alone
+// will fail (error 131047) once that window has closed. The template must be
+// pre-created and approved in Meta's WhatsApp Manager (category, wording, and
+// variable count are fixed there; bodyParams fill {{1}}, {{2}}, … in order).
+export async function sendTemplate(
+  to: string,
+  templateName: string,
+  languageCode: string,
+  bodyParams: string[] = [],
+): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if (!whatsappConfigured()) return { ok: false, error: "WhatsApp not configured" };
+  const url = `https://graph.facebook.com/${GRAPH_VERSION}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        recipient_type: "individual",
+        to,
+        type: "template",
+        template: {
+          name: templateName,
+          language: { code: languageCode },
+          ...(bodyParams.length
+            ? { components: [{ type: "body", parameters: bodyParams.map((text) => ({ type: "text", text })) }] }
+            : {}),
+        },
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { messages?: Array<{ id: string }>; error?: { message?: string } };
+    if (!res.ok) return { ok: false, error: data?.error?.message ?? `HTTP ${res.status}` };
+    return { ok: true, id: data?.messages?.[0]?.id };
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message || e).slice(0, 300) };
+  }
+}
+
 // ── Contacts ─────────────────────────────────────────────────────────────────
 export interface WaContact { id: number; phone: string; user_id: number | null; name: string | null; role: string; opt_in: boolean; active: boolean }
 

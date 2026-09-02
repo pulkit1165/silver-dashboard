@@ -168,6 +168,7 @@ const WRITERS: Record<string, Role[]> = {
   rates: ["admin", "sales", "accounts"],
   company_settings: ["admin"],
   gst: ["admin", "accounts"],
+  eway_bills: ["admin", "accounts", "sales", "dispatch"],
 };
 
 export function canWrite(role: Role, module: keyof typeof WRITERS): boolean {

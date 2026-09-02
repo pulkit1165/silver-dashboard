@@ -21,6 +21,7 @@ interface Company {
   legal_name: string; trade_name: string; gstin: string; state_code: string; address: string;
   city: string; pincode: string; phone: string; email: string; msme_no: string;
   bank_name: string; bank_account: string; bank_ifsc: string; bank_branch: string; terms: string;
+  ewb_threshold: number;
 }
 export interface InvoiceFullProps {
   invoice: InvoiceRow; lines: LineRow[]; company: Company; amountInWords: string;
@@ -110,9 +111,18 @@ export default function InvoiceEditor({ data, canEdit }: { data: InvoiceFullProp
   }
 
   const interState = computed.taxType === "IGST";
+  const needsEwb = computed.grandTotal > (company.ewb_threshold || 50000);
+  const ewbIncomplete = needsEwb && (!hdr.vehicleNo.trim() && !hdr.transporter.trim());
 
   return (
     <>
+      {editable && needsEwb && (
+        <div className="no-print mb-4 rounded-lg border border-dashed border-amber-500 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          ⚠ This invoice is over the e-way bill threshold (₹{(company.ewb_threshold || 50000).toLocaleString("en-IN")}) —
+          {ewbIncomplete ? " fill in transporter/vehicle details below, then " : " "}
+          generate the e-way bill from the <a href="/erp/gst/eway-bills" className="underline">e-Way Bills</a> screen after finalizing.
+        </div>
+      )}
       {/* ── Editor toolbar (screen only) ──────────────────────────────── */}
       <div className="no-print mb-4 flex flex-wrap items-center gap-3">
         <button onClick={() => window.print()} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">🖨 Print / PDF</button>

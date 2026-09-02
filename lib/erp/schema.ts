@@ -152,8 +152,14 @@ export const customers = pgTable("customers", {
   // and is also this party's standing discount % off MRP for Sales Orders.
   discountClassId: integer("discount_class_id"),
   discountPct: doublePrecision("discount_pct"),
+  // Party-wise pricing waterfall extras (lib/erp/party-masters.ts): OGL% and
+  // FOC% mirrors, live-updated from party_ogl_history / party_foc_history.
+  oglPct: doublePrecision("ogl_pct").default(0),
+  focPct: doublePrecision("foc_pct").default(0),
   creditLimit: doublePrecision("credit_limit").default(0),
   paymentTerms: text("payment_terms"),
+  oraclePartyId: integer("oracle_party_id"),
+  specialNotes: text("special_notes").default(""),
   createdAt: createdAt(),
 });
 
@@ -285,6 +291,12 @@ export const salesOrders = pgTable("sales_orders", {
   // regardless of GST slab (this business doesn't discount by slab).
   billType: text("bill_type").default(""),
   discPct: doublePrecision("disc_pct").default(0),
+  // Legacy per-GST-slab discount columns from an earlier pricing design,
+  // unreferenced by any current code (discPct above now applies uniformly
+  // regardless of slab). Declared here only so a schema push doesn't drop
+  // them; safe to formally retire in a separate cleanup pass.
+  discPct18: doublePrecision("disc_pct_18").default(0),
+  discPct28: doublePrecision("disc_pct_28").default(0),
   remarks: text("remarks").default(""),
   // Who booked the order (users.id) and how it was captured (manual | decode |
   // import). Both are also created idempotently by ensureSalesOrderCols() in

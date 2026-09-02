@@ -97,12 +97,27 @@ const COMPANY_DEFAULT: CompanySettings = {
 };
 
 // ── Company settings ─────────────────────────────────────────────────────────
+// GST billing added ewb_threshold after the original db:push for this module;
+// the local/prod DB may predate it, so self-migrate idempotently (mirrors
+// ensureCustomerCols() in queries.ts) instead of requiring another db:push.
+let companySettingsColsEnsured = false;
+async function ensureCompanySettingsCols() {
+  if (companySettingsColsEnsured) return;
+  try {
+    await getSql().unsafe(`ALTER TABLE company_settings
+      ADD COLUMN IF NOT EXISTS ewb_threshold double precision DEFAULT 50000`);
+    companySettingsColsEnsured = true;
+  } catch { /* ignore */ }
+}
+
 export async function getCompanySettings(): Promise<CompanySettings> {
+  await ensureCompanySettingsCols();
   const [row] = await getSql()`SELECT * FROM company_settings ORDER BY id LIMIT 1`;
   return (row as CompanySettings | undefined) ?? COMPANY_DEFAULT;
 }
 
 export async function saveCompanySettings(patch: Partial<CompanySettings>): Promise<void> {
+  await ensureCompanySettingsCols();
   const sql = getSql();
   const cur = await getCompanySettings();
   const next = { ...cur, ...patch };

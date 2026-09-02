@@ -3,13 +3,7 @@
 import { useMemo, useState } from "react";
 import { GST_STATE_CODES, gstStateName } from "@/lib/erp/gst-states";
 import type { DiscountClassRow } from "@/lib/erp/discount-classes";
-
-type Customer = {
-  id: number; code: string; name: string; gst: string; email: string; phone: string;
-  billing: string; credit_limit: number; payment_terms: string;
-  state_code: string | null; pos_state_code: string | null; pincode: string | null;
-  discount_class_id: number | null; discount_pct: number | null;
-};
+import type { Customer } from "@/lib/erp/types";
 
 export default function CustomerGstManager({
   customers: initial, discountClasses: initialClasses, editable,

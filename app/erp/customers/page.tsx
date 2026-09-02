@@ -1,7 +1,9 @@
 import PageHeader from "@/components/PageHeader";
 import ListFilters from "@/components/erp/ListFilters";
 import UploadMasterLink from "@/components/erp/UploadMasterLink";
+import CustomerGstManager from "@/components/erp/CustomerGstManager";
 import { getCustomers } from "@/lib/erp/queries";
+import { listDiscountClasses } from "@/lib/erp/discount-classes";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
@@ -14,35 +16,17 @@ export default async function CustomersPage({
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const rows = await getCustomers(sp.q);
+  const [rows, discountClasses] = await Promise.all([getCustomers(sp.q), listDiscountClasses()]);
+  const editable = canWrite(user.role, "customers");
   return (
     <>
       <PageHeader
         title="Customers"
-        subtitle="Customer master with GST, credit limit and payment terms."
-        right={canWrite(user.role, "customers") ? <UploadMasterLink master="customers" /> : undefined}
+        subtitle="Customer master with GST, discount class, credit limit and payment terms."
+        right={editable ? <UploadMasterLink master="customers" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
-      <section className="panel">
-        <div className="overflow-x-auto">
-          <table className="rtable">
-            <thead><tr><th>Code</th><th>Name</th><th>GST</th><th>Contact</th><th>Billing</th><th className="!text-right">Credit limit</th><th>Terms</th></tr></thead>
-            <tbody>
-              {rows.map((c) => (
-                <tr key={c.id}>
-                  <td className="font-mono text-xs">{c.code}</td>
-                  <td className="font-semibold">{c.name}</td>
-                  <td className="font-mono text-xs">{c.gst}</td>
-                  <td className="text-xs">{c.email}<br />{c.phone}</td>
-                  <td className="text-xs text-[var(--muted)]">{c.billing}</td>
-                  <td className="num-cell">{c.credit_limit.toLocaleString("en-IN")}</td>
-                  <td>{c.payment_terms}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <CustomerGstManager customers={rows} discountClasses={discountClasses} editable={editable} />
     </>
   );
 }

@@ -6,25 +6,16 @@ import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
 
-// Two write paths share this route:
-//  - rate-master style: { discount_pct } only, from PartyPctMaster — gated on
-//    the narrower "rates" permission (unchanged, pre-existing behaviour).
-//  - full customer edit: any of the GST master fields below — gated on the
-//    broader "customers" permission (adds accounts alongside admin/sales).
-const GST_FIELDS = ["gst", "state_code", "pos_state_code", "pincode", "discount_class_id"] as const;
-
+// Customer master edit — GSTIN, state, place of supply, discount class and
+// the standing discount % override. Gated on "customers" (admin/sales/accounts).
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!canWrite(user.role, "customers")) {
+    return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit customers.` }, { status: 403 });
+  }
   const { id } = await params;
   const b = await req.json().catch(() => ({}));
-
-  const touchesGstFields = GST_FIELDS.some((k) => b[k] !== undefined);
-  const touchesRateOnly = b.discount_pct !== undefined && !touchesGstFields;
-
-  if (touchesRateOnly ? !canWrite(user.role, "rates") : !canWrite(user.role, "customers")) {
-    return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit this.` }, { status: 403 });
-  }
 
   const sql = getSql();
   const set: Record<string, unknown> = {};

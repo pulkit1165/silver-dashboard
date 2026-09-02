@@ -74,6 +74,9 @@ export interface Customer {
   discount_pct: number | null; discount_class_id: number | null;
   ogl_pct?: number | null;  // party-wise OGL % (extra party discount)
   foc_pct?: number | null;  // party-wise FOC % (applied last, on top of everything)
+  state_code: string | null;      // buyer's GST state (2-digit) — decides IGST vs CGST/SGST
+  pos_state_code: string | null;  // place of supply (defaults to state_code)
+  pincode: string | null;
 }
 export interface PurchaseOrder {
   id: number; po_no: string; vendor_id: number; status: string; order_date: string;
