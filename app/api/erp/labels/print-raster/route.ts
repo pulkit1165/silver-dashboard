@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const name = printerId.slice(printerId.indexOf("::") + 2);
   const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
   const hires = dpi >= 280;
-  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 2;
+  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 3;
 
   const raw = Buffer.from(bytesB64, "base64");
   if (raw.length !== widthBytes * heightDots)
@@ -53,13 +53,21 @@ export async function POST(req: Request) {
     [`SIZE ${w} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`,
      `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, `BITMAP 0,0,${widthBytes},${heightDots},0,`].join("\r\n"),
     "ascii");
-  const trailer = Buffer.from(`\r\nPRINT 1,1\r\n`, "ascii");
-  const tspl_b64 = Buffer.concat([header, raw, trailer]).toString("base64");
 
-  // One job per copy → the STOP button can cancel the remainder.
-  const jobs = Array.from({ length: copies }, () => ({ title: `Design label ${skuCode || ""}`.trim(), tspl_b64 }));
+  // SPEED: send the bitmap ONCE per job and let the printer stamp out up to CHUNK
+  // copies from it (PRINT 1,n) instead of re-sending the whole picture per label.
+  // Chunking keeps some STOP granularity for very large runs.
+  const CHUNK = 25;
+  const jobs: { title: string; tspl_b64: string }[] = [];
+  let remaining = copies;
+  while (remaining > 0) {
+    const n = Math.min(CHUNK, remaining);
+    const trailer = Buffer.from(`\r\nPRINT 1,${n}\r\n`, "ascii");
+    jobs.push({ title: `Design label ${skuCode || ""}`.trim(), tspl_b64: Buffer.concat([header, raw, trailer]).toString("base64") });
+    remaining -= n;
+  }
   const ids = await enqueueJobs(printerId, jobs, user.name);
 
-  logActivity({ actor: user.name, actorRole: user.role, action: "label.print.raster", entity: "label_design", entityId: skuCode || printerId, summary: `Printed ${ids.length} image label(s) · ${w}×${h} · ${skuCode}` });
-  return NextResponse.json({ ok: true, queued: ids.length, ids });
+  logActivity({ actor: user.name, actorRole: user.role, action: "label.print.raster", entity: "label_design", entityId: skuCode || printerId, summary: `Printed ${copies} image label(s) · ${w}×${h} · ${skuCode}` });
+  return NextResponse.json({ ok: true, queued: copies, jobs: ids.length, ids });
 }
