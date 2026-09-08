@@ -19,6 +19,9 @@ export interface InvoiceRow {
   buyer_name: string;
   buyer_gstin: string;
   buyer_state_code: string;
+  buyer_address: string;
+  buyer_phone: string;
+  buyer_po_no: string;
   pos_state_code: string;
   seller_state_code: string;
   tax_type: string;
@@ -37,9 +40,15 @@ export interface InvoiceRow {
   lr_no: string;
   lr_date: string;
   distance_km: number | null;
+  freight_term: string;
+  pvt_mark: string;
+  case_count: number | null;
+  booked_by: string;
   notes: string;
   irn: string;
   ack_no: string;
+  ack_date: string;
+  qr_payload: string;
   ewb_no: string;
   ewb_valid_until: string;
   created_by: string | null;
@@ -110,6 +119,27 @@ async function ensureCompanySettingsCols() {
   } catch { /* ignore */ }
 }
 
+// Matching the real legacy invoice layout (buyer address/phone/PO no, GR/freight/
+// case-mark/booked-by, e-invoice ack date + QR payload) added several fields
+// after the original db:push — same self-migration story as ewb_threshold above.
+let invoiceExtraColsEnsured = false;
+async function ensureInvoiceExtraCols() {
+  if (invoiceExtraColsEnsured) return;
+  try {
+    await getSql().unsafe(`ALTER TABLE invoices
+      ADD COLUMN IF NOT EXISTS buyer_address text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS buyer_phone text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS buyer_po_no text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS freight_term text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS pvt_mark text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS case_count integer,
+      ADD COLUMN IF NOT EXISTS booked_by text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS ack_date text DEFAULT '',
+      ADD COLUMN IF NOT EXISTS qr_payload text DEFAULT ''`);
+    invoiceExtraColsEnsured = true;
+  } catch { /* ignore */ }
+}
+
 export async function getCompanySettings(): Promise<CompanySettings> {
   await ensureCompanySettingsCols();
   const [row] = await getSql()`SELECT * FROM company_settings ORDER BY id LIMIT 1`;
@@ -165,6 +195,7 @@ export interface InvoiceFull {
 }
 
 export async function getInvoiceFull(idOrNo: string | number): Promise<InvoiceFull | undefined> {
+  await ensureInvoiceExtraCols();
   const sql = getSql();
   const byId = typeof idOrNo === "number" || /^\d+$/.test(String(idOrNo));
   const [invoice] = byId
@@ -186,12 +217,13 @@ interface DraftLine extends LineInput {
 async function gatherDraft(sql: Sql, soId: number) {
   const [so] = (await sql`
     SELECT so.id, so.so_no, c.id AS customer_id, c.name AS customer_name, c.gst AS buyer_gstin,
-           c.state_code AS buyer_state_code, c.pos_state_code, c.discount_class_id, c.discount_pct
+           c.state_code AS buyer_state_code, c.pos_state_code, c.discount_class_id, c.discount_pct,
+           c.billing AS buyer_address, c.phone AS buyer_phone
     FROM sales_orders so JOIN customers c ON c.id = so.customer_id
     WHERE so.id = ${soId}`) as unknown as Array<{
     id: number; so_no: string; customer_id: number; customer_name: string; buyer_gstin: string | null;
     buyer_state_code: string | null; pos_state_code: string | null; discount_class_id: number | null;
-    discount_pct: number | null;
+    discount_pct: number | null; buyer_address: string | null; buyer_phone: string | null;
   }>;
   if (!so) return undefined;
 
@@ -260,6 +292,7 @@ export async function createDraftFromSalesOrder(
   soId: number,
   opts: { createdBy?: string | null; packingSlipId?: number | null } = {},
 ): Promise<{ id: number } | { error: string }> {
+  await ensureInvoiceExtraCols();
   const sql = getSql();
   const company = await getCompanySettings();
 
@@ -277,12 +310,13 @@ export async function createDraftFromSalesOrder(
 
     const [inv] = await tx`
       INSERT INTO invoices (status, so_id, packing_slip_id, customer_id, seller_state_code,
-        buyer_name, buyer_gstin, buyer_state_code, pos_state_code, tax_type, invoice_date,
-        discount_class_id, mrp_total, discount_total, taxable_total, igst, cgst, sgst,
-        round_off, grand_total, created_by)
+        buyer_name, buyer_gstin, buyer_state_code, buyer_address, buyer_phone, pos_state_code,
+        tax_type, invoice_date, discount_class_id, mrp_total, discount_total, taxable_total,
+        igst, cgst, sgst, round_off, grand_total, created_by)
       VALUES ('draft', ${soId}, ${opts.packingSlipId ?? null}, ${g.so.customer_id},
         ${company.state_code}, ${g.so.customer_name}, ${g.so.buyer_gstin ?? ""},
-        ${g.so.buyer_state_code ?? ""}, ${g.posStateCode}, ${computed.taxType},
+        ${g.so.buyer_state_code ?? ""}, ${g.so.buyer_address ?? ""}, ${g.so.buyer_phone ?? ""},
+        ${g.posStateCode}, ${computed.taxType},
         ${today()}, ${g.so.discount_class_id ?? null}, ${computed.mrpTotal}, ${computed.discountTotal},
         ${computed.taxableTotal}, ${computed.igst}, ${computed.cgst}, ${computed.sgst},
         ${computed.roundOff}, ${computed.grandTotal}, ${opts.createdBy ?? null})
@@ -311,17 +345,25 @@ async function insertLines(sql: Sql, invoiceId: number, computed: ComputedLine[]
 export interface InvoicePatch {
   posStateCode?: string;
   invoiceDate?: string;
+  buyerAddress?: string;
+  buyerPhone?: string;
+  buyerPoNo?: string;
   transporter?: string;
   transporterId?: string;
   vehicleNo?: string;
   lrNo?: string;
   lrDate?: string;
   distanceKm?: number | null;
+  freightTerm?: string;
+  pvtMark?: string;
+  caseCount?: number | null;
+  bookedBy?: string;
   notes?: string;
   lines?: Array<{ id: number; qty?: number; discountPct?: number }>;
 }
 
 export async function updateDraftInvoice(id: number, patch: InvoicePatch): Promise<{ ok: true } | { error: string }> {
+  await ensureInvoiceExtraCols();
   const sql = getSql();
   const company = await getCompanySettings();
 
@@ -369,11 +411,18 @@ export async function updateDraftInvoice(id: number, patch: InvoicePatch): Promi
       UPDATE invoices SET
         pos_state_code=${posStateCode}, tax_type=${computed.taxType},
         invoice_date=${patch.invoiceDate ?? inv.invoice_date},
+        buyer_address=${patch.buyerAddress ?? inv.buyer_address},
+        buyer_phone=${patch.buyerPhone ?? inv.buyer_phone},
+        buyer_po_no=${patch.buyerPoNo ?? inv.buyer_po_no},
         transporter=${patch.transporter ?? inv.transporter},
         transporter_id=${patch.transporterId ?? inv.transporter_id},
         vehicle_no=${patch.vehicleNo ?? inv.vehicle_no},
         lr_no=${patch.lrNo ?? inv.lr_no}, lr_date=${patch.lrDate ?? inv.lr_date},
         distance_km=${patch.distanceKm !== undefined ? patch.distanceKm : inv.distance_km},
+        freight_term=${patch.freightTerm ?? inv.freight_term},
+        pvt_mark=${patch.pvtMark ?? inv.pvt_mark},
+        case_count=${patch.caseCount !== undefined ? patch.caseCount : inv.case_count},
+        booked_by=${patch.bookedBy ?? inv.booked_by},
         notes=${patch.notes ?? inv.notes},
         mrp_total=${computed.mrpTotal}, discount_total=${computed.discountTotal},
         taxable_total=${computed.taxableTotal}, igst=${computed.igst}, cgst=${computed.cgst},
@@ -416,6 +465,25 @@ export async function finalizeInvoice(id: number): Promise<{ ok: true; invoiceNo
     }
     return { ok: true as const, invoiceNo };
   });
+}
+
+// ── e-Invoice (IRN/QR) — recorded manually for now ────────────────────────────
+// Same story as the e-way bill: no GSP/API account, so this is filled in by
+// hand once the accountant runs it through the existing Tally/Busy/Marg
+// e-invoicing flow (or a future direct integration) — this just stores the
+// result so it prints correctly (see [[erp-invoice-print-fidelity]]).
+export async function saveEInvoiceDetails(
+  id: number,
+  input: { irn: string; ackNo: string; ackDate: string; qrPayload: string },
+): Promise<{ ok: true } | { error: string }> {
+  await ensureInvoiceExtraCols();
+  const sql = getSql();
+  const [inv] = await sql`
+    UPDATE invoices SET irn=${input.irn.trim()}, ack_no=${input.ackNo.trim()},
+      ack_date=${input.ackDate.trim()}, qr_payload=${input.qrPayload.trim()}
+    WHERE id=${id} AND status='final' RETURNING id`;
+  if (!inv) return { error: "Invoice not found or not finalized yet." };
+  return { ok: true };
 }
 
 export async function cancelDraftInvoice(id: number): Promise<{ ok: true } | { error: string }> {

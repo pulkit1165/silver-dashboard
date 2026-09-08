@@ -5,7 +5,8 @@ import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
 import ConfirmOrderButton from "@/components/erp/ConfirmOrderButton";
 import CancelLineButton from "@/components/erp/CancelLineButton";
 import OrderMetaEditor from "@/components/erp/OrderMetaEditor";
-import { PrintButton, WhatsappButton } from "@/components/erp/OrderActions";
+import { WhatsappButton } from "@/components/erp/OrderActions";
+import PrintOrderSheet from "@/components/erp/PrintOrderSheet";
 import { getSalesOrder } from "@/lib/erp/queries";
 import { getCostByCode } from "@/lib/erp/cost";
 import { lineGp, orderGp, GP_FLOOR, ORDER_GP_FLOOR } from "@/lib/erp/gpCalc";
@@ -61,7 +62,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
           <span className="h-1.5 w-1.5 rounded-full" style={{ background: tone.dot }} />{disp.label}
         </span>
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <PrintButton />
+          <PrintOrderSheet soId={so.id} />
           <WhatsappButton phone={so.customer_phone ?? ""} message={waMessage} />
           <Link href="/erp/scan/dispatch" className="rounded-lg border border-[var(--border)] px-3 py-1.5 text-sm font-bold hover:bg-[var(--surface-2)]">🚚 Dispatch</Link>
           {so.status === "draft" && <ConfirmOrderButton soId={so.id} />}

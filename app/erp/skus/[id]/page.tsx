@@ -69,8 +69,8 @@ export default async function SkuDetail({ params }: { params: Promise<{ id: stri
             <Info label="Serial tracked">{sku.serial_tracked ? "Yes" : "No"}</Info>
           </div>
           <div className="border-t border-[var(--border)] p-4">
-            <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Barcode label info</div>
-            <EditLabelInfo skuId={sku.id} masterQty={sku.master_qty} singleQty={sku.single_qty} barcodeCode={sku.barcode_code} canEdit={canWrite(user.role, "skus")} />
+            <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Product name &amp; barcode label info</div>
+            <EditLabelInfo skuId={sku.id} name={sku.name} masterQty={sku.master_qty} singleQty={sku.single_qty} barcodeCode={sku.barcode_code} canEdit={canWrite(user.role, "skus")} />
           </div>
           <div className="border-t border-[var(--border)] p-4">
             <div className="mb-2 text-xs font-extrabold uppercase tracking-wide text-[var(--muted)]">Stock by location</div>

@@ -128,12 +128,16 @@ export async function getGroupItemPrices(header: string): Promise<ItemVendorRow[
 export async function getPricedGroups(): Promise<{ header: string; group_items: number; vendors: number; priced_items: number }[]> {
   await ensureVendorItems();
   const sql = getSql();
+  // ALL price-list groups (the ~146 headers), whether or not a vendor price list
+  // has been uploaded yet — so the optimizer's group picker is populated from the
+  // start. vendors/priced_items are 0 until a vendor sheet is uploaded (LEFT JOIN).
   return (await sql`
     SELECT s.header,
-           (SELECT COUNT(*)::int FROM skus s2 WHERE s2.header = s.header) AS group_items,
+           COUNT(DISTINCT s.id)::int         AS group_items,
            COUNT(DISTINCT vi.vendor_id)::int AS vendors,
-           COUNT(DISTINCT vi.sku_id)::int AS priced_items
-      FROM vendor_items vi JOIN skus s ON s.id = vi.sku_id
-     WHERE COALESCE(s.header,'') <> ''
+           COUNT(DISTINCT vi.sku_id)::int    AS priced_items
+      FROM skus s
+      LEFT JOIN vendor_items vi ON vi.sku_id = s.id
+     WHERE COALESCE(s.header,'') <> '' AND s.status <> 'archived'
      GROUP BY s.header ORDER BY s.header`) as unknown as { header: string; group_items: number; vendors: number; priced_items: number }[];
 }

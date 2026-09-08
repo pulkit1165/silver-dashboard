@@ -16,14 +16,39 @@ export async function renderDoc(
   ctx.save();
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = "#000"; ctx.strokeStyle = "#000";
+  // When the category (header) line is hidden/empty for this SKU (a suppressed
+  // header like MISC / FOOT REST ASSLY, or simply no header), give its row to the
+  // NAME so the product name prints BIGGER — it grows up into the freed space and
+  // auto-fits. Long names still fit (fit clamps to the taller box).
+  let elements = doc.elements;
+  const hdrEl = elements.find((e) => e.field === "header");
+  if (hdrEl && !fieldText(hdrEl, fill).trim()) {
+    const nmEl = elements.find((e) => e.field === "name");
+    if (nmEl) {
+      const top = Math.min(hdrEl.y, nmEl.y);
+      const bottom = nmEl.y + (nmEl.h || 0);
+      const grown: DesignEl = {
+        ...nmEl, y: top, h: Math.max(bottom - top, nmEl.h || 0),
+        fit: true, sizeMM: (nmEl.sizeMM ?? 3) * 2,
+      };
+      elements = elements.map((e) => (e === nmEl ? grown : e)).filter((e) => e !== hdrEl);
+    }
+  }
+
   // Draw QR/barcode LAST (on top) so a line or box placed over them can never
   // corrupt the code — the QR always stays clean and scannable. (stable sort)
-  const ordered = [...doc.elements].sort((a, b) =>
+  const ordered = [...elements].sort((a, b) =>
     ((a.kind === "qr" || a.kind === "barcode") ? 1 : 0) - ((b.kind === "qr" || b.kind === "barcode") ? 1 : 0));
   for (const el of ordered) {
     ctx.save();
-    // rotation about the element's top-left
-    if (el.rot) { ctx.translate(el.x * dp, el.y * dp); ctx.rotate((el.rot * Math.PI) / 180); ctx.translate(-el.x * dp, -el.y * dp); }
+    // Rotate about the element's CENTRE so it turns in place — the box stays where
+    // you positioned it (e.g. a 90° vertical caption sits right where you drop it,
+    // beside the barcode) instead of swinging off its top-left corner. Must match
+    // the on-screen overlay's transformOrigin:"center" in LabelDesigner.
+    if (el.rot) {
+      const cx = (el.x + el.w / 2) * dp, cy = (el.y + (el.h || 0) / 2) * dp;
+      ctx.translate(cx, cy); ctx.rotate((el.rot * Math.PI) / 180); ctx.translate(-cx, -cy);
+    }
     try {
       if (el.kind === "text") drawText(ctx, el, fill, dp);
       else if (el.kind === "qr") await drawQr(ctx, el, fill, dp);

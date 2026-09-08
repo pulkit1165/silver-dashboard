@@ -3,9 +3,17 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+type NameClass = "auto" | "short" | "long";
 type Sku = { sku_code: string; name: string; unit: string; category: string; header?: string };
-type Row = { line1: string; line2: string; line3: string; units: string; lot: string; rack: string };
-const BLANK: Row = { line1: "", line2: "", line3: "", units: "", lot: "", rack: "" };
+type Row = { line1: string; line2: string; line3: string; units: string; lot: string; rack: string; unitQty?: number; nameClass?: NameClass };
+const BLANK: Row = { line1: "", line2: "", line3: "", units: "", lot: "", rack: "", unitQty: 0, nameClass: "auto" };
+
+// Keep in sync with LONG_NAME_CHARS in lib/erp/labelMaster.ts.
+const LONG_NAME_CHARS = 24;
+function effectiveClass(name: string, override?: NameClass): "short" | "long" {
+  if (override === "short" || override === "long") return override;
+  return (name || "").trim().length > LONG_NAME_CHARS ? "long" : "short";
+}
 
 // Split a full name into up to 3 balanced-ish lines by words (a starting point the
 // operator can tweak) — mirrors how the label would auto-wrap.
@@ -80,18 +88,27 @@ export default function LabelMaster({
         <div className="max-h-[70vh] overflow-auto rounded-xl border border-[var(--border)]">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[var(--surface-2)] text-left text-xs uppercase text-[var(--muted)]">
-              <tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-center">Label</th></tr>
+              <tr><th className="px-3 py-2">Code</th><th className="px-3 py-2">Description</th><th className="px-3 py-2 text-center">Name</th><th className="px-3 py-2 text-center">Label</th></tr>
             </thead>
             <tbody>
-              {skus.map((s) => (
+              {skus.map((s) => {
+                const cls = effectiveClass(s.name, rows[s.sku_code]?.nameClass);
+                const forced = rows[s.sku_code]?.nameClass === "short" || rows[s.sku_code]?.nameClass === "long";
+                return (
                 <tr key={s.sku_code} onClick={() => pick(s.sku_code)}
                   className={`cursor-pointer border-t border-[var(--border)] ${sel === s.sku_code ? "bg-[var(--accent-bg)]" : "hover:bg-[var(--surface-2)]"}`}>
                   <td className="px-3 py-2 font-mono font-bold">{s.sku_code}</td>
                   <td className="px-3 py-2">{s.name}</td>
+                  <td className="px-3 py-2 text-center">
+                    <span title={`${cls === "long" ? "Long-name" : "Short-name"} design${forced ? " (forced)" : " (auto)"}`}
+                      className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-extrabold ${cls === "long" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-500"}`}>
+                      {cls === "long" ? "LONG" : "SHORT"}{forced ? "•" : ""}
+                    </span>
+                  </td>
                   <td className="px-3 py-2 text-center">{isSet(s.sku_code) ? <span className="text-[var(--accent-2)]">✓</span> : <span className="text-[var(--muted-2)]">—</span>}</td>
                 </tr>
-              ))}
-              {skus.length === 0 && <tr><td colSpan={3} className="px-3 py-6 text-center text-[var(--muted)]">No parts found.</td></tr>}
+              ); })}
+              {skus.length === 0 && <tr><td colSpan={4} className="px-3 py-6 text-center text-[var(--muted)]">No parts found.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -116,6 +133,28 @@ export default function LabelMaster({
                 <input value={headerDraft} disabled={!editable} onChange={(e) => setHeaderDraft(e.target.value)} placeholder="e.g. AIR HOSE PIPE" className={inp} />
                 <span className="text-[11px] font-normal normal-case text-[var(--muted)]">Prints as <b>line 1</b> of the label; the part name (variant) prints below it. Blank = just the name.</span>
               </label>
+              <div className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--accent-strong)] sm:col-span-2">
+                Name length → which label design
+                <div className="flex flex-wrap items-center gap-2">
+                  {(["auto", "short", "long"] as NameClass[]).map((c) => (
+                    <button key={c} type="button" disabled={!editable}
+                      onClick={() => setDraft((d) => ({ ...d, nameClass: c }))}
+                      className={`rounded-lg border px-3 py-1.5 text-xs font-bold capitalize disabled:opacity-50 ${
+                        (draft.nameClass ?? "auto") === c
+                          ? "border-[var(--accent)] bg-[var(--accent-bg)] text-[var(--accent-strong)]"
+                          : "border-[var(--border)] hover:bg-[var(--surface-2)]"}`}>
+                      {c === "auto" ? `Auto (${selSku.name.trim().length} chars)` : c}
+                    </button>
+                  ))}
+                  <span className={`ml-1 inline-block rounded px-2 py-0.5 text-[11px] font-extrabold ${
+                    effectiveClass(selSku.name, draft.nameClass) === "long" ? "bg-amber-100 text-amber-800" : "bg-gray-100 text-gray-600"}`}>
+                    → {effectiveClass(selSku.name, draft.nameClass) === "long" ? "LONG-name design" : "SHORT-name design"}
+                  </span>
+                </div>
+                <span className="text-[11px] font-normal normal-case text-[var(--muted)]">
+                  Long-name parts print the size&apos;s <b>· LONG names</b> design (create it in the Label Designer). Operators still just pick the size — the right design is chosen automatically. Auto = long when the name is over {LONG_NAME_CHARS} characters.
+                </span>
+              </div>
               <label className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)] sm:col-span-2">Line 1 (Label Desc.)
                 <input value={draft.line1} disabled={!editable} onChange={(e) => setDraft((d) => ({ ...d, line1: e.target.value }))} className={inp} /></label>
               <label className="flex flex-col gap-1 text-xs font-bold uppercase text-[var(--muted)] sm:col-span-2">Line 2 (Label Desc.1)

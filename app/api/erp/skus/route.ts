@@ -32,8 +32,8 @@ export async function POST(req: Request) {
   // same token) makes the label scannable the moment it's printed.
   const token = genToken();
   const [sku] = await sql`
-    INSERT INTO skus (sku_code,name,category,brand,unit,price,min_stock,reorder_level,master_qty,single_qty,barcode_code,batch_tracked,serial_tracked,qr_token)
-    VALUES (${String(b.sku_code)},${String(b.name)},${b.category ?? ""},${b.brand ?? ""},${b.unit ?? "PCS"},
+    INSERT INTO skus (sku_code,name,category,header,brand,unit,price,min_stock,reorder_level,master_qty,single_qty,barcode_code,batch_tracked,serial_tracked,qr_token)
+    VALUES (${String(b.sku_code)},${String(b.name)},${b.category ?? ""},${b.header ? String(b.header).trim() : null},${b.brand ?? ""},${b.unit ?? "PCS"},
             ${Number(b.price) || 0},${Number(b.min_stock) || 0},${Number(b.reorder_level) || 0},
             ${Number(b.master_qty) || 0},${Number(b.single_qty) || 1},${b.barcode_code ? String(b.barcode_code) : ""},
             ${!!b.batch_tracked},${!!b.serial_tracked},${token})

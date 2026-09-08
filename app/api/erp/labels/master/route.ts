@@ -24,6 +24,7 @@ export async function POST(req: Request) {
   await saveLabelMaster(skuCode, {
     line1: b.line1, line2: b.line2, line3: b.line3, units: b.units, lot: b.lot, rack: b.rack,
     unitQty: Number(b.unitQty) || 0,
+    nameClass: (b.nameClass === "short" || b.nameClass === "long") ? b.nameClass : "auto",
   }, user.name);
   // Header (name line-1 / part type) lives on the SKU itself.
   if (typeof b.header === "string") {

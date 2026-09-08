@@ -222,8 +222,11 @@ body {
 
   /* Label printing lifts the printable area into a <body>-level portal
      (.labels-print-portal). Hide everything else in the body so ONLY the labels
-     are in the print flow — no app chrome, no blank pages between die-cuts. */
-  body > *:not(.labels-print-portal) { display: none !important; }
+     are in the print flow — no app chrome, no blank pages between die-cuts.
+     Scoped with :has() so it ONLY fires when a label portal is actually present —
+     otherwise it would blank every other print (sales orders, invoices) whose
+     printable content is nested inside the app root via .print-area/visibility. */
+  body:has(.labels-print-portal) > *:not(.labels-print-portal) { display: none !important; }
   .labels-print-portal { display: block !important; }
 
   /* Thermal roll: one physical die-cut label per page (the .label-rot box is

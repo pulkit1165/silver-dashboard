@@ -22,10 +22,10 @@ export default async function LabelMasterPage({
   const like = `%${q}%`;
   const rows = (q
     ? await sql`SELECT sku_code, name, COALESCE(unit,'') AS unit, COALESCE(category,'') AS category, COALESCE(header,'') AS header
-        FROM skus WHERE sku_code ILIKE ${like} OR name ILIKE ${like}
+        FROM skus WHERE (sku_code ILIKE ${like} OR name ILIKE ${like})
         ORDER BY sku_code LIMIT ${CAP}`
     : await sql`SELECT sku_code, name, COALESCE(unit,'') AS unit, COALESCE(category,'') AS category, COALESCE(header,'') AS header
-        FROM skus ORDER BY sku_code LIMIT ${CAP}`) as unknown as
+        FROM skus WHERE status <> 'archived' ORDER BY sku_code LIMIT ${CAP}`) as unknown as
     { sku_code: string; name: string; unit: string; category: string; header: string }[];
 
   const master = await getLabelMasters();

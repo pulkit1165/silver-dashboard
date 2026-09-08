@@ -8,7 +8,11 @@ import { mrp } from "@/lib/format";
 import { renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
 import type { LabelDoc, LabelFill } from "@/lib/erp/labelDoc";
 
-type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string };
+type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string; nameClass?: "auto" | "short" | "long" };
+// Keep in sync with LONG_NAME_CHARS / resolveNameClass in lib/erp/labelMaster.ts.
+const LONG_NAME_CHARS = 24;
+const resolveNameClass = (name: string, override?: string): "short" | "long" =>
+  override === "short" || override === "long" ? override : (name || "").trim().length > LONG_NAME_CHARS ? "long" : "short";
 type QrMatrix = { size: number; data: number[] };
 type Label = {
   skuId: number; sku_code: string; name: string; header?: string; unit: string;
@@ -102,17 +106,28 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // The APPROVED custom design for the current size (from the Label Designer). When
   // present, printing renders it as an image (WYSIWYG) instead of the old auto-layout.
   const [approvedDoc, setApprovedDoc] = useState<LabelDoc | null>(null);
+  // The optional LONG-name design for this size (`<sizeId>__long`). Long-name SKUs
+  // print this instead of the normal design; if it's absent they fall back to it.
+  const [approvedLongDoc, setApprovedLongDoc] = useState<LabelDoc | null>(null);
   useEffect(() => {
     let live = true;
     (async () => {
       try {
-        const r = await fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" });
-        const d = await r.json();
-        if (live) setApprovedDoc(d?.design?.approved_doc ?? null);
-      } catch { if (live) setApprovedDoc(null); }
+        const [r, rl] = await Promise.all([
+          fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" }),
+          fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId + "__long")}`, { cache: "no-store" }),
+        ]);
+        const [d, dl] = await Promise.all([r.json(), rl.json()]);
+        if (live) { setApprovedDoc(d?.design?.approved_doc ?? null); setApprovedLongDoc(dl?.design?.approved_doc ?? null); }
+      } catch { if (live) { setApprovedDoc(null); setApprovedLongDoc(null); } }
     })();
     return () => { live = false; };
   }, [sizeId]);
+  // Per-SKU name class (override from Label Master; 'auto' decides by name length).
+  const nameClassByCode = useMemo(
+    () => Object.fromEntries(items.map((i) => [i.sku_code, i.nameClass ?? "auto"])),
+    [items],
+  );
   useEffect(() => {
     try {
       const dv = Number(localStorage.getItem("erp_label_density")); if (dv >= 1 && dv <= 15) setDensity(dv);
@@ -395,16 +410,23 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     try {
       // Always render the FRESHEST approved design (a tab left open can hold a stale
       // version after a re-approve — this guarantees the latest is what prints).
-      let doc = approvedDoc;
+      let baseDoc = approvedDoc;
+      let longDoc = approvedLongDoc;
       try {
-        const dr = await fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" });
-        const dd = await dr.json();
-        if (dd?.design?.approved_doc) { doc = dd.design.approved_doc as LabelDoc; setApprovedDoc(doc); }
-      } catch { /* keep the cached one */ }
+        const [dr, dlr] = await Promise.all([
+          fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId)}`, { cache: "no-store" }),
+          fetch(`/api/erp/labels/design?sizeId=${encodeURIComponent(sizeId + "__long")}`, { cache: "no-store" }),
+        ]);
+        const [dd, dld] = await Promise.all([dr.json(), dlr.json()]);
+        if (dd?.design?.approved_doc) { baseDoc = dd.design.approved_doc as LabelDoc; setApprovedDoc(baseDoc); }
+        longDoc = (dld?.design?.approved_doc as LabelDoc) ?? null; setApprovedLongDoc(longDoc);
+      } catch { /* keep the cached ones */ }
+      if (!baseDoc) return;
       const nm = brPrinters.find((x) => x.id === brPrinterId)?.name || "";
       const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(nm) ? 300 : 203;
       const dp = dpi === 203 ? 8 : dpi / 25.4;
-      await ensureFontsLoaded(doc);
+      await ensureFontsLoaded(baseDoc);
+      if (longDoc) await ensureFontsLoaded(longDoc);
       // group identical labels (same QR token) so N copies print from one bitmap
       const groups = new Map<string, { fill: LabelFill; count: number; sku: string }>();
       for (const l of printable) {
@@ -420,13 +442,17 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
       }
       let queued = 0;
       for (const g of groups.values()) {
-        const bmp = await renderDocToTSPL(doc, g.fill, dp);
+        // Long-name SKUs print the `__long` design when one is approved; everything
+        // else (and long SKUs without a long design) prints the normal design.
+        const isLong = resolveNameClass(g.fill.name ?? g.sku, nameClassByCode[g.sku]) === "long";
+        const useDoc = isLong && longDoc ? longDoc : baseDoc;
+        const bmp = await renderDocToTSPL(useDoc, g.fill, dp);
         const r = await fetch("/api/erp/labels/print-raster", {
           method: "POST", headers: { "content-type": "application/json" },
           // Use the on-page SPEED stepper (default 3, up to 4 on a 203dpi head) so the
           // operator can trade speed vs. quality. Density kept solid for crisp text;
           // if big bold text ghosts at higher speed, drop the speed a notch.
-          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies: g.count, skuCode: g.sku, speed: Number(speed) || 3, density: 10, ...bmp }),
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: useDoc.w, h: useDoc.h, copies: g.count, skuCode: g.sku, speed: Number(speed) || 3, density: 10, ...bmp }),
         });
         const d = await r.json();
         if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }
@@ -933,8 +959,9 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
               <button
                 onClick={() => setLabelType(i.id, "single")}
                 className={`rounded px-2 py-1 font-semibold ${(type[i.id] ?? "single") === "single" ? "bg-[var(--accent)] text-white" : "border border-[var(--border)]"}`}
+                title={`Single unit = ${i.singleQty || 1} piece${(i.singleQty || 1) === 1 ? "" : "s"}`}
               >
-                Single
+                Single ({i.singleQty || 1})
               </button>
               <button
                 onClick={() => setLabelType(i.id, "master")}

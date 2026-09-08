@@ -4,8 +4,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function EditLabelInfo({
-  skuId, masterQty, singleQty, barcodeCode, canEdit,
-}: { skuId: number; masterQty: number; singleQty: number; barcodeCode: string; canEdit: boolean }) {
+  skuId, name, masterQty, singleQty, barcodeCode, canEdit,
+}: { skuId: number; name: string; masterQty: number; singleQty: number; barcodeCode: string; canEdit: boolean }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -35,7 +35,7 @@ export default function EditLabelInfo({
           {" · "}Master qty: <b>{masterQty || "—"}</b>
         </span>
         {canEdit && (
-          <button onClick={() => setOpen(true)} className="text-xs font-semibold text-[var(--accent)] hover:underline">Edit</button>
+          <button onClick={() => setOpen(true)} className="text-xs font-semibold text-[var(--accent)] hover:underline">Edit name &amp; label info</button>
         )}
       </div>
     );
@@ -43,6 +43,11 @@ export default function EditLabelInfo({
 
   return (
     <form onSubmit={submit} className="flex flex-wrap items-end gap-3 text-sm">
+      <label className="flex w-full flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+        Product name <span className="font-normal normal-case text-[var(--muted-2)]">— updates labels, sales orders & new invoices everywhere</span>
+        <input name="name" defaultValue={name} maxLength={120} required
+          className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-1.5 text-sm outline-none focus:border-[var(--accent)]" />
+      </label>
       <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
         Barcode code
         <input name="barcode_code" defaultValue={barcodeCode} placeholder="defaults to SKU code"

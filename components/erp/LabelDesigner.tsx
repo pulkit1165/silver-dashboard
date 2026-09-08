@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { LABEL_SIZES } from "@/lib/erp/labelSizes";
+import { DESIGNER_SIZES } from "@/lib/erp/labelSizes";
 import {
   type LabelDoc, type DesignEl, type ElKind, type LabelFill,
   defaultDoc, newElement, SAMPLE_FILL, FONT_GROUPS, SIZE_CHOICES_MM,
@@ -10,7 +10,10 @@ import { renderDoc, renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRe
 type Br = { id: string; pc: string; name: string; online: boolean; code?: string };
 const snap = (v: number, step = 0.5) => Math.round(v / step) * step;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-const sizes = LABEL_SIZES.filter((s) => s.w > 0 && s.h > 0);
+// Includes each size plus its "· LONG names" sibling (design id `<size>__long`),
+// so the long-name layout can be drawn/approved separately. The internals below
+// key off `sizeId` unchanged, so a long variant is just another size to the editor.
+const sizes = DESIGNER_SIZES.filter((s) => s.w > 0 && s.h > 0);
 const isContent = (k: ElKind) => k === "text" || k === "qr" || k === "barcode";
 const rectsHit = (ax: number, ay: number, aw: number, ah: number, b: DesignEl) =>
   ax < b.x + b.w && ax + aw > b.x && ay < b.y + Math.max(b.h, 0.5) && ay + Math.max(ah, 0.5) > b.y;
@@ -296,6 +299,7 @@ export default function LabelDesigner() {
           <button onClick={() => addEl("text", "header")} className="ADDBTN">＋ Header (part type)</button>
           <button onClick={() => addEl("text", "name")} className="ADDBTN">＋ Name (variant)</button>
           <button onClick={() => addEl("text", "mrp")} className="ADDBTN">＋ MRP</button>
+          <button onClick={() => addEl("text", "incltax")} className="ADDBTN">＋ incl. tax</button>
           <button onClick={() => addEl("text", "qty")} className="ADDBTN">＋ Qty</button>
           <button onClick={() => addEl("text", "lot")} className="ADDBTN">＋ Lot no</button>
           <button onClick={() => addEl("text", "rack")} className="ADDBTN">＋ Rack no</button>
@@ -323,10 +327,10 @@ export default function LabelDesigner() {
                     : isContent(el.kind) ? "outline outline-1 outline-dashed outline-[var(--border)] hover:outline-[var(--accent)]"
                     : "hover:outline hover:outline-1 hover:outline-[var(--accent)]"}`}
                   style={{ left: el.x * scale, top: el.y * scale, width: Math.max(6, el.w * scale), height: Math.max(6, (el.h || 1) * scale),
-                    transform: el.rot ? `rotate(${el.rot}deg)` : undefined, transformOrigin: "0 0" }}>
+                    transform: el.rot ? `rotate(${el.rot}deg)` : undefined, transformOrigin: "center" }}>
                   {selId === el.id && (
-                    <span onPointerDown={(e) => onDown(e, el, "resize")}
-                      className="absolute -bottom-1.5 -right-1.5 h-3 w-3 cursor-nwse-resize rounded-sm border border-white bg-[var(--accent)]" />
+                    <span onPointerDown={(e) => onDown(e, el, "resize")} title="Drag to resize"
+                      className="absolute -bottom-2 -right-2 h-5 w-5 cursor-nwse-resize rounded-sm border-2 border-white bg-[var(--accent)] shadow" />
                   )}
                 </div>
               ))}
@@ -391,6 +395,26 @@ export default function LabelDesigner() {
                 <label className="text-xs font-bold text-[var(--muted)]">Thickness (mm)
                   <input type="number" step={0.1} min={0.1} value={sel.strokeMM ?? 0.3} onChange={(e) => updateSel({ strokeMM: Number(e.target.value) })} className="mt-1 w-full rounded-lg border border-[var(--border)] px-2 py-1" />
                 </label>
+              )}
+
+              {(sel.kind === "barcode" || sel.kind === "qr") && (
+                <div className="flex flex-col gap-1.5 rounded-lg bg-[var(--surface-2)] p-2">
+                  <span className="text-xs font-bold text-[var(--muted)]">{sel.kind === "qr" ? "QR size" : "Barcode size"} — tap − / + (mm)</span>
+                  {(["w", "h"] as const).map((k) => (
+                    <div key={k} className="flex items-center gap-1">
+                      <span className="w-12 text-xs font-bold">{k === "w" ? "Width" : "Height"}</span>
+                      <button onClick={() => setGeom(k, Math.max(2, ((sel as unknown as Record<string, number>)[k] || 0) - 1))}
+                        className="h-7 w-8 rounded border border-[var(--border)] text-base font-bold">−</button>
+                      <input type="number" step={0.5} value={(sel as unknown as Record<string, number>)[k]}
+                        onChange={(e) => setGeom(k, Number(e.target.value))} className="w-14 rounded border border-[var(--border)] px-1 py-1 text-center text-sm" />
+                      <button onClick={() => setGeom(k, ((sel as unknown as Record<string, number>)[k] || 0) + 1)}
+                        className="h-7 w-8 rounded border border-[var(--border)] text-base font-bold">＋</button>
+                    </div>
+                  ))}
+                  {sel.kind === "qr" && (
+                    <button onClick={() => setGeom("h", sel.w)} className="rounded border border-[var(--border)] px-2 py-1 text-xs font-bold hover:bg-[var(--surface)]">⬛ Make square</button>
+                  )}
+                </div>
               )}
 
               <div className="grid grid-cols-4 gap-1 text-xs">

@@ -3,6 +3,7 @@ import PageHeader from "@/components/PageHeader";
 import BarcodeLabels from "@/components/erp/BarcodeLabels";
 import ListFilters from "@/components/erp/ListFilters";
 import { stockLevels } from "@/lib/erp/queries";
+import { getLabelMasters } from "@/lib/erp/labelMaster";
 
 export const dynamic = "force-dynamic";
 
@@ -14,10 +15,11 @@ export default async function BarcodeLabelsPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
-  const all = await stockLevels(sp.q);
+  const [all, master] = await Promise.all([stockLevels(sp.q), getLabelMasters()]);
   const items = all.slice(0, PAGE_CAP).map((s) => ({
     id: s.id, sku_code: s.sku_code, name: s.name, category: s.category,
     masterQty: s.master_qty, singleQty: s.single_qty, barcodeCode: s.barcode_code,
+    nameClass: master[s.sku_code]?.nameClass ?? "auto",
   }));
   return (
     <>

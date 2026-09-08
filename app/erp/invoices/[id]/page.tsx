@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import InvoiceEditor from "@/components/erp/InvoiceEditor";
 import { getInvoiceFull } from "@/lib/erp/invoices";
+import { qrDataUrl } from "@/lib/erp/qr";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
@@ -14,6 +15,9 @@ export default async function InvoiceDetail({ params }: { params: Promise<{ id: 
   if (!data) notFound();
   const user = await getSessionUser();
   const editable = !!user && canWrite(user.role, "invoices");
+  // Render the real e-invoice QR once the IRN/QR payload is on file — until
+  // then the print shows a "pending" placeholder (see saveEInvoiceDetails).
+  const qrImage = data.invoice.qr_payload ? await qrDataUrl(data.invoice.qr_payload, 200) : null;
 
   return (
     <>
@@ -24,7 +28,7 @@ export default async function InvoiceDetail({ params }: { params: Promise<{ id: 
       <div className="mb-4 flex items-center gap-3 no-print">
         <Link href="/erp/invoices" className="text-sm font-semibold text-[var(--accent)]">← Invoices</Link>
       </div>
-      <InvoiceEditor data={data} canEdit={editable} />
+      <InvoiceEditor data={data} canEdit={editable} qrImage={qrImage} />
     </>
   );
 }

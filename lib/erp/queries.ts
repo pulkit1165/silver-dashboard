@@ -18,11 +18,16 @@ export function stockStatus(sku: { min_stock: number; reorder_level: number }, q
 
 export async function getSkus(search?: string): Promise<Sku[]> {
   const sql = getSql();
+  // status <> 'archived' hides retired SKUs (e.g. items not in the price list)
+  // from browse/pick lists; lookups by id/code below still resolve them so old
+  // orders, scans and QR codes keep working.
   if (search) {
+    // A search finds ANY SKU incl. archived (so nothing is unreachable by code/name);
+    // browsing (below) stays active-only to keep the catalogue clean.
     const q = `%${search}%`;
-    return (await sql`SELECT * FROM skus WHERE sku_code ILIKE ${q} OR name ILIKE ${q} OR category ILIKE ${q} ORDER BY sku_code`) as unknown as Sku[];
+    return (await sql`SELECT * FROM skus WHERE (sku_code ILIKE ${q} OR name ILIKE ${q} OR category ILIKE ${q}) ORDER BY sku_code`) as unknown as Sku[];
   }
-  return (await sql`SELECT * FROM skus ORDER BY sku_code`) as unknown as Sku[];
+  return (await sql`SELECT * FROM skus WHERE status <> 'archived' ORDER BY sku_code`) as unknown as Sku[];
 }
 
 export async function getSku(id: number): Promise<Sku | undefined> {
@@ -121,7 +126,10 @@ export async function stockLevels(search?: string): Promise<SkuLevel[]> {
   const rows = (await sql`
     SELECT s.*, COALESCE(SUM(i.qty),0)::float8 AS qty
     FROM skus s LEFT JOIN inventory i ON i.sku_id=s.id
-    WHERE (${q}::text IS NULL OR s.sku_code ILIKE ${q} OR s.name ILIKE ${q} OR s.category ILIKE ${q})
+    -- Browse (no search) shows active only; an actual SEARCH also finds archived
+    -- SKUs, so any item can still be printed/looked up by typing its code/name.
+    WHERE (${q}::text IS NOT NULL OR s.status <> 'archived')
+      AND (${q}::text IS NULL OR s.sku_code ILIKE ${q} OR s.name ILIKE ${q} OR s.category ILIKE ${q})
     GROUP BY s.id ORDER BY s.sku_code`) as unknown as Array<Sku & { qty: number }>;
   return rows.map((s) => ({ ...s, status: stockStatus(s, s.qty) }));
 }
@@ -164,6 +172,7 @@ export async function stockAnalytics(windowDays = 90): Promise<StockAnalyticsRow
         AND created_at >= to_char(now() - make_interval(days => ${windowDays}), 'YYYY-MM-DD HH24:MI:SS')
       GROUP BY sku_id
     ) mv ON mv.sku_id=s.id
+    WHERE s.status <> 'archived'
     ORDER BY s.sku_code`) as unknown as Array<Sku & { qty: number; sold: number; last_out: string | null }>;
 
   // fast/medium/slow are relative to this catalogue: split the items that moved into terciles.
@@ -1048,15 +1057,15 @@ export async function erpStats() {
     skus, stockUnits, lowStock, lowStockItemsRaw, warehouses, openSales, openPurchases,
     vendors, customers, scansToday, scansTotal, pendingDispatch, pendingVerifyDo,
   ] = await Promise.all([
-    c(sql`SELECT COUNT(*)::int AS c FROM skus`),
+    c(sql`SELECT COUNT(*)::int AS c FROM skus WHERE status <> 'archived'`),
     (sql`SELECT COALESCE(SUM(qty),0)::float8 AS c FROM inventory` as unknown as Promise<Array<{ c: number }>>).then((r) => r[0].c),
     c(sql`SELECT COUNT(*)::int AS c FROM skus s
             LEFT JOIN (SELECT sku_id, SUM(qty) q FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
-           WHERE COALESCE(inv.q,0) <= s.min_stock`),
+           WHERE s.status <> 'archived' AND COALESCE(inv.q,0) <= s.min_stock`),
     sql`SELECT s.id, s.sku_code, s.name, s.min_stock, s.reorder_level, COALESCE(inv.q,0)::float8 AS qty
           FROM skus s
           LEFT JOIN (SELECT sku_id, SUM(qty) q FROM inventory GROUP BY sku_id) inv ON inv.sku_id=s.id
-         WHERE COALESCE(inv.q,0) <= s.min_stock
+         WHERE s.status <> 'archived' AND COALESCE(inv.q,0) <= s.min_stock
          ORDER BY COALESCE(inv.q,0) ASC, s.sku_code
          LIMIT 12` as unknown as Promise<Array<{ id: number; sku_code: string; name: string; min_stock: number; reorder_level: number; qty: number }>>,
     c(sql`SELECT COUNT(*)::int AS c FROM warehouses`),

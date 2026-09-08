@@ -10,7 +10,7 @@
 
 export type ElField =
   | "code" | "name" | "header" | "mrp" | "qty" | "lot" | "rack" | "pkd"
-  | "custom" | "address";
+  | "incltax" | "custom" | "address";
 
 export type ElKind = "text" | "qr" | "barcode" | "box" | "line";
 
@@ -66,6 +66,19 @@ function fmtPkd(s: string): string {
   return s; // already numeric / unknown → leave as-is
 }
 
+// Headers that are NOT a real part type (a catch-all bucket, or one that just
+// repeats the product name) — for these the label prints only the full product
+// name, never the header line. Compared with spacing/punctuation ignored.
+const SUPPRESSED_HEADERS = new Set([
+  "MISC", "MISCITEMS", "MISCELLANEOUS", "MISCELLANEOUSITEMS",
+  "HANDLEGRIPSETOF3",     // "HANDLE GRIP (SET OF 3)"
+  "FOOTRESTASSLYREAR",    // "FOOT REST ASSLY. REAR"  (names use "RR FT REST ASLY …")
+  "FOOTRESTASSLYFRONT",   // "FOOT REST ASSLY. FRONT" (names use "FR FT REST ASLY …")
+]);
+export function isMiscHeader(h: string): boolean {
+  return SUPPRESSED_HEADERS.has(String(h ?? "").toUpperCase().replace(/[^A-Z0-9]/g, ""));
+}
+
 export function fieldText(el: DesignEl, d: LabelFill): string {
   const money = (n: unknown) => {
     const r = Math.round((Number(n) || 0) * 100) / 100;
@@ -76,15 +89,23 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
     // Header (part type) and Name (variant) are SEPARATE fields so their sizes can be
     // set independently. `header` = the price-list category; `name` = the specific
     // variant with the header prefix stripped (falls back to the full name).
-    case "header": return String(d.header ?? "").trim();
+    case "header": {
+      const h = String(d.header ?? "").trim();
+      // "MISC . ITEMS" is a catch-all bucket, not a real part type — never print it
+      // as the header line; the product name (below) carries the meaning.
+      return isMiscHeader(h) ? "" : h;
+    }
     case "name": {
       const full = String(d.name ?? "");
       const hdr = String(d.header ?? "").trim();
-      if (!hdr) return full;
+      // A misc/blank header is not a real prefix, so show the FULL product name.
+      if (!hdr || isMiscHeader(hdr)) return full;
       return full.toUpperCase().startsWith(hdr.toUpperCase())
         ? full.slice(hdr.length).replace(/^[\s\-/]+/, "").trim() : full;
     }
     case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
+    // The "inclusive of taxes" note — a fixed caption the operator places under MRP.
+    case "incltax": return "incl. tax";
     case "qty": {
       // Master label shows the CARTON qty (masterQty); single shows the piece qty.
       const q = d.tier === "master" ? (d.masterQty ?? d.singleQty ?? 1) : (d.singleQty ?? 1);

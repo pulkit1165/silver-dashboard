@@ -461,6 +461,9 @@ export const invoices = pgTable("invoices", {
   buyerName: text("buyer_name").default(""),
   buyerGstin: text("buyer_gstin").default(""),
   buyerStateCode: text("buyer_state_code").default(""),
+  buyerAddress: text("buyer_address").default(""),
+  buyerPhone: text("buyer_phone").default(""),
+  buyerPoNo: text("buyer_po_no").default(""), // customer's own PO/order reference
   posStateCode: text("pos_state_code").default(""),
   taxType: text("tax_type").default("IGST"), // IGST | CGST_SGST
   invoiceDate: text("invoice_date"),
@@ -478,9 +481,13 @@ export const invoices = pgTable("invoices", {
   transporter: text("transporter").default(""),
   transporterId: text("transporter_id").default(""),
   vehicleNo: text("vehicle_no").default(""),
-  lrNo: text("lr_no").default(""),
+  lrNo: text("lr_no").default(""), // a.k.a. "GR No." on the printed invoice
   lrDate: text("lr_date").default(""),
   distanceKm: integer("distance_km"),
+  freightTerm: text("freight_term").default(""), // "TO PAY" / "PAID" / "FOR"
+  pvtMark: text("pvt_mark").default(""), // consignor's private/case mark, e.g. "464/24"
+  caseCount: integer("case_count"), // total case/carton count for the shipment
+  bookedBy: text("booked_by").default(""), // who booked the transport
   notes: text("notes").default(""),
   // e-invoice / e-way bill (filled later by the IRP/GSP integration).
   irn: text("irn").default(""),

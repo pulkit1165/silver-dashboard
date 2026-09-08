@@ -53,6 +53,8 @@ export const NAV: NavGroup[] = [
         label: "Inventory", icon: "▦",
         children: [
           { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
+          { href: "/erp/catalog", label: "Product Catalogue", icon: "📖", roles: ["admin", "inventory", "warehouse", "sales", "purchase", "accounts"] },
+          { href: "/erp/catalog/custom-list", label: "Custom List → PDF", icon: "📄", roles: ["admin", "inventory", "warehouse", "sales", "purchase", "accounts"] },
           { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/skus/import-labels", label: "Backfill Barcode Info", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
@@ -97,6 +99,9 @@ export const NAV: NavGroup[] = [
       {
         label: "Purchase", icon: "↙",
         children: [
+          { href: "/erp/purchase/quotations", label: "Quotations", icon: "📝", roles: ["admin", "purchase", "accounts"] },
+          { href: "/erp/purchase/quotations?status=pending", label: "Approvals", icon: "✔", roles: ["admin"] },
+          { href: "/erp/purchase/indents", label: "Indents", icon: "📄", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/purchase", label: "Purchase Orders", icon: "↙", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/purchase/vendor-compare", label: "Vendor Comparison", icon: "⚖", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/grn", label: "Goods Receipts", icon: "📥", roles: ["admin", "purchase", "warehouse", "accounts"] },
