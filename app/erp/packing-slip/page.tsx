@@ -1,22 +1,25 @@
 import PageHeader from "@/components/PageHeader";
 import PackingSlip from "@/components/erp/PackingSlip";
 import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 import { getPackableOrders, getCustomers } from "@/lib/erp/queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function PackingSlipPage() {
-  await getCurrentUser(); // gate to signed-in users
+  const user = await getCurrentUser(); // gate to signed-in users
+  const canBill = canWrite(user.role, "invoices");
   const [orders, customers] = await Promise.all([getPackableOrders(), getCustomers()]);
   return (
     <>
       <PageHeader
-        title="Packing Slip"
-        subtitle="Pick an unpacked Sales Order, pack it case-by-case (scans items for real — deducts stock, creates a Delivery Order), then export to Excel."
+        title="Pack & Dispatch"
+        subtitle="Pick a Sales Order, then pack it case-by-case — scan each item OR switch to Manual and type the qty (scanning is optional). Packing deducts stock and creates the Delivery Order; export the packing slip, then verify the DO to make it billable."
       />
       <PackingSlip
         orders={orders.map((o) => ({ id: o.id, so_no: o.so_no, customer_name: o.customer_name, status: o.status }))}
         parties={customers.map((c) => c.name).filter((n): n is string => Boolean(n))}
+        canBill={canBill}
       />
     </>
   );

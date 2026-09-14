@@ -37,7 +37,7 @@ export async function POST(req: Request) {
   const name = printerId.slice(printerId.indexOf("::") + 2);
   const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
   const hires = dpi >= 280;
-  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 3;
+  const speed = Number(b.speed) >= 1 ? Math.min(hires ? 6 : 4, Math.round(Number(b.speed))) : 4;
 
   const raw = Buffer.from(bytesB64, "base64");
   if (raw.length !== widthBytes * heightDots)
@@ -55,9 +55,10 @@ export async function POST(req: Request) {
     "ascii");
 
   // SPEED: send the bitmap ONCE per job and let the printer stamp out up to CHUNK
-  // copies from it (PRINT 1,n) instead of re-sending the whole picture per label.
-  // Chunking keeps some STOP granularity for very large runs.
-  const CHUNK = 25;
+  // copies from it (PRINT 1,n). A larger chunk = fewer jobs = fewer agent hand-offs,
+  // so the printer stamps continuously instead of pausing ~4-5s between chunks.
+  // A batch of <=CHUNK copies is a single job; STOP granularity stays at CHUNK.
+  const CHUNK = 200;
   const jobs: { title: string; tspl_b64: string }[] = [];
   let remaining = copies;
   while (remaining > 0) {

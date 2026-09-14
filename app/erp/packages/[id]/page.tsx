@@ -5,6 +5,7 @@ import PrintButton from "@/components/erp/PrintButton";
 import EditableText from "@/components/erp/EditableText";
 import EditableRate from "@/components/erp/EditableRate";
 import VerifyDeliveryOrder from "@/components/erp/VerifyDeliveryOrder";
+import GenerateInvoiceButton from "@/components/erp/GenerateInvoiceButton";
 import { getDeliveryOrder } from "@/lib/erp/queries";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
@@ -32,7 +33,12 @@ export default async function DeliveryOrderPage({ params }: { params: Promise<{ 
         <Link href={`/erp/sales/${doc.so_id}`} className="text-sm font-semibold text-[var(--accent)]">← {doc.so_no}</Link>
         <PrintButton label="🖨 Print Delivery Order" />
         {editable && doc.status === "packed" && <VerifyDeliveryOrder packageId={doc.package_id} />}
-        {doc.status === "verified" && <span className="tag g">✓ Verified — billable</span>}
+        {doc.status === "verified" && (
+          <>
+            <span className="tag g">✓ Verified — billable</span>
+            {canWrite(user.role, "invoices") && <GenerateInvoiceButton soId={doc.so_id} label="🧾 Bill now" />}
+          </>
+        )}
       </div>
 
       <section className="panel mb-4 print-area">

@@ -77,9 +77,15 @@ const RULES: RuleDef[] = [
   },
   {
     id: "price-ogl-stacks", module: "Sales · Pricing", icon: "↗",
-    title: "OGL % stacks after the party discount",
-    detail: "With no net rate, OGL is an extra party discount taken after the party Disc% (compounding).",
-    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10 }); return near(r.final, 72) ? ok("₹100 − 20% then − 10% OGL = ₹72") : bad(`got ₹${r.final}`); },
+    title: "OGL % stacks after the party discount (K lines only)",
+    detail: "With no net rate, OGL is an extra party discount taken after the party Disc% (compounding) — but only on a K / retailer-network line.",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, isK: true }); return near(r.final, 72) ? ok("K line: ₹100 − 20% then − 10% OGL = ₹72") : bad(`got ₹${r.final}`); },
+  },
+  {
+    id: "price-ogl-k-only", module: "Sales · Pricing", icon: "↗",
+    title: "OGL is a K (retailer-network) discount — inert on a normal order",
+    detail: "OGL applies ONLY to K lines. On a normal 'O' order it never applies, even if the party carries an OGL %.",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, isK: false }); return near(r.final, 80) && r.oglPct === 0 ? ok("O line: OGL ignored → ₹100 − 20% = ₹80") : bad(`final=₹${r.final} ogl=${r.oglPct}`); },
   },
   {
     id: "price-party-item-supersede", module: "Sales · Pricing", icon: "↗",
@@ -91,7 +97,7 @@ const RULES: RuleDef[] = [
     id: "price-foc-party-last", module: "Sales · Pricing", icon: "↗",
     title: "Party FOC % is applied last, on top of everything",
     detail: "FOC is a party-level % taken off whatever the party-disc / OGL / net-rate steps produced.",
-    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, focPct: 10 }); return near(r.final, 64.8) ? ok("₹100 −20% −10% then −10% FOC = ₹64.80") : bad(`got ₹${r.final}`); },
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, isK: true, focPct: 10 }); return near(r.final, 64.8) ? ok("₹100 −20% −10% then −10% FOC = ₹64.80") : bad(`got ₹${r.final}`); },
   },
   {
     id: "party-item-versioned", module: "Masters · Recency", icon: "💲",

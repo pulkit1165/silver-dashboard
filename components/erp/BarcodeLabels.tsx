@@ -28,9 +28,10 @@ type LabelType = "single" | "master";
 const hasMaster = (masterQty: number, singleQty: number) => masterQty > (singleQty || 1);
 
 // TSPL SPEED, in inches/sec, for the TSC heads in use (TTP-244 / TTP-345). The
-// server clamps to this same 1–6 window. Slower = the head dwells longer on each
-// dot row, so QR modules form cleanly instead of smearing — that is why 2 is the
-// default. Faster empties a big batch sooner at some cost to scannability.
+// server clamps to this same window. Slower = the head dwells longer on each dot
+// row, so QR modules form cleanly instead of smearing. Default is 4 ips — the
+// TTP-244's RATED max, so it's the fastest that's still in spec (not an overclock);
+// the stepper below drops it a notch if bold text/QR ever ghosts on a given roll.
 const SPEED_MIN = 1;
 // TSC TTP-244 tops out at 4 ips — sending SPEED 5/6 is out of range and the printer
 // IGNORES it (falls back to its default), which is why "faster" did nothing. Cap at 4
@@ -102,7 +103,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
   // Print-quality knobs for the QR (printer/media specific). Darkness = TSPL
   // DENSITY 1–15; slower speed = crisper modules. Persisted locally.
   const [density, setDensity] = useState(8);
-  const [speed, setSpeed] = useState(3);
+  const [speed, setSpeed] = useState(4); // default to the TTP-244's rated max (4 ips); stepper can lower it
   // The APPROVED custom design for the current size (from the Label Designer). When
   // present, printing renders it as an image (WYSIWYG) instead of the old auto-layout.
   const [approvedDoc, setApprovedDoc] = useState<LabelDoc | null>(null);
@@ -449,10 +450,10 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
         const bmp = await renderDocToTSPL(useDoc, g.fill, dp);
         const r = await fetch("/api/erp/labels/print-raster", {
           method: "POST", headers: { "content-type": "application/json" },
-          // Use the on-page SPEED stepper (default 3, up to 4 on a 203dpi head) so the
+          // Use the on-page SPEED stepper (default 4 = the 203dpi head's rated max) so the
           // operator can trade speed vs. quality. Density kept solid for crisp text;
           // if big bold text ghosts at higher speed, drop the speed a notch.
-          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: useDoc.w, h: useDoc.h, copies: g.count, skuCode: g.sku, speed: Number(speed) || 3, density: 10, ...bmp }),
+          body: JSON.stringify({ printerId: brPrinterId, sizeId, w: useDoc.w, h: useDoc.h, copies: g.count, skuCode: g.sku, speed: Number(speed) || 4, density: 10, ...bmp }),
         });
         const d = await r.json();
         if (!d.ok) { setPnMsg({ ok: false, text: d.error || "Print failed." }); return; }

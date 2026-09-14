@@ -13,6 +13,9 @@
  *   2. PARTY DISCOUNT % then OGL % — only when no net rate override applies.
  *        base   = MRP × (1 − partyDiscPct/100)
  *        preFoc = base × (1 − oglPct/100)     (OGL is an extra party discount)
+ *      OGL is a RETAILER-NETWORK ("K") discount: it applies ONLY to K lines
+ *      (a whole-K order, or the K-flagged lines of an O/K order). On a normal
+ *      "O" (ours) order it never applies, even if the party carries an OGL %.
  *
  *   3. FOC DISCOUNT %  — a party-level % taken off whatever the steps above
  *        produced, applied LAST, on top of everything.
@@ -27,6 +30,7 @@ export interface LineRateInput {
   mrp: number;
   partyDiscPct: number;            // 0 when the party has no standing discount
   oglPct?: number | null;          // extra party discount %, or null/0 if none
+  isK?: boolean;                   // this line is a K / retailer-network line — REQUIRED for OGL to apply
   itemNetRate?: number | null;     // global per-SKU net rate, or null/0 if none
   partyItemNetRate?: number | null;// party-specific net rate for this item (most specific)
   focPct?: number | null;          // party-level FOC %, applied last, or null/0
@@ -51,7 +55,10 @@ export const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 10
 export function computeLineRate(input: LineRateInput): LineRateResult {
   const mrp = Number(input.mrp) || 0;
   const partyDiscPct = clampPct(input.partyDiscPct);
-  const oglPct = clampPct(input.oglPct ?? 0);
+  // OGL is a retailer-network (K) discount: it only acts on a K line. On a
+  // normal "O" order the party's OGL % is inert (this is the fix — OGL used to
+  // leak onto every order that carried a party OGL %).
+  const oglPct = input.isK ? clampPct(input.oglPct ?? 0) : 0;
   const focPct = clampPct(input.focPct ?? 0);
   const partyItemNetRate = input.partyItemNetRate != null && input.partyItemNetRate > 0 ? Number(input.partyItemNetRate) : null;
   const itemNetRate = input.itemNetRate != null && input.itemNetRate > 0 ? Number(input.itemNetRate) : null;

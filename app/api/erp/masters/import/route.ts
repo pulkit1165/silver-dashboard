@@ -7,12 +7,16 @@ import { logActivity } from "@/lib/erp/activity";
 import {
   MASTERS,
   parseRows,
+  parsePairRows,
+  detectColumns,
   type MasterConfig,
   type MasterKey,
   type ImportMode,
   type ParsedRow,
   type ParseError,
 } from "@/lib/erp/masterImport";
+import { ensurePricingTables } from "@/lib/erp/pricing-masters";
+import { ensureAbbrevTable } from "@/lib/erp/skuAbbrev";
 
 export const dynamic = "force-dynamic";
 
@@ -75,12 +79,57 @@ export async function POST(req: Request) {
   if (rows.length === 0) return NextResponse.json({ ok: false, error: "No rows provided." }, { status: 400 });
   if (rows.length > MAX_ROWS) return NextResponse.json({ ok: false, error: `Max ${MAX_ROWS} rows per upload.` }, { status: 400 });
 
+  // WHOLE-FILE guard: if the sheet's columns don't match this master (the key
+  // column and at least one data column aren't detectable in the header), the file
+  // is the wrong format — STOP the whole upload rather than silently do nothing or,
+  // in full mode, delete everything. This is authoritative (dry-run and apply both).
+  const det = detectColumns(cfg, rows);
+  if (!det.keyFound || det.fieldsFound === 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          `This file doesn't match the ${cfg.label} — its columns weren't recognised, so nothing was changed. ` +
+          `Expected columns like: ${cfg.sampleColumns.join(", ")}. ` +
+          `Your file's columns: ${det.headers.length ? det.headers.join(", ") : "(none)"}.`,
+      },
+      { status: 400 },
+    );
+  }
+
   const sql = getSql();
+
+  // Party × item net rate — two keys (party + item), resolved separately; handled
+  // before parseRows (which assumes a single key column).
+  if (cfg.kind === "pair-rate") {
+    return handlePairRate(sql, cfg, rows, dryRun, user);
+  }
+
   const { parsed, errors } = parseRows(cfg, rows);
+
+  // Full overwrite with NOTHING valid parsed would delete/reset the entire master
+  // (every existing row counts as "not in the file"). Refuse — the columns may
+  // match but every row failed (e.g. a blank required field), and wiping the
+  // master on a bad file is never the intent.
+  if (mode === "full" && parsed.length === 0) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error:
+          `Refusing full overwrite of ${cfg.label}: no valid rows were read from the file ` +
+          `(${errors.length} row(s) had problems), so it would remove everything. ` +
+          `Fix the file — or use Partial (merge) mode — and try again.`,
+      },
+      { status: 400 },
+    );
+  }
 
   if (cfg.kind === "rate") {
     return handleRate(sql, cfg, mode, parsed, errors, dryRun, user);
   }
+  // Runtime tables aren't auto-created by the route — ensure this one exists first
+  // (mirrors the pair-rate branch's ensurePricingTables()).
+  if (cfg.key === "sku-abbrev") await ensureAbbrevTable();
   return handleRow(sql, cfg, mode, parsed, errors, dryRun, user);
 }
 
@@ -335,6 +384,92 @@ async function handleRate(
     kind: "rate",
     updated,
     reset,
+    notFound: notFound.length,
+    skipped: allErrors.length,
+    errors: allErrors.slice(0, 300),
+  });
+}
+
+// ─── Pair-rate master (party × item net rate) ─────────────────────────────────
+// Appends a new net rate for each (party, item). Party is resolved by code OR
+// name; item by code. A row whose party OR item can't be found is reported and
+// skipped — the rest still apply. Append-only (versioned), so there's no "full
+// overwrite" — every upload is a merge that adds the latest rate.
+async function handlePairRate(
+  sql: postgres.Sql,
+  cfg: MasterConfig,
+  rows: Record<string, unknown>[],
+  dryRun: boolean,
+  user: SessionUser,
+) {
+  await ensurePricingTables();
+  const { pairs, errors } = parsePairRows(cfg, rows);
+
+  // Resolve parties (by code, else exact name) and items (by code) once.
+  const custRows = (await sql`SELECT id, code, name FROM customers`) as unknown as Array<{ id: number; code: string | null; name: string | null }>;
+  const byCode = new Map<string, { id: number; code: string }>();
+  const byName = new Map<string, { id: number; code: string }>();
+  for (const r of custRows) {
+    if (r.code) byCode.set(r.code.trim().toUpperCase(), { id: r.id, code: r.code });
+    if (r.name) byName.set(r.name.trim().toUpperCase(), { id: r.id, code: r.code ?? "" });
+  }
+  const skuRows = (await sql`SELECT id, sku_code FROM skus`) as unknown as Array<{ id: number; sku_code: string }>;
+  const skuByCode = new Map<string, { id: number; code: string }>();
+  for (const r of skuRows) skuByCode.set(r.sku_code.trim().toUpperCase(), { id: r.id, code: r.sku_code });
+
+  const notFound: ParseError[] = [];
+  const matched: { cid: number; code: string; skuId: number; skuCode: string; rate: number }[] = [];
+  for (const p of pairs) {
+    const cust = byCode.get(p.party.toUpperCase()) ?? byName.get(p.party.toUpperCase());
+    if (!cust) { notFound.push({ row: 0, key: `${p.party}/${p.sku_code}`, reason: `Party not found: ${p.party}` }); continue; }
+    const sku = skuByCode.get(p.sku_code.toUpperCase());
+    if (!sku) { notFound.push({ row: 0, key: `${p.party}/${p.sku_code}`, reason: `Item not found: ${p.sku_code}` }); continue; }
+    matched.push({ cid: cust.id, code: cust.code, skuId: sku.id, skuCode: sku.code, rate: p.net_rate });
+  }
+
+  if (dryRun) {
+    return NextResponse.json({
+      ok: true,
+      dryRun: true,
+      master: cfg.key,
+      label: cfg.label,
+      mode: "partial",
+      kind: "pair-rate",
+      willUpdate: matched.length,
+      notFound: notFound.length,
+      errors: [...errors, ...notFound].slice(0, 300),
+      sample: matched.slice(0, 6).map((m) => ({ party: m.code, sku_code: m.skuCode, net_rate: m.rate })),
+    });
+  }
+
+  let updated = 0;
+  for (const m of matched) {
+    try {
+      await sql`INSERT INTO party_item_net_rates (customer_id, code, sku_id, sku_code, net_rate, note, created_by)
+        VALUES (${m.cid}, ${m.code}, ${m.skuId}, ${m.skuCode}, ${m.rate}, '', ${user.name})`;
+      updated++;
+    } catch (e) {
+      errors.push({ row: 0, key: `${m.code}/${m.skuCode}`, reason: (e as Error).message });
+    }
+  }
+
+  const allErrors = [...errors, ...notFound];
+  await logActivity({
+    actor: user.name,
+    actorRole: user.role,
+    action: `${cfg.action}.import`,
+    entity: cfg.entity,
+    summary: `Party × item net rate upload — ${updated} applied${notFound.length ? `, ${notFound.length} not found` : ""}`,
+    meta: { updated, notFound: notFound.length, skipped: allErrors.length },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    master: cfg.key,
+    label: cfg.label,
+    mode: "partial",
+    kind: "pair-rate",
+    updated,
     notFound: notFound.length,
     skipped: allErrors.length,
     errors: allErrors.slice(0, 300),

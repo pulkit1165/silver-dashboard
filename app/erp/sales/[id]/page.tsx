@@ -8,6 +8,7 @@ import OrderMetaEditor from "@/components/erp/OrderMetaEditor";
 import { WhatsappButton } from "@/components/erp/OrderActions";
 import PrintOrderSheet from "@/components/erp/PrintOrderSheet";
 import { getSalesOrder } from "@/lib/erp/queries";
+import { getSoBillableQty } from "@/lib/erp/invoices";
 import { getCostByCode } from "@/lib/erp/cost";
 import { lineGp, orderGp, GP_FLOOR, ORDER_GP_FLOOR } from "@/lib/erp/gpCalc";
 import { getCurrentUser } from "@/lib/erp/session";
@@ -33,7 +34,10 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
   const ordered = so.lines.reduce((a, l) => a + l.qty, 0);
   const packed = so.lines.reduce((a, l) => a + l.packed_qty, 0);
   const dispatched = so.lines.reduce((a, l) => a + l.dispatched_qty, 0);
-  const billable = so.lines.reduce((a, l) => a + Math.max((l.dispatched_qty ?? 0) - ((l as { invoiced_qty?: number }).invoiced_qty ?? 0), 0), 0);
+  // Billable = qty on VERIFIED delivery orders not yet invoiced (excludes K lines).
+  // Gate the Bill button on this, NOT on dispatched qty — so it never shows when a
+  // DO is packed but not yet verified (which would invoice nothing).
+  const billable = await getSoBillableQty(so.id);
 
   const disp = orderDisplayStatus({ status: so.status, ordered_qty: ordered, packed_qty: packed, dispatched_qty: dispatched });
   const tone = TONE_STYLE[disp.tone];

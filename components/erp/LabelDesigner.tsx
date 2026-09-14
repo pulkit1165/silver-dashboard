@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { DESIGNER_SIZES } from "@/lib/erp/labelSizes";
+import { DESIGNER_SIZES, type LabelSize } from "@/lib/erp/labelSizes";
 import {
   type LabelDoc, type DesignEl, type ElKind, type LabelFill,
   defaultDoc, newElement, SAMPLE_FILL, FONT_GROUPS, SIZE_CHOICES_MM,
@@ -10,25 +10,60 @@ import { renderDoc, renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRe
 type Br = { id: string; pc: string; name: string; online: boolean; code?: string };
 const snap = (v: number, step = 0.5) => Math.round(v / step) * step;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-// Includes each size plus its "· LONG names" sibling (design id `<size>__long`),
-// so the long-name layout can be drawn/approved separately. The internals below
-// key off `sizeId` unchanged, so a long variant is just another size to the editor.
-const sizes = DESIGNER_SIZES.filter((s) => s.w > 0 && s.h > 0);
 const isContent = (k: ElKind) => k === "text" || k === "qr" || k === "barcode";
 const rectsHit = (ax: number, ay: number, aw: number, ah: number, b: DesignEl) =>
   ax < b.x + b.w && ax + aw > b.x && ay < b.y + Math.max(b.h, 0.5) && ay + Math.max(ah, 0.5) > b.y;
 
-export default function LabelDesigner() {
+// One add-to-label button. The default palette is the current QR-label field set; a
+// caller (e.g. the Sticker Designer) can pass its own palette (abbr1/abbr2 etc.).
+export type PaletteItem = { kind: ElKind; field?: DesignEl["field"]; label: string };
+export const DEFAULT_PALETTE: PaletteItem[] = [
+  { kind: "text", field: "code", label: "＋ SKU code" },
+  { kind: "text", field: "header", label: "＋ Header (part type)" },
+  { kind: "text", field: "name", label: "＋ Name (variant)" },
+  { kind: "text", field: "mrp", label: "＋ MRP" },
+  { kind: "text", field: "incltax", label: "＋ incl. tax" },
+  { kind: "text", field: "qty", label: "＋ Qty" },
+  { kind: "text", field: "lot", label: "＋ Lot no" },
+  { kind: "text", field: "rack", label: "＋ Rack no" },
+  { kind: "text", field: "pkd", label: "＋ PKD date" },
+  { kind: "text", field: "address", label: "＋ Address block" },
+  { kind: "text", field: "custom", label: "＋ Free text" },
+  { kind: "qr", label: "＋ QR code" },
+  { kind: "barcode", field: "code", label: "＋ Barcode" },
+  { kind: "line", label: "＋ Line" },
+  { kind: "box", label: "＋ Box" },
+];
+
+// Reusable label/sticker design editor. With no props it is the current QR-label
+// designer (unchanged). The Sticker Designer passes its own `sizes` (distinct
+// `sticker-*` design keys), `palette`, `sampleFill`, and `makeDefaultDoc`.
+export default function LabelDesigner({
+  sizes: sizesProp,
+  palette = DEFAULT_PALETTE,
+  sampleFill = SAMPLE_FILL,
+  makeDefaultDoc = defaultDoc,
+  enrichFill,
+}: {
+  sizes?: LabelSize[];
+  palette?: PaletteItem[];
+  sampleFill?: LabelFill;
+  makeDefaultDoc?: (w: number, h: number) => LabelDoc;
+  enrichFill?: (code: string) => Promise<Partial<LabelFill>>;
+} = {}) {
+  // Includes each size plus its "· LONG names" sibling for the default label set; a
+  // sticker caller passes its own list. Internals key off `sizeId` unchanged.
+  const sizes = useMemo(() => (sizesProp ?? DESIGNER_SIZES).filter((s) => s.w > 0 && s.h > 0), [sizesProp]);
   const [sizeId, setSizeId] = useState(sizes[0]?.id ?? "big-95x70");
-  const dims = useMemo(() => sizes.find((s) => s.id === sizeId) ?? { w: 70, h: 40 }, [sizeId]);
-  const [doc, setDoc] = useState<LabelDoc>(() => defaultDoc(dims.w, dims.h));
+  const dims = useMemo(() => sizes.find((s) => s.id === sizeId) ?? { w: 70, h: 40 }, [sizeId, sizes]);
+  const [doc, setDoc] = useState<LabelDoc>(() => makeDefaultDoc(dims.w, dims.h));
   const [selId, setSelId] = useState<string | null>(null);
   const [scale, setScale] = useState(9);           // px per mm
   const [status, setStatus] = useState<"none" | "draft" | "approved">("none");
   const [locked, setLocked] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [fill, setFill] = useState<LabelFill>(SAMPLE_FILL);
+  const [fill, setFill] = useState<LabelFill>(sampleFill);
   const [testLong, setTestLong] = useState(false);
   const [testCode, setTestCode] = useState("");
   const [brPrinters, setBrPrinters] = useState<Br[]>([]);
@@ -75,12 +110,12 @@ export default function LabelDesigner() {
       const d = await r.json();
       setLocked(!!d.locked);
       const row = d.design;
-      const doc0: LabelDoc = row?.draft_doc || row?.approved_doc || defaultDoc(s.w, s.h);
+      const doc0: LabelDoc = row?.draft_doc || row?.approved_doc || makeDefaultDoc(s.w, s.h);
       doc0.w = s.w; doc0.h = s.h; // keep geometry in sync with the size
       setDoc(doc0);
       setStatus(row?.status ?? "none");
-    } catch { setDoc(defaultDoc(s.w, s.h)); setStatus("none"); }
-  }, []);
+    } catch { setDoc(makeDefaultDoc(s.w, s.h)); setStatus("none"); }
+  }, [sizes, makeDefaultDoc]);
   useEffect(() => { load(sizeId); }, [sizeId, load]);
 
   // bridge printers for the test print
@@ -247,7 +282,10 @@ export default function LabelDesigner() {
       const d = await r.json();
       const l = (d.labels || [])[0];
       if (!l) { setMsg({ ok: false, text: `SKU ${code} not found.` }); return; }
-      setFill({ sku_code: l.sku_code, name: l.name, header: l.header, price: l.price, unit: l.unit || "PCS", singleQty: l.singleQty ?? 1, masterQty: l.masterQty ?? 1, lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvgSingle || l.qrSvg, qrMatrix: l.qrMatrixSingle, address: fill.address });
+      // Sticker designer: merge the real abbreviation fields (abbr1/abbr2/unit/pack)
+      // so the preview matches what prints. `enrichFill` is undefined for normal labels.
+      const extra = enrichFill ? await enrichFill(l.sku_code).catch(() => ({})) : {};
+      setFill({ sku_code: l.sku_code, name: l.name, header: l.header, price: l.price, unit: l.unit || "PCS", singleQty: l.singleQty ?? 1, masterQty: l.masterQty ?? 1, lot: l.lot, rack: l.rack, pkd: l.pkd, qrSvg: l.qrSvgSingle || l.qrSvg, qrMatrix: l.qrMatrixSingle, address: fill.address, ...extra });
       setMsg({ ok: true, text: `Loaded ${l.sku_code} — preview now shows its real QR & data.` });
     } catch { setMsg({ ok: false, text: "Could not load that SKU." }); }
   };
@@ -295,21 +333,9 @@ export default function LabelDesigner() {
         {/* add-element rail */}
         <div className="flex w-40 flex-col gap-1.5">
           <p className="text-xs font-bold text-[var(--muted)]">ADD TO LABEL</p>
-          <button onClick={() => addEl("text", "code")} className="ADDBTN">＋ SKU code</button>
-          <button onClick={() => addEl("text", "header")} className="ADDBTN">＋ Header (part type)</button>
-          <button onClick={() => addEl("text", "name")} className="ADDBTN">＋ Name (variant)</button>
-          <button onClick={() => addEl("text", "mrp")} className="ADDBTN">＋ MRP</button>
-          <button onClick={() => addEl("text", "incltax")} className="ADDBTN">＋ incl. tax</button>
-          <button onClick={() => addEl("text", "qty")} className="ADDBTN">＋ Qty</button>
-          <button onClick={() => addEl("text", "lot")} className="ADDBTN">＋ Lot no</button>
-          <button onClick={() => addEl("text", "rack")} className="ADDBTN">＋ Rack no</button>
-          <button onClick={() => addEl("text", "pkd")} className="ADDBTN">＋ PKD date</button>
-          <button onClick={() => addEl("text", "address")} className="ADDBTN">＋ Address block</button>
-          <button onClick={() => addEl("text", "custom")} className="ADDBTN">＋ Free text</button>
-          <button onClick={() => addEl("qr")} className="ADDBTN">＋ QR code</button>
-          <button onClick={() => addEl("barcode", "code")} className="ADDBTN">＋ Barcode</button>
-          <button onClick={() => addEl("line")} className="ADDBTN">＋ Line</button>
-          <button onClick={() => addEl("box")} className="ADDBTN">＋ Box</button>
+          {palette.map((p, i) => (
+            <button key={i} onClick={() => addEl(p.kind, p.field)} className="ADDBTN">{p.label}</button>
+          ))}
           <style>{`.ADDBTN{border:1px solid var(--border);border-radius:8px;padding:6px 8px;font-size:12px;font-weight:700;text-align:left;background:var(--surface)}.ADDBTN:hover{background:var(--surface-2)}`}</style>
         </div>
 

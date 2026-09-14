@@ -170,6 +170,9 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
           </>
         )}
         {!isDraft && <span className="tag g">Finalized — locked</span>}
+        {!isDraft && (
+          <a href="/erp/gst/eway-bills" className="rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-bold text-white hover:opacity-90">🚚 Generate e-Way Bill</a>
+        )}
         {msg && <span className="text-sm font-semibold text-[var(--muted)]">{msg}</span>}
       </div>
 

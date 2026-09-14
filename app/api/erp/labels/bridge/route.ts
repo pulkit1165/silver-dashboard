@@ -76,18 +76,51 @@ export async function POST(req: Request) {
   const priced = labels.map((l) => { const p = fresh[String(l.sku_code).toUpperCase()]; return p != null ? { ...l, price: p } : l; });
   // Build defensively: if a single label fails to render, drop it rather than throwing
   // the whole batch (belt-and-braces on top of the blank-token filter above).
-  const jobs = priced.flatMap((l) => {
-    try { return [{ title: `Silver label ${l.qrToken}`, tspl_b64: buildTSPL(l, w, h, opts).toString("base64") }]; }
-    catch { return []; }
-  });
+  //
+  // SPEED: N copies of one label are the SAME bitmap. Sending them as N separate
+  // one-label jobs makes the printer set up a fresh document (gap-sense/backfeed +
+  // spooler overhead) for every label — so on a big run it fills its buffer, stalls
+  // 5-7s, and repeats (the M3P9SLE symptom). Instead we collapse identical labels
+  // into ONE bitmap stamped n times via `PRINT 1,n` (chunked to CHUNK for STOP
+  // granularity), exactly like the raster path — the head then streams continuously.
+  const CHUNK = 200;
+  const PRINT11 = Buffer.from("PRINT 1,1\r\n", "ascii"); // the fixed trailer every buildTSPL emits
+  const groups = new Map<string, { token: string; body: Buffer; full: Buffer; batched: boolean; count: number }>();
+  for (const l of priced) {
+    let tspl: Buffer;
+    try { tspl = buildTSPL(l, w, h, opts); } catch { continue; }
+    const key = tspl.toString("base64");
+    const g = groups.get(key);
+    if (g) { g.count++; continue; }
+    // Strip the trailing `PRINT 1,1` so we can re-stamp the copy count per chunk.
+    const batched = tspl.length >= PRINT11.length && tspl.subarray(tspl.length - PRINT11.length).equals(PRINT11);
+    const body = batched ? tspl.subarray(0, tspl.length - PRINT11.length) : tspl;
+    groups.set(key, { token: String(l.qrToken), body, full: tspl, batched, count: 1 });
+  }
+  const jobs: { title: string; tspl_b64: string }[] = [];
+  for (const g of groups.values()) {
+    const title = `Silver label ${g.token}`;
+    if (!g.batched) { // unexpected TSPL shape — fall back to one job per copy (safe)
+      for (let i = 0; i < g.count; i++) jobs.push({ title, tspl_b64: g.full.toString("base64") });
+      continue;
+    }
+    let remaining = g.count;
+    while (remaining > 0) {
+      const n = Math.min(CHUNK, remaining);
+      const tspl = Buffer.concat([g.body, Buffer.from(`PRINT 1,${n}\r\n`, "ascii")]);
+      jobs.push({ title, tspl_b64: tspl.toString("base64") });
+      remaining -= n;
+    }
+  }
   const ids = await enqueueJobs(printerId, jobs, user.name);
   // Audit which template (design) + lock code produced this batch.
   const effDesign = (enforcedDesignFor(sizeId) ?? (Number(src.design) === 2 ? 2 : 1)) === 2 ? 2 : 1;
   const lockCode = (dbLay && "lockCode" in dbLay ? (dbLay as { lockCode?: string | null }).lockCode : null) ?? null;
   if (ids.length) logActivity({
     actor: user.name, actorRole: user.role, action: "label.print.tspl", entity: "label_layout", entityId: sizeId,
-    summary: `Queued ${ids.length} label(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
-    meta: { sizeId, design: effDesign, lockCode, count: ids.length, engine: "bridge" },
+    summary: `Queued ${labels.length} label(s) in ${ids.length} job(s) · ${w}×${h} · Design ${effDesign}${lockCode ? ` · ${lockCode}` : " · unlocked"}`,
+    meta: { sizeId, design: effDesign, lockCode, labels: labels.length, jobs: ids.length, engine: "bridge" },
   }).catch(() => {});
-  return NextResponse.json({ ok: true, ids, queued: ids.length, skipped });
+  // `queued` = labels printed (what the operator counts); `jobs` = bridge jobs enqueued.
+  return NextResponse.json({ ok: true, ids, queued: labels.length, jobs: ids.length, skipped });
 }

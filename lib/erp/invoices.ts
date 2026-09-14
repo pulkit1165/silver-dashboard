@@ -96,13 +96,40 @@ export interface CompanySettings {
   invoice_next_no: number;
   terms: string;
   ewb_threshold: number;
+  // When true, packing blocks an item whose ERP inventory is short (have < need).
+  // Default false — the ERP stock ledger isn't maintained yet, so packing is not
+  // gated on it; flip to true once opening stock is loaded / inward is recorded.
+  enforce_pack_stock: boolean;
 }
 
+// Real SILVER INDUSTRIES seller identity (from the client's GST tax invoice).
+// These double as the fallback for any field left blank in company_settings, so
+// the printed invoice header/bank block is always correct even before the
+// Company Settings screen is filled in on a fresh environment.
 const COMPANY_DEFAULT: CompanySettings = {
-  id: 1, legal_name: "SILVER INDUSTRIES", trade_name: "", gstin: "", state_code: "",
-  address: "", city: "", pincode: "", phone: "", email: "", msme_no: "",
-  bank_name: "", bank_account: "", bank_ifsc: "", bank_branch: "",
-  invoice_prefix: "GC26/", invoice_next_no: 1, terms: "", ewb_threshold: 50000,
+  id: 1,
+  legal_name: "SILVER INDUSTRIES",
+  trade_name: "SILVER UP AUTO PARTS",
+  gstin: "03ADRFS1695R1Z3",
+  state_code: "03",
+  address: "B-29-105/1, Zone-C, Oswal Complex, (Adj. Oswal Woolen Mills), Giaspura Road, G.T. Road",
+  city: "Ludhiana",
+  pincode: "141010",
+  phone: "+91-161-5196409, 4678630",
+  email: "silverup.ldh@gmail.com",
+  msme_no: "PB-12-0003106",
+  bank_name: "HDFC BANK LTD.",
+  bank_account: "50200032797094",
+  bank_ifsc: "HDFC0000634",
+  bank_branch: "FEROZE GANDHI MARKET, LUDHIANA",
+  invoice_prefix: "GC26/",
+  invoice_next_no: 1,
+  terms:
+    "1. Goods once sold will not be taken back.\n" +
+    "2. Subject to Ludhiana jurisdiction only.\n" +
+    "3. 18% interest will be charged if the bill is not paid within 30 days.",
+  ewb_threshold: 50000,
+  enforce_pack_stock: false,
 };
 
 // ── Company settings ─────────────────────────────────────────────────────────
@@ -114,7 +141,8 @@ async function ensureCompanySettingsCols() {
   if (companySettingsColsEnsured) return;
   try {
     await getSql().unsafe(`ALTER TABLE company_settings
-      ADD COLUMN IF NOT EXISTS ewb_threshold double precision DEFAULT 50000`);
+      ADD COLUMN IF NOT EXISTS ewb_threshold double precision DEFAULT 50000,
+      ADD COLUMN IF NOT EXISTS enforce_pack_stock boolean DEFAULT false`);
     companySettingsColsEnsured = true;
   } catch { /* ignore */ }
 }
@@ -143,7 +171,15 @@ async function ensureInvoiceExtraCols() {
 export async function getCompanySettings(): Promise<CompanySettings> {
   await ensureCompanySettingsCols();
   const [row] = await getSql()`SELECT * FROM company_settings ORDER BY id LIMIT 1`;
-  return (row as CompanySettings | undefined) ?? COMPANY_DEFAULT;
+  if (!row) return COMPANY_DEFAULT;
+  // Fill any blank/missing field from the known SILVER INDUSTRIES defaults, so a
+  // partially-seeded settings row still prints a complete invoice header + bank
+  // block (real values entered on the Company Settings screen always win).
+  const merged: Record<string, unknown> = { ...COMPANY_DEFAULT };
+  for (const [k, v] of Object.entries(row as Record<string, unknown>)) {
+    if (v !== null && v !== undefined && v !== "") merged[k] = v;
+  }
+  return merged as unknown as CompanySettings;
 }
 
 export async function saveCompanySettings(patch: Partial<CompanySettings>): Promise<void> {
@@ -154,18 +190,20 @@ export async function saveCompanySettings(patch: Partial<CompanySettings>): Prom
   await sql`
     INSERT INTO company_settings (id, legal_name, trade_name, gstin, state_code, address, city,
       pincode, phone, email, msme_no, bank_name, bank_account, bank_ifsc, bank_branch,
-      invoice_prefix, invoice_next_no, terms, ewb_threshold)
+      invoice_prefix, invoice_next_no, terms, ewb_threshold, enforce_pack_stock)
     VALUES (1, ${next.legal_name}, ${next.trade_name}, ${next.gstin}, ${next.state_code},
       ${next.address}, ${next.city}, ${next.pincode}, ${next.phone}, ${next.email}, ${next.msme_no},
       ${next.bank_name}, ${next.bank_account}, ${next.bank_ifsc}, ${next.bank_branch},
-      ${next.invoice_prefix}, ${next.invoice_next_no}, ${next.terms}, ${next.ewb_threshold})
+      ${next.invoice_prefix}, ${next.invoice_next_no}, ${next.terms}, ${next.ewb_threshold},
+      ${next.enforce_pack_stock ?? false})
     ON CONFLICT (id) DO UPDATE SET
       legal_name=EXCLUDED.legal_name, trade_name=EXCLUDED.trade_name, gstin=EXCLUDED.gstin,
       state_code=EXCLUDED.state_code, address=EXCLUDED.address, city=EXCLUDED.city,
       pincode=EXCLUDED.pincode, phone=EXCLUDED.phone, email=EXCLUDED.email, msme_no=EXCLUDED.msme_no,
       bank_name=EXCLUDED.bank_name, bank_account=EXCLUDED.bank_account, bank_ifsc=EXCLUDED.bank_ifsc,
       bank_branch=EXCLUDED.bank_branch, invoice_prefix=EXCLUDED.invoice_prefix,
-      invoice_next_no=EXCLUDED.invoice_next_no, terms=EXCLUDED.terms, ewb_threshold=EXCLUDED.ewb_threshold`;
+      invoice_next_no=EXCLUDED.invoice_next_no, terms=EXCLUDED.terms, ewb_threshold=EXCLUDED.ewb_threshold,
+      enforce_pack_stock=EXCLUDED.enforce_pack_stock`;
 }
 
 // ── List / read ──────────────────────────────────────────────────────────────
@@ -281,6 +319,29 @@ async function gatherDraft(sql: Sql, soId: number) {
     }));
 
   return { so, posStateCode, draftLines };
+}
+
+/**
+ * The TRUE billable qty on a sales order: qty on VERIFIED delivery orders minus
+ * already-invoiced, excluding K/retailer lines — i.e. exactly what
+ * createDraftFromSalesOrder would bill. The "Bill" button should gate on this
+ * (not on dispatched qty), so it never appears when there's nothing to invoice.
+ */
+export async function getSoBillableQty(soId: number): Promise<number> {
+  const sql = getSql();
+  const [row] = (await sql`
+    SELECT COALESCE(SUM(GREATEST(COALESCE(vp.verified_qty,0) - COALESCE(l.invoiced_qty,0), 0)), 0)::float8 AS billable
+    FROM so_lines l
+    LEFT JOIN (
+      SELECT pl.so_line_id, SUM(pl.qty)::float8 AS verified_qty
+      FROM package_lines pl JOIN packages p ON p.id = pl.package_id
+      WHERE p.status = 'verified'
+      GROUP BY pl.so_line_id
+    ) vp ON vp.so_line_id = l.id
+    WHERE l.so_id = ${soId}
+      AND NOT COALESCE(l.is_k, false)
+      AND COALESCE((SELECT bill_type FROM sales_orders WHERE id = ${soId}), '') <> 'K'`) as unknown as Array<{ billable: number }>;
+  return Number(row?.billable) || 0;
 }
 
 /**

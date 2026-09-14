@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import Scanner from "./Scanner";
 import {
@@ -8,7 +9,10 @@ import {
   num, fmtDate, buildSlipItems, casesLabel,
 } from "@/lib/erp/packing-slip-format";
 
-const COLS: { key: keyof Row; label: string; w: string }[] = [
+// Only the string-valued Row keys can be columns (excludes the boolean `fromMaster`),
+// so cell values are always strings.
+type StrRowKey = { [K in keyof Row]-?: Row[K] extends string ? K : never }[keyof Row];
+const COLS: { key: StrRowKey; label: string; w: string }[] = [
   { key: "itemCode", label: "Item Code", w: "110px" },
   { key: "itemDesc", label: "Item Description", w: "240px" },
   { key: "unit", label: "Unit", w: "64px" },
@@ -26,7 +30,12 @@ const COLS: { key: keyof Row; label: string; w: string }[] = [
 const EXPORT_HEADERS = ["Sr.No", ...COLS.map((c) => c.label)];
 // Columns hidden from the on-screen packing grid (still kept in the row data and
 // in the Excel export). Quantity is driven by Qty Dispatched (the scanned qty).
-const HIDDEN_COL_KEYS = new Set<keyof Row>(["unit", "mPack", "slipType", "pcs", "quantity"]);
+// M.MRP (master MRP) duplicates MRP on screen — hide it (still kept in the row data
+// + Excel export). One MRP column is shown, and it's locked on master rows.
+const HIDDEN_COL_KEYS = new Set<keyof Row>(["unit", "mPack", "slipType", "pcs", "quantity", "mMrp"]);
+// On a master-sourced row these identity/price fields are read-only; only Qty
+// Dispatched is entered while packing.
+const LOCKED_ON_MASTER = new Set<keyof Row>(["itemCode", "itemDesc", "mMrp", "mrp", "csNo"]);
 const VISIBLE_COLS = COLS.filter((c) => !HIDDEN_COL_KEYS.has(c.key));
 // Compulsory for every scanned row. Qty Dispatched replaces Quantity (which is
 // now hidden and mirrors it).
@@ -51,7 +60,7 @@ const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", p
 type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
 type SoLineInfo = { sku_code?: string; sku_name?: string; qr_token?: string; qty: number; dispatched_qty: number; mrp: number; std_pack?: number };
 
-export default function PackingSlip({ orders = [], parties = [] }: { orders?: OrderOpt[]; parties?: string[] }) {
+export default function PackingSlip({ orders = [], parties = [], canBill = false }: { orders?: OrderOpt[]; parties?: string[]; canBill?: boolean }) {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
@@ -69,6 +78,8 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
   const [slips, setSlips] = useState<SlipMeta[]>([]);
   const [slipId, setSlipId] = useState<number | null>(null);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
+  const [pushingBill, setPushingBill] = useState(false);
+  const router = useRouter();
   const [collab, setCollab] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -187,6 +198,24 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     finally { savingRef.current = false; }
   }
 
+  // Push this saved slip to billing → create the draft invoice, then open it to
+  // finalize + print + e-way. Saves first so the latest dispatched qty is billed.
+  async function pushToBilling() {
+    if (pushingBill) return;
+    if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; await doSave(); }
+    const sid = slipIdRef.current;
+    if (!sid) { alert("Save the slip first (enter a Slip No.)."); return; }
+    if (!confirm("Create a bill from this packing slip? A draft invoice opens next — review, finalize, print, then generate the e-way bill.")) return;
+    setPushingBill(true);
+    try {
+      const r = await fetch(`/api/erp/packing-slips/${sid}/to-invoice`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert("Could not create bill: " + (d.error || `server ${r.status}`)); return; }
+      router.push(`/erp/invoices/${d.invoiceId}`);
+    } catch { alert("Could not create bill — network error."); }
+    finally { setPushingBill(false); }
+  }
+
   // load list + last opened slip (a ?open=<id> in the URL — e.g. from the Saved Slips
   // archive — wins over the last-opened-locally slip)
   useEffect(() => {
@@ -264,6 +293,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     if (usedCases.has(pickCase)) { flash(false, `Case ${pickCase} already exists for this slip — use Edit to change it.`); return; }
     const seeded: Row[] = soLines.filter((l) => remainingForLine(l) > 0).map((l) => ({
       ...blankRow(pickCase),
+      fromMaster: true,
       itemCode: l.sku_code ?? "", itemDesc: l.sku_name ?? "",
       mrp: l.mrp != null ? String(l.mrp) : "", mMrp: l.mrp != null ? String(l.mrp) : "",
       mPack: l.std_pack ? String(l.std_pack) : "",
@@ -324,6 +354,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
         }
         return [...rows, {
           ...blankRow(activeCaseNo),
+          fromMaster: true,
           itemCode: p.skuCode, itemDesc: p.name, unit: p.unit,
           mrp: p.mrp, mMrp: p.mrp,
           qtyOrdered: p.orderedStr, qtyDispatched: String(p.addQty), quantity: String(p.addQty),
@@ -359,6 +390,7 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
     const orderedStr = soLine ? String(soLine.qty) : "";
     setActiveRows((rows) => [...rows, {
       ...blankRow(activeCaseNo),
+      fromMaster: true,
       itemCode: skuCode, itemDesc: sku.name, unit: sku.unit || "",
       mrp: sku.price != null ? String(sku.price) : "", mMrp: sku.price != null ? String(sku.price) : "",
       qtyOrdered: orderedStr, qtyDispatched: "", quantity: "", pendingQty: orderedStr,
@@ -557,6 +589,11 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
         <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
         <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
         <a href="/erp/packing-slip/saved" title="Browse all saved packing slips, filter by customer or date" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">🗂 Saved slips</a>
+        {soId && canBill && (
+          <button onClick={pushToBilling} disabled={pushingBill} title="Create a GST bill from this packing slip" className="rounded-lg bg-[var(--accent-2)] px-3 py-1.5 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
+            {pushingBill ? "Billing…" : "🧾 Push to Billing"}
+          </button>
+        )}
         <a href="/erp/sales/decode" title="Upload a Sales Order (Excel/CSV or photo) — it becomes an order you can pack here" className="rounded-lg border border-[var(--accent)] bg-[var(--accent-bg)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent)] hover:text-white">⬆ Upload Sales Order</a>
         <span className="ml-auto flex items-center gap-3 text-xs">
           {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
@@ -695,6 +732,11 @@ export default function PackingSlip({ orders = [], parties = [] }: { orders?: Or
                                   <input autoFocus onBlur={() => setEditCell(null)} className={`${cellCls} ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : ""}`} style={cellStyle} value={r[c.key]} onChange={(e) => updateRow(r.id, c.key, e.target.value)} />
                                 </td>
                               );
+                            }
+                            // Master-sourced rows: identity + price come from the SKU/SO
+                            // and are LOCKED — the operator only records Qty Dispatched.
+                            if (r.fromMaster && LOCKED_ON_MASTER.has(c.key)) {
+                              return <td key={c.key} style={cellStyle}><div className={`${cellCls} flex items-center bg-[var(--surface-2)] text-[var(--muted)]`} style={cellStyle} title="From the item master — locked">{r[c.key] || "—"}</div></td>;
                             }
                             return (
                               <td key={c.key} style={cellStyle}>

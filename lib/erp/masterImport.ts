@@ -17,7 +17,7 @@
 // This module is pure data + string helpers (no server-only imports) so the
 // client can import the metadata list too.
 
-export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "party-ogl" | "party-foc" | "item-rates" | "item-net-rate";
+export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "party-ogl" | "party-foc" | "item-rates" | "item-net-rate" | "party-item-net-rate" | "sku-abbrev";
 
 /** Collapse a header to a comparison key: lowercase, strip non-alphanumerics. */
 export const norm = (k: string) => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -69,7 +69,7 @@ export interface MasterConfig {
   permission: string; // WRITERS key in rbac.ts
   entity: string; // activity-log entity
   action: string; // activity-log action prefix
-  kind: "row" | "rate";
+  kind: "row" | "rate" | "pair-rate"; // pair-rate = a value keyed by TWO records (party × item)
   fields: FieldDef[];
   refs?: RefCheck[]; // for row-kind full-overwrite protection
   cleanupChildren?: { table: string; col: string }[]; // child rows to purge when a row is deleted
@@ -292,11 +292,72 @@ export const MASTERS: Record<MasterKey, MasterConfig> = {
     ],
     sampleColumns: ["sku_code", "item_net_rate"],
   },
+
+  // The MOST specific rate: a fixed net rate for one item, for one party. Keyed by
+  // TWO records (party + item), so it's a "pair-rate" — the party and the item are
+  // each resolved (by code or name); a row whose party OR item isn't found is
+  // reported and skipped while the rest go through.
+  "party-item-net-rate": {
+    key: "party-item-net-rate",
+    label: "Party × Item Net Rate",
+    table: "party_item_net_rates",
+    keyCol: "sku_code", // not used for matching (pair-rate resolves both sides itself)
+    keyAliases: ITEM_CODE_ALIASES,
+    keyLabel: "Party (code/name) + Item code",
+    permission: "rates",
+    entity: "customer",
+    action: "customer.party_item",
+    kind: "pair-rate",
+    fields: [
+      { col: "party", type: "text", aliases: ["party", "partyname", "partycode", "customer", "customername", "customercode", "account", "acntdesc", "ac"], required: true },
+      { col: "sku_code", type: "text", aliases: ["skucode", "itemcode", "sku", "item", "code", "partno", "partnumber"], required: true },
+      { col: "net_rate", type: "num", aliases: ["netrate", "net", "rate", "sp", "price", "netprice", "amount", "partyitemnetrate", "partynetrate"], required: true },
+    ],
+    sampleColumns: ["party", "sku_code", "net_rate"],
+  },
+
+  // Abbreviation ("trade name") STICKER master — a per-SKU row master feeding the
+  // separate abbreviation-sticker module. Its own table (sku_abbrev_master); does
+  // NOT touch label_master / skus.name / MRP. Columns map to the client's ITEMS
+  // MASTER.xlsx: Label Desc.→line1, Label Desc.1→line2, Units→unit, MASTER/SINGAL PACK.
+  "sku-abbrev": {
+    key: "sku-abbrev",
+    label: "Item Abbreviation (Sticker)",
+    table: "sku_abbrev_master",
+    keyCol: "sku_code",
+    keyAliases: ITEM_CODE_ALIASES,
+    keyLabel: "Item code",
+    permission: "labels",
+    entity: "sku",
+    action: "sku.abbrev",
+    kind: "row",
+    fields: [
+      { col: "line1", type: "text", aliases: ["labeldesc", "labeldescription", "abbreviation", "abbr", "line1", "tradename", "name1"], required: true },
+      { col: "line2", type: "text", aliases: ["labeldesc1", "labeldescription1", "line2", "size", "sizetext", "variant", "name2"] },
+      { col: "unit", type: "text", aliases: ["units", "unit", "uom"] },
+      { col: "master_pack", type: "num", aliases: ["masterpack", "mpack", "cartonqty", "masterpacksize", "stdpack"] },
+      { col: "single_pack", type: "num", aliases: ["singalpack", "singlepack", "spack", "innerpack", "singleqty"] },
+    ],
+    sampleColumns: ["code", "label desc.", "label desc.1", "units", "master pack", "singal pack"],
+  },
 };
 
 export const MASTER_KEYS = Object.keys(MASTERS) as MasterKey[];
 
-/** Client-safe metadata (no query logic) for the uploader dropdown + hints. */
+/** A human label for a DB column (used by the single-entry add form). */
+export function fieldLabel(col: string): string {
+  const special: Record<string, string> = {
+    sku_code: "Item code", gst: "GSTIN", ogl_pct: "OGL %", foc_pct: "FOC %",
+    discount_pct: "Discount %", gst_rate: "GST %", hsn: "HSN", price: "MRP",
+    net_rate: "Net rate", item_net_rate: "Item net rate", selling_price: "Net rate",
+    master_qty: "Master (carton) qty", single_qty: "Inner/single qty", barcode_code: "Barcode",
+    pos_state_code: "Place-of-supply state", state_code: "State code", credit_limit: "Credit limit",
+    payment_terms: "Payment terms",
+  };
+  return special[col] ?? col.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Client-safe metadata (no query logic) for the uploader dropdown + hints + single-add form. */
 export const MASTER_LIST = MASTER_KEYS.map((k) => {
   const m = MASTERS[k];
   return {
@@ -306,7 +367,16 @@ export const MASTER_LIST = MASTER_KEYS.map((k) => {
     kind: m.kind,
     permission: m.permission,
     sampleColumns: m.sampleColumns,
+    keyCol: m.keyCol,
+    keyFieldAliasHint: m.keyLabel,
     fieldCols: m.fields.map((f) => f.col),
+    // Full field metadata so the client can render a single-entry "add one" form.
+    // For row/rate masters the match KEY is a separate column (not in fields), so we
+    // prepend it; for pair-rate the two keys ARE fields already.
+    formFields: (m.kind === "pair-rate"
+      ? m.fields
+      : [{ col: m.keyCol, type: "text" as FieldType, aliases: m.keyAliases, required: true }, ...m.fields]
+    ).map((f) => ({ col: f.col, label: fieldLabel(f.col), type: f.type, required: !!f.required })),
   };
 });
 export type MasterMeta = (typeof MASTER_LIST)[number];
@@ -382,4 +452,69 @@ export function parseRows(cfg: MasterConfig, rows: Record<string, unknown>[]): {
   });
 
   return { parsed, errors };
+}
+
+/**
+ * Does the uploaded sheet even have THIS master's columns? Used to STOP a
+ * completely-wrong file (mismatched columns) before it silently changes nothing
+ * — or, in full-overwrite mode, wrongly treats the whole master as "not in the
+ * file" and deletes it. Looks only at the header row.
+ */
+export function detectColumns(cfg: MasterConfig, rows: Record<string, unknown>[]): {
+  headers: string[];
+  keyFound: boolean;
+  fieldsFound: number;
+} {
+  const first = (rows.find((r) => r && typeof r === "object") ?? {}) as Record<string, unknown>;
+  const headers = Object.keys(first);
+  const headerKeys = headers.map(norm).filter(Boolean);
+  const has = (aliases: string[]) => aliases.some((a) => headerKeys.includes(a));
+
+  if (cfg.kind === "pair-rate") {
+    const party = cfg.fields.find((f) => f.col === "party")!;
+    const item = cfg.fields.find((f) => f.col === "sku_code")!;
+    const rate = cfg.fields.find((f) => f.col === "net_rate")!;
+    const keyFound = has(party.aliases) && has(item.aliases);
+    const fieldsFound = [party, item, rate].filter((f) => has(f.aliases)).length;
+    return { headers, keyFound, fieldsFound };
+  }
+  return {
+    headers,
+    keyFound: has(cfg.keyAliases),
+    fieldsFound: cfg.fields.filter((f) => has(f.aliases)).length,
+  };
+}
+
+/** A parsed pair-rate source row (party × item → net rate), pre-DB-resolution. */
+export interface PairRow { party: string; sku_code: string; net_rate: number }
+
+/**
+ * Parse raw sheet rows for a pair-rate master (party × item net rate). Only
+ * shape/blank validation here; party/item existence is checked against the DB in
+ * the route (unknown party/item → skipped-with-error, the rest still apply).
+ */
+export function parsePairRows(cfg: MasterConfig, rows: Record<string, unknown>[]): { pairs: PairRow[]; errors: ParseError[] } {
+  const pairs: PairRow[] = [];
+  const errors: ParseError[] = [];
+  const seen = new Set<string>();
+  const partyF = cfg.fields.find((f) => f.col === "party")!;
+  const itemF = cfg.fields.find((f) => f.col === "sku_code")!;
+  const rateF = cfg.fields.find((f) => f.col === "net_rate")!;
+
+  rows.forEach((raw, i) => {
+    const rn = normalizeRaw(raw);
+    const party = pickFrom(rn, partyF.aliases).trim();
+    const sku = pickFrom(rn, itemF.aliases).trim();
+    const rateCell = pickFrom(rn, rateF.aliases);
+    if (!party && !sku && rateCell === "") return; // blank line
+    if (!party) { errors.push({ row: i + 1, key: sku, reason: "Missing party" }); return; }
+    if (!sku) { errors.push({ row: i + 1, key: party, reason: "Missing item code" }); return; }
+    if (rateCell === "") { errors.push({ row: i + 1, key: `${party}/${sku}`, reason: "Missing net rate" }); return; }
+    const dupKey = `${party.toUpperCase()}|${sku.toUpperCase()}`;
+    if (seen.has(dupKey)) { errors.push({ row: i + 1, key: `${party}/${sku}`, reason: "Duplicate party+item in file" }); return; }
+    seen.add(dupKey);
+    pairs.push({ party, sku_code: sku, net_rate: num(rateCell) });
+  });
+
+  return { pairs, errors };
 }

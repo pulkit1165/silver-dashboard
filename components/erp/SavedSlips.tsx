@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { fmtDate } from "@/lib/erp/packing-slip-format";
 import type { PackingSlipListRow } from "@/lib/erp/packing-slips";
 
@@ -10,8 +11,10 @@ type StatusFilter = "all" | "complete" | "draft";
 // The date a slip is filed under: its own "Packing Slip Date" if set, else the day it was saved.
 const effDate = (s: PackingSlipListRow) => (s.slip_date || s.updated_at || "").slice(0, 10);
 
-export default function SavedSlips({ initial }: { initial: PackingSlipListRow[] }) {
+export default function SavedSlips({ initial, canBill = false }: { initial: PackingSlipListRow[]; canBill?: boolean }) {
+  const router = useRouter();
   const [slips, setSlips] = useState<PackingSlipListRow[]>(initial);
+  const [billing, setBilling] = useState<number | null>(null);
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -48,6 +51,21 @@ export default function SavedSlips({ initial }: { initial: PackingSlipListRow[] 
 
   const completeCount = slips.filter((s) => s.is_complete).length;
   const reset = () => { setQ(""); setFrom(""); setTo(""); setStatus("all"); };
+
+  // Push a saved slip to billing: creates the draft invoice from its Sales Order
+  // (verifying the packed cases), then opens the invoice to finalize + print + e-way.
+  async function pushToBilling(s: PackingSlipListRow) {
+    if (billing) return;
+    if (!confirm(`Create a bill from slip ${s.slip_no}${s.party ? ` (${s.party})` : ""}?\n\nThis makes a DRAFT invoice from ${s.so_no} — you can review, finalize, print, and generate the e-way bill on the next screen.`)) return;
+    setBilling(s.id);
+    try {
+      const r = await fetch(`/api/erp/packing-slips/${s.id}/to-invoice`, { method: "POST" });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok || !d.ok) { alert("Could not create bill: " + (d.error || `server ${r.status}`)); return; }
+      router.push(`/erp/invoices/${d.invoiceId}`);
+    } catch { alert("Could not create bill — network error."); }
+    finally { setBilling(null); }
+  }
 
   async function deleteSlip(s: PackingSlipListRow) {
     if (!confirm(`Delete packing slip ${s.slip_no}${s.party ? ` (${s.party})` : ""}?\n\nThis removes the saved document only — any stock already dispatched stays dispatched. This can't be undone.`)) return;
@@ -141,6 +159,16 @@ export default function SavedSlips({ initial }: { initial: PackingSlipListRow[] 
                       >
                         Open →
                       </Link>
+                      {canBill && s.so_no && (
+                        <button
+                          onClick={() => pushToBilling(s)}
+                          disabled={billing === s.id}
+                          title="Create a GST bill from this slip"
+                          className="rounded-lg bg-[var(--accent-2)] px-3 py-1.5 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50"
+                        >
+                          {billing === s.id ? "Billing…" : "🧾 Push to Billing"}
+                        </button>
+                      )}
                       <button
                         onClick={() => deleteSlip(s)}
                         title="Delete this saved slip"

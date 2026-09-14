@@ -183,10 +183,29 @@ async function drawQr(ctx: CanvasRenderingContext2D, el: DesignEl, fill: LabelFi
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(img, x, y, box, box);
   } else {
-    // placeholder checker ONLY in the editor when no SKU is loaded (never at print).
-    ctx.strokeStyle = "#000"; ctx.strokeRect(x, y, box, box);
-    const n = 6, c = box / n;
-    for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) if ((i + j) % 2 === 0) ctx.fillRect(x + i * c, y + j * c, c, c);
+    // Placeholder ONLY in the editor when no SKU is loaded (never at print). Draw it
+    // the SAME footprint a REAL QR prints — a SQUARE (min w,h) with the mandatory
+    // 4-module white quiet zone — so the editor is WYSIWYG. The box always looks
+    // bigger than the code because the QR is square and carries a scan margin; the
+    // finder squares make it read as a QR. (A loaded SKU draws the true matrix above.)
+    const size = 25, quiet = 4, total = size + quiet * 2; // representative QR footprint
+    const md = box / total;
+    const ox = x + quiet * md, oy = y + quiet * md;
+    ctx.fillStyle = "#fff"; ctx.fillRect(x, y, box, box); // full footprint incl. quiet zone
+    ctx.fillStyle = "#000";
+    const finder = (fx: number, fy: number) => {
+      ctx.fillStyle = "#000"; ctx.fillRect(fx, fy, md * 7, md * 7);
+      ctx.fillStyle = "#fff"; ctx.fillRect(fx + md, fy + md, md * 5, md * 5);
+      ctx.fillStyle = "#000"; ctx.fillRect(fx + md * 2, fy + md * 2, md * 3, md * 3);
+    };
+    for (let r = 0; r < size; r++) for (let c = 0; c < size; c++) {
+      const inFinder = (r < 8 && c < 8) || (r < 8 && c > size - 9) || (r > size - 9 && c < 8);
+      if (!inFinder && (r * 7 + c * 3 + r * c) % 3 === 0) ctx.fillRect(ox + c * md, oy + r * md, md, md);
+    }
+    finder(ox, oy); finder(ox + (size - 7) * md, oy); finder(ox, oy + (size - 7) * md);
+    // faint outline of the QR's true (square) print size, inside the element box
+    ctx.strokeStyle = "#cbd5e1"; ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, box - 1, box - 1);
   }
 }
 

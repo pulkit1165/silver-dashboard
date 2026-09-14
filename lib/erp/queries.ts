@@ -2,6 +2,7 @@ import "server-only";
 import { getSql } from "./db";
 import { genToken } from "./token";
 import { logActivity } from "./activity";
+import { computeLineRate } from "./pricing";
 import type {
   Sku, Warehouse, Bin, InventoryRow, StockStatus, ScanEvent,
   SalesOrder, SoLine, Vendor, Customer, PurchaseOrder, PoLine, PurchaseOrderDoc,
@@ -394,9 +395,37 @@ export async function promoteDecodedOrder(
 ): Promise<{ ok: true; soId: number; soNo: string } | { error: string }> {
   const sql = getSql();
   return await sql.begin(async (tx) => {
-    const [so] = (await tx`SELECT status FROM sales_orders WHERE id=${id} FOR UPDATE`) as unknown as Array<{ status: string }>;
+    const [so] = (await tx`SELECT status, customer_id, COALESCE(bill_type,'') AS bill_type FROM sales_orders WHERE id=${id} FOR UPDATE`) as unknown as Array<{ status: string; customer_id: number | null; bill_type: string }>;
     if (!so) return { error: "Decoded order not found." };
     if (so.status !== "decoded") return { error: `This order is '${so.status}', not a decoded slip — nothing to promote.` };
+
+    // Re-price every line through the SAME discount waterfall a hand-punched order
+    // uses (party disc% → OGL% → net rate → FOC%). An uploaded/decoded order only
+    // carried a raw rate, so without this it would ignore the party's conditions.
+    if (so.customer_id) {
+      const [cust] = (await tx`SELECT COALESCE(discount_pct,0)::float8 dp, COALESCE(ogl_pct,0)::float8 ogl, COALESCE(foc_pct,0)::float8 foc FROM customers WHERE id=${so.customer_id}`) as unknown as Array<{ dp: number; ogl: number; foc: number }>;
+      const dp = cust?.dp ?? 0, ogl = cust?.ogl ?? 0, foc = cust?.foc ?? 0;
+      const pir = (await tx`SELECT DISTINCT ON (sku_id) sku_id, net_rate FROM party_item_net_rates WHERE customer_id=${so.customer_id} ORDER BY sku_id, effective_at DESC, id DESC`) as unknown as Array<{ sku_id: number; net_rate: number }>;
+      const pirMap = new Map<number, number>();
+      for (const r of pir) pirMap.set(r.sku_id, Number(r.net_rate) || 0);
+      const lines = (await tx`
+        SELECT l.id, l.sku_id, COALESCE(l.qty,0)::float8 qty, COALESCE(l.is_k,false) AS is_k,
+               COALESCE(NULLIF(l.mrp,0), s.price, 0)::float8 mrp, COALESCE(s.item_net_rate,0)::float8 inr
+        FROM so_lines l JOIN skus s ON s.id = l.sku_id WHERE l.so_id = ${id} ORDER BY l.id`) as unknown as
+        Array<{ id: number; sku_id: number; qty: number; is_k: boolean; mrp: number; inr: number }>;
+      // OGL is a retailer-network (K) discount — it only applies to K lines:
+      // a whole-K order (bill_type 'K'), or the K-flagged lines of an O/K order.
+      let total = 0;
+      for (const l of lines) {
+        const lineIsK = so.bill_type === "K" || (so.bill_type === "O/K" && l.is_k);
+        const r = computeLineRate({ mrp: l.mrp, partyDiscPct: dp, oglPct: ogl, isK: lineIsK, itemNetRate: l.inr, partyItemNetRate: pirMap.get(l.sku_id) ?? null, focPct: foc });
+        const rateType = r.netRateApplied ? r.netRateSource : (dp || ogl || foc ? "disc" : "mrp");
+        await tx`UPDATE so_lines SET price=${r.final}, mrp=${l.mrp}, discount_pct=${r.effectiveDiscPct}, rate_type=${rateType} WHERE id=${l.id}`;
+        total += l.qty * r.final;
+      }
+      await tx`UPDATE sales_orders SET total=${Math.round(total * 100) / 100} WHERE id=${id}`;
+    }
+
     const [{ next }] = await tx`
       SELECT COALESCE(MAX(CAST(SUBSTRING(so_no FROM 4) AS INT)), 1000) + 1 AS next
         FROM sales_orders WHERE so_no LIKE 'SO-%'`;
@@ -405,6 +434,7 @@ export async function promoteDecodedOrder(
     return { ok: true as const, soId: id, soNo };
   });
 }
+
 
 // ─── SKU alias learning ("train the decoder on our names") ──────────────────
 // Every time a human confirms/corrects a decoded line, we remember the mapping

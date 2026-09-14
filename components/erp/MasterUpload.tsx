@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 type Err = { row: number; key: string; reason: string };
 
 interface Preview {
-  kind: "row" | "rate";
+  kind: "row" | "rate" | "pair-rate";
   willInsert?: number;
   willUpdate?: number;
   willDelete?: number;
@@ -18,7 +18,7 @@ interface Preview {
   errors: Err[];
 }
 interface Result {
-  kind: "row" | "rate";
+  kind: "row" | "rate" | "pair-rate";
   inserted?: number;
   updated?: number;
   deleted?: number;
@@ -45,6 +45,10 @@ export default function MasterUpload({
   const [result, setResult] = useState<Result | null>(null);
   const [busy, setBusy] = useState("");
   const [confirmText, setConfirmText] = useState("");
+  // Single-entry "add one" form (no file) — reuses the import route with one row.
+  const [single, setSingle] = useState<Record<string, string>>({});
+  const [singleMsg, setSingleMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [singleBusy, setSingleBusy] = useState(false);
 
   const meta = useMemo(() => masters.find((m) => m.key === master)!, [masters, master]);
 
@@ -105,8 +109,52 @@ export default function MasterUpload({
     }
   }
 
+  // Add ONE entry (no file): send a single row through the same import route in
+  // partial mode — so it validates, skips-and-reports the same way, and (for row
+  // masters) creates a new record or updates the existing one matched by key.
+  async function submitSingle() {
+    const obj: Record<string, string> = {};
+    for (const f of meta.formFields) {
+      const v = (single[f.col] ?? "").trim();
+      if (v !== "") obj[f.col] = v;
+    }
+    const missing = meta.formFields.filter((f) => f.required && !(f.col in obj));
+    if (missing.length) {
+      setSingleMsg({ ok: false, text: `Please fill: ${missing.map((m) => m.label).join(", ")}` });
+      return;
+    }
+    setSingleBusy(true);
+    setSingleMsg(null);
+    try {
+      const r = await fetch("/api/erp/masters/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ master, mode: "partial", rows: [obj], dryRun: false }),
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        setSingleMsg({ ok: false, text: d.error || "Failed" });
+        return;
+      }
+      const applied = (d.inserted ?? 0) + (d.updated ?? 0);
+      if (applied > 0) {
+        const what = (d.inserted ?? 0) > 0 ? "added" : "updated";
+        setSingleMsg({ ok: true, text: `${meta.label}: entry ${what} ✓` });
+        setSingle({});
+      } else {
+        const reason = d.errors?.[0]?.reason;
+        setSingleMsg({ ok: false, text: reason ? `Skipped — ${reason}` : "No change was made." });
+      }
+    } catch {
+      setSingleMsg({ ok: false, text: "Network error." });
+    } finally {
+      setSingleBusy(false);
+    }
+  }
+
   const headers = rows[0] ? Object.keys(rows[0]) : [];
-  const isFull = mode === "full";
+  const isPair = meta.kind === "pair-rate"; // party×item net rate — append-only, no full overwrite
+  const isFull = !isPair && mode === "full";
   const isSku = master === "skus";
   const applyReady = !!preview && (!isFull || confirmText.trim().toUpperCase() === "OVERWRITE");
 
@@ -121,9 +169,13 @@ export default function MasterUpload({
             <select
               value={master}
               onChange={(e) => {
-                setMaster(e.target.value as MasterKey);
+                const k = e.target.value as MasterKey;
+                setMaster(k);
+                if (masters.find((m) => m.key === k)?.kind === "pair-rate") setMode("partial");
                 setRows([]);
                 setFileName("");
+                setSingle({});
+                setSingleMsg(null);
                 reset();
               }}
               className="w-full max-w-sm rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]"
@@ -136,32 +188,40 @@ export default function MasterUpload({
             </select>
           </label>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <ModeCard
-              active={mode === "partial"}
-              onClick={() => {
-                setMode("partial");
-                reset();
-              }}
-              title="Partial (half) — merge"
-              desc="Add rows that are new and update the ones in the file (matched by code). Everything else stays exactly as it is."
-              tone="safe"
-            />
-            <ModeCard
-              active={mode === "full"}
-              onClick={() => {
-                setMode("full");
-                reset();
-              }}
-              title="Full overwrite — replace"
-              desc={
-                meta.kind === "rate"
-                  ? "The file becomes the complete rate list. Every record NOT in the file has its rate reset to default."
-                  : "The master becomes exactly the file. Rows not in the file are removed — except any still used by an order/invoice/stock move, which are kept."
-              }
-              tone="danger"
-            />
-          </div>
+          {isPair ? (
+            <div className="rounded-lg border border-[var(--accent)] bg-[var(--surface-2)] p-3 text-xs text-[var(--muted)]">
+              This master <b>always appends</b> — each upload adds the latest net rate for every party+item in the file
+              (a versioned history is kept). Rows for a party or item that doesn&apos;t exist are reported and skipped;
+              the rest still go through.
+            </div>
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ModeCard
+                active={mode === "partial"}
+                onClick={() => {
+                  setMode("partial");
+                  reset();
+                }}
+                title="Partial (half) — merge"
+                desc="Add rows that are new and update the ones in the file (matched by code). Everything else stays exactly as it is."
+                tone="safe"
+              />
+              <ModeCard
+                active={mode === "full"}
+                onClick={() => {
+                  setMode("full");
+                  reset();
+                }}
+                title="Full overwrite — replace"
+                desc={
+                  meta.kind === "rate"
+                    ? "The file becomes the complete rate list. Every record NOT in the file has its rate reset to default."
+                    : "The master becomes exactly the file. Rows not in the file are removed — except any still used by an order/invoice/stock move, which are kept."
+                }
+                tone="danger"
+              />
+            </div>
+          )}
 
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3 text-xs text-[var(--muted)]">
             <b>Expected columns</b> (any order; extra columns ignored, header names auto-detected):{" "}
@@ -173,9 +233,53 @@ export default function MasterUpload({
         </div>
       </section>
 
+      {/* Add ONE entry (no file) */}
+      <section className="panel">
+        <div className="panel-hd">Add a single entry (no file)</div>
+        <div className="flex flex-col gap-3 p-4">
+          <div className="text-xs text-[var(--muted)]">
+            Type one {meta.label.toLowerCase()} entry and save it. Matched by <b>{meta.keyLabel}</b> —
+            {meta.kind === "row"
+              ? " a new code is added; an existing code is updated."
+              : meta.kind === "pair-rate"
+                ? " the party and item must already exist; the net rate is added."
+                : " the record must already exist; its rate is set."}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {meta.formFields.map((f) => (
+              <label key={f.col} className="flex flex-col gap-1 text-xs font-semibold">
+                {f.label}
+                {f.required && <span className="text-[var(--danger)]"> *</span>}
+                <input
+                  value={single[f.col] ?? ""}
+                  onChange={(e) => setSingle((s) => ({ ...s, [f.col]: e.target.value }))}
+                  type={f.type === "num" ? "number" : "text"}
+                  step={f.type === "num" ? "any" : undefined}
+                  className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm font-normal outline-none focus:border-[var(--accent)]"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={submitSingle}
+              disabled={singleBusy}
+              className="rounded-lg bg-[var(--accent)] px-4 py-2 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50"
+            >
+              {singleBusy ? "Saving…" : "Save entry"}
+            </button>
+            {singleMsg && (
+              <span className="text-sm font-bold" style={{ color: singleMsg.ok ? "var(--accent-2)" : "var(--danger)" }}>
+                {singleMsg.text}
+              </span>
+            )}
+          </div>
+        </div>
+      </section>
+
       {/* 2 — upload / paste */}
       <section className="panel">
-        <div className="panel-hd">2 · Upload or paste</div>
+        <div className="panel-hd">Or bulk upload / paste</div>
         <div className="flex flex-col gap-3 p-4">
           <input
             type="file"

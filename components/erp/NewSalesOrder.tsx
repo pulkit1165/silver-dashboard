@@ -49,9 +49,12 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   const oglPct = customer?.ogl_pct ?? 0;
   const partyFocPct = customer?.foc_pct ?? 0;
   const [partyItemRates, setPartyItemRates] = useState<Map<number, number>>(new Map());
+  // Is a line a K (retailer-network) line? A whole-K order, or a K-flagged line of
+  // an O/K order. OGL only applies to K lines — pass this into the pricing context.
+  const lineIsKUnder = (bt: string, lineIsK: boolean) => bt === "K" || (bt === "O/K" && lineIsK);
   // Pricing context for a SKU — most-specific party×item rate (optional map override for freshly-fetched data).
-  function pctx(skuId: number, map: Map<number, number> = partyItemRates) {
-    return { discPct, oglPct, focPct: partyFocPct, partyItemNetRate: map.get(skuId) ?? 0 };
+  function pctx(skuId: number, lineIsK = false, map: Map<number, number> = partyItemRates, bt: string = billType) {
+    return { discPct, oglPct, isK: lineIsKUnder(bt, lineIsK), focPct: partyFocPct, partyItemNetRate: map.get(skuId) ?? 0 };
   }
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
   const customerOptions = useMemo(
@@ -121,7 +124,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
         if (!sku) return;
         loadRates(sku.name, party).then(({ partyRates, itemRates }) => {
           if (cancelled) return;
-          updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id, map)), partyRates, itemRates, loadingRates: false });
+          updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id, l.isK, map)), partyRates, itemRates, loadingRates: false });
         });
       });
     })();
@@ -131,6 +134,24 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
 
   function updateLine(idx: number, patch: Partial<Line>) {
     setLines((ls) => ls.map((l, i) => (i === idx ? { ...l, ...patch } : l)));
+  }
+
+  // Re-price a line under a given K status (OGL applies only to K lines).
+  function priceLineUnder(l: Line, lineIsK: boolean, bt: string): Line {
+    if (!l.skuId) return l;
+    const sku = skuById.get(l.skuId);
+    if (!sku) return l;
+    return { ...l, ...deriveRate(sku, l.partyRates, pctx(sku.id, lineIsK, partyItemRates, bt)) };
+  }
+  // Changing the Bill Type flips which lines are K → re-price every line so OGL
+  // is (re)applied/removed correctly.
+  function changeBillType(bt: string) {
+    setBillType(bt);
+    setLines((ls) => ls.map((l) => priceLineUnder(l, l.isK, bt)));
+  }
+  // Toggling a line's K flag (O/K orders) re-prices just that line.
+  function toggleLineK(idx: number) {
+    setLines((ls) => ls.map((l, i) => (i === idx ? priceLineUnder({ ...l, isK: !l.isK }, !l.isK, billType) : l)));
   }
 
   const [dupError, setDupError] = useState<string | null>(null);
@@ -146,9 +167,10 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     setDupError(null);
     if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", netApplied: false, loadingRates: false, itemRates: [], partyRates: [] }); return; }
     // optimistic default while we fetch the party-wise rate for this item
-    updateLine(idx, { skuId, ...deriveRate(sku, [], pctx(sku.id)), loadingRates: true, itemRates: [], partyRates: [] });
+    const curIsK = lines[idx]?.isK ?? false;
+    updateLine(idx, { skuId, ...deriveRate(sku, [], pctx(sku.id, curIsK)), loadingRates: true, itemRates: [], partyRates: [] });
     const { partyRates, itemRates } = await loadRates(sku.name, customer?.name ?? null);
-    updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id)), partyRates, itemRates, loadingRates: false });
+    updateLine(idx, { ...deriveRate(sku, partyRates, pctx(sku.id, curIsK)), partyRates, itemRates, loadingRates: false });
   }
 
   const total = lines.reduce((s, l) => s + l.qty * l.price, 0);
@@ -222,7 +244,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className={inp} />
         </F>
         <F label="Bill Type">
-          <select value={billType} onChange={(e) => setBillType(e.target.value)} className={inp}>
+          <select value={billType} onChange={(e) => changeBillType(e.target.value)} className={inp}>
             <option value="K">K</option>
             <option value="O">O</option>
             <option value="O/K">O/K</option>
@@ -317,7 +339,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                 </F>
                 {billType === "O/K" && (
                   <F label="Firm">
-                    <button type="button" onClick={() => updateLine(idx, { isK: !line.isK })}
+                    <button type="button" onClick={() => toggleLineK(idx)}
                       title="Tick K to route this item to the Silver Retailer Network (the other firm)"
                       className={`${inp} font-bold ${line.isK ? "bg-[var(--danger)] text-white" : "bg-[var(--surface-2)]"}`}>
                       {line.isK ? "K · retailer" : "O · ours"}
@@ -482,10 +504,10 @@ function round2(n: number): number {
 //   3. party FOC% applied last, on top of everything.
 // Oracle party/market history stays as optional suggestion chips below; it never
 // silently overrides the waterfall. `_partyRates` kept for call-site symmetry.
-interface PriceCtx { discPct: number; oglPct: number; focPct: number; partyItemNetRate: number }
+interface PriceCtx { discPct: number; oglPct: number; isK: boolean; focPct: number; partyItemNetRate: number }
 function deriveRate(sku: SkuOption, _partyRates: RateRow[], ctx: PriceCtx): { price: number; rateType: string; netApplied: boolean } {
   const r = computeLineRate({
-    mrp: sku.price, partyDiscPct: ctx.discPct, oglPct: ctx.oglPct,
+    mrp: sku.price, partyDiscPct: ctx.discPct, oglPct: ctx.oglPct, isK: ctx.isK,
     itemNetRate: sku.item_net_rate, partyItemNetRate: ctx.partyItemNetRate, focPct: ctx.focPct,
   });
   return { price: r.final, rateType: r.netRateApplied ? "NET" : "MRP", netApplied: r.netRateApplied };

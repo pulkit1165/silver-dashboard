@@ -8,6 +8,10 @@ export type Row = {
   mPack: string; mMrp: string; mrp: string; slipType: string;
   csNo: string; pcs: string; quantity: string;
   qtyOrdered: string; qtyDispatched: string; pendingQty: string;
+  // True when the row was populated from the item master / sales order — its
+  // identity + price fields are then LOCKED (read-only) and only Qty Dispatched is
+  // editable. A blank/"not-in-master" fill-in row stays editable so it can be completed.
+  fromMaster?: boolean;
 };
 export type Case = { caseNo: number; rows: Row[] };
 export type Header = {

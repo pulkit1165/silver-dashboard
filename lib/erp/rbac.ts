@@ -36,7 +36,6 @@ export const NAV: NavGroup[] = [
         label: "Scanning", icon: "▣",
         children: [
           { href: "/erp/scan", label: "QR Scanner", icon: "▣", roles: ["admin", "warehouse", "dispatch", "inventory"] },
-          { href: "/erp/scan/dispatch", label: "Pack & Dispatch", icon: "⇪", roles: ["admin", "warehouse", "dispatch"] },
           { href: "/erp/qr", label: "QR Codes", icon: "❒", roles: ["admin", "warehouse", "inventory"] },
           { href: "/erp/scan/history", label: "Scan History", icon: "≣", roles: ["admin", "warehouse", "dispatch", "inventory", "accounts"] },
         ],
@@ -44,7 +43,7 @@ export const NAV: NavGroup[] = [
       {
         label: "Packing", icon: "▤",
         children: [
-          { href: "/erp/packing-slip", label: "Packing Slip", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
+          { href: "/erp/packing-slip", label: "Pack & Dispatch", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
           { href: "/erp/packing-slip/saved", label: "Saved Slips", icon: "🗂", roles: ["admin", "warehouse", "dispatch", "accounts", "sales"] },
           { href: "/erp/packing-slip/live", label: "Live View", icon: "📺", roles: ["admin", "warehouse", "dispatch"] },
         ],
@@ -59,6 +58,8 @@ export const NAV: NavGroup[] = [
           { href: "/erp/skus/import-labels", label: "Backfill Barcode Info", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/labels/design", label: "Label Designer", icon: "🎨", roles: ["admin", "inventory"] },
+          { href: "/erp/stickers", label: "Abbreviation Stickers", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
+          { href: "/erp/stickers/design", label: "Sticker Designer", icon: "🎨", roles: ["admin", "inventory"] },
           { href: "/erp/labels/printers", label: "Printers", icon: "🖨", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/print-queue", label: "Print Queue", icon: "🖨️", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/print-bridge", label: "Print Bridge (devices)", icon: "🌐", roles: ["admin", "inventory", "warehouse"] },

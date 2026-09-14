@@ -30,7 +30,7 @@ function loadConfig() {
     pc: file.pc || process.env.SILVER_PC || os.hostname(),
     printers: Array.isArray(file.printers) ? file.printers : [],
     printerFilter: file.printerFilter != null ? String(file.printerFilter) : "TSC",
-    pollMs: Number(file.pollMs) || 2500,      // label print tolerates a couple of seconds; keeps API calls (and cost) low
+    pollMs: Number(file.pollMs) || 700,       // wait before the FIRST label is picked up; keep low for snappy printing (override in config.json if API cost matters)
     heartbeatMs: Number(file.heartbeatMs) || 30000,
   };
   if (!c.baseUrl || !c.token) {
@@ -100,18 +100,25 @@ async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const r = await postJSON("/api/erp/print/agent/pull", { pc: cfg.pc, limit: 10 });
-    if (r.status !== 200) { if (r.status !== 401) console.error("[agent] pull", r.status, JSON.stringify(r.json)); return; }
-    const jobs = (r.json && r.json.jobs) || [];
-    for (const j of jobs) {
-      try {
-        rawPrint(j.name, Buffer.from(j.tspl_b64, "base64"));
-        await postJSON("/api/erp/print/agent/ack", { id: j.id, ok: true });
-        console.log(`[agent] printed job ${j.id} → ${j.name}`);
-      } catch (e) {
-        await postJSON("/api/erp/print/agent/ack", { id: j.id, ok: false, error: e.message });
-        console.error(`[agent] job ${j.id} FAILED:`, e.message);
+    // Drain the whole queue in this one wake-up so a burst of labels prints
+    // back-to-back instead of one job per poll interval.
+    const LIMIT = 10;
+    for (let guard = 0; guard < 5000; guard++) {
+      const r = await postJSON("/api/erp/print/agent/pull", { pc: cfg.pc, limit: LIMIT });
+      if (r.status !== 200) { if (r.status !== 401) console.error("[agent] pull", r.status, JSON.stringify(r.json)); break; }
+      const jobs = (r.json && r.json.jobs) || [];
+      if (!jobs.length) break;
+      for (const j of jobs) {
+        try {
+          rawPrint(j.name, Buffer.from(j.tspl_b64, "base64"));
+          await postJSON("/api/erp/print/agent/ack", { id: j.id, ok: true });
+          console.log(`[agent] printed job ${j.id} → ${j.name}`);
+        } catch (e) {
+          await postJSON("/api/erp/print/agent/ack", { id: j.id, ok: false, error: e.message });
+          console.error(`[agent] job ${j.id} FAILED:`, e.message);
+        }
       }
+      if (jobs.length < LIMIT) break;   // fewer than a full page → queue drained
     }
   } catch (e) { console.error("[agent] poll error:", e.message); }
   finally { polling = false; }

@@ -10,7 +10,10 @@
 
 export type ElField =
   | "code" | "name" | "header" | "mrp" | "qty" | "lot" | "rack" | "pkd"
-  | "incltax" | "custom" | "address";
+  | "incltax" | "custom" | "address"
+  // Abbreviation-sticker fields (separate module): abbr1 = trade/abbrev name line,
+  // abbr2 = variant/size line. Only used by sticker designs; current labels ignore them.
+  | "abbr1" | "abbr2";
 
 export type ElKind = "text" | "qr" | "barcode" | "box" | "line";
 
@@ -52,6 +55,8 @@ export type LabelFill = {
   qrSvg?: string;           // the real QR (SVG markup) for this SKU's token
   qrMatrix?: { size: number; data: number[] }; // raw module matrix (preferred — scannable)
   address?: string;         // company address block (from settings / doc)
+  abbr1?: string;           // sticker module: trade/abbrev name line (Label Desc.)
+  abbr2?: string;           // sticker module: variant/size line (Label Desc.1)
 };
 
 // Format a bound field into the exact text that prints. Prefixes match the
@@ -74,6 +79,12 @@ const SUPPRESSED_HEADERS = new Set([
   "HANDLEGRIPSETOF3",     // "HANDLE GRIP (SET OF 3)"
   "FOOTRESTASSLYREAR",    // "FOOT REST ASSLY. REAR"  (names use "RR FT REST ASLY …")
   "FOOTRESTASSLYFRONT",   // "FOOT REST ASSLY. FRONT" (names use "FR FT REST ASLY …")
+  "HEADLIGHTVISORPATTISET", // "HEAD LIGHT VISOR PATTI & SET" (SU40035 etc.)
+  "BOLTNUTWWASHERGOLDEN",   // "BOLT NUT W/WASHER (GOLDEN)"   (UN00015 etc.)
+  "BRAKEDRUMBOLTWNUT",      // "BRAKE DRUM BOLT W/NUT" (KB05096 etc. — 7 SKUs; header says NUT but variants incl. W/PIN, name is self-descriptive)
+  "BOLTNUTSINGLEWASHERSILVER", // "BOLT NUT SINGLE WASHER (SILVER)" (UN10035 etc. — 16 SKUs; name already carries "BOLT NUT SINGLE WASHER NO.<size>")
+  "NUMBERPLATEBRACKETFRONTREAR", // "NUMBER PLATE BRACKET FRONT/ REAR" (HH54029 etc. — 20 SKUs; names are self-descriptive NUMBER PLATE BRACKET FRONT/REAR <variant>)
+  "KITHEADDAWAL",           // "KIT HEAD DAWAL" (SU47030 etc. — 9 SKUs; names are self-descriptive KIT HEAD DAWAL/DAWEL <variant>)
 ]);
 export function isMiscHeader(h: string): boolean {
   return SUPPRESSED_HEADERS.has(String(h ?? "").toUpperCase().replace(/[^A-Z0-9]/g, ""));
@@ -104,6 +115,9 @@ export function fieldText(el: DesignEl, d: LabelFill): string {
         ? full.slice(hdr.length).replace(/^[\s\-/]+/, "").trim() : full;
     }
     case "mrp": return d.price != null ? `MRP.Rs.${money(d.price)}/-` : "";
+    // Abbreviation-sticker lines — printed verbatim from the sticker master.
+    case "abbr1": return String(d.abbr1 ?? "");
+    case "abbr2": return String(d.abbr2 ?? "");
     // The "inclusive of taxes" note — a fixed caption the operator places under MRP.
     case "incltax": return "incl. tax";
     case "qty": {
@@ -128,6 +142,15 @@ export const SAMPLE_FILL: LabelFill = {
   sku_code: "HH12006", name: "CENTER STAND KIT SPL", header: "CENTER STAND KIT", price: 570,
   unit: "PCS", singleQty: 1, masterQty: 1, lot: "L-2291", rack: "R-14", pkd: "08/26",
   address: "SILVER INDUSTRIES\nPlot 12, Focal Point, Ludhiana 141010\nGSTIN 03ABCDE1234F1Z5",
+};
+
+// Preview data for the ABBREVIATION-sticker designer (line1 / line2 come from the
+// sticker master; the rest mirrors SAMPLE_FILL so QR/MRP/qty/address render realistically).
+export const STICKER_SAMPLE_FILL: LabelFill = {
+  ...SAMPLE_FILL,
+  sku_code: "UN00815", abbr1: "BOLT NUT W/WASHER", abbr2: "N0. 8*15",
+  name: "BOLT NUT W/WASHER N0. 8*15", header: "", price: 3.2, unit: "PC",
+  singleQty: 100, masterQty: 200,
 };
 
 const uid = () => Math.random().toString(36).slice(2, 9);
@@ -157,6 +180,41 @@ export function defaultDoc(w: number, h: number): LabelDoc {
       { id: uid(), kind: "line", x: pad, y: h - addrH - 1, w: w - pad * 2, h: 0, strokeMM: 0.3 },
       { id: uid(), kind: "text", field: "address", x: pad, y: h - addrH, w: w - pad * 2, h: addrH,
         font: "Arial", sizeMM: 2.3, bold: false, align: "left", lineh: 1.15 },
+    ],
+  };
+}
+
+// Starting layout for an ABBREVIATION sticker (the separate module) — modelled on
+// the client's green sticker: line 1 (trade name) big, line 2 (variant/size) under
+// it, QR top-right, MRP + incl.tax, Qty (with the sheet unit), Lot/Rack, address.
+// Keeps the QR (abbreviation stickers are still QR, just different text + layout).
+export function defaultAbbrevDoc(w: number, h: number): LabelDoc {
+  const pad = Math.max(1.5, Math.round(w * 0.03));
+  const qrSize = Math.min(h * 0.5, 22);
+  const rightQrX = w - pad - qrSize;
+  const textW = rightQrX - pad - 1;
+  const addrH = Math.max(7, h * 0.22);
+  return {
+    version: 1, w, h,
+    elements: [
+      { id: uid(), kind: "text", field: "abbr1", x: pad, y: pad, w: textW, h: 6,
+        font: "Arial", sizeMM: 4.2, bold: true, align: "left", fit: true },
+      { id: uid(), kind: "text", field: "abbr2", x: pad, y: pad + 6.5, w: textW, h: 4.5,
+        font: "Arial", sizeMM: 3, bold: true, align: "left", fit: true },
+      { id: uid(), kind: "qr", x: rightQrX, y: pad, w: qrSize, h: qrSize },
+      { id: uid(), kind: "text", field: "mrp", x: pad, y: pad + 12, w: textW * 0.6, h: 5,
+        font: "Arial", sizeMM: 3.6, bold: true, align: "left" },
+      { id: uid(), kind: "text", field: "incltax", x: pad + textW * 0.6, y: pad + 12.8, w: textW * 0.4, h: 4,
+        font: "Arial", sizeMM: 2.3, bold: false, align: "left" },
+      { id: uid(), kind: "text", field: "qty", x: pad, y: pad + 17.5, w: textW * 0.55, h: 4.5,
+        font: "Arial", sizeMM: 3, bold: true, align: "left" },
+      { id: uid(), kind: "text", field: "lot", x: rightQrX, y: pad + qrSize + 0.5, w: qrSize + pad, h: 4,
+        font: "Arial", sizeMM: 2.2, bold: false, align: "left" },
+      { id: uid(), kind: "text", field: "rack", x: pad, y: pad + 22, w: textW * 0.55, h: 4,
+        font: "Arial", sizeMM: 2.2, bold: false, align: "left" },
+      { id: uid(), kind: "line", x: pad, y: h - addrH - 1, w: w - pad * 2, h: 0, strokeMM: 0.3 },
+      { id: uid(), kind: "text", field: "address", x: pad, y: h - addrH, w: w - pad * 2, h: addrH,
+        font: "Arial", sizeMM: 2.2, bold: false, align: "left", lineh: 1.15 },
     ],
   };
 }

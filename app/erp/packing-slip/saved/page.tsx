@@ -3,12 +3,14 @@ import PageHeader from "@/components/PageHeader";
 import SavedSlips from "@/components/erp/SavedSlips";
 import { listPackingSlips } from "@/lib/erp/packing-slips";
 import { getCurrentUser } from "@/lib/erp/session";
+import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 
 export default async function SavedSlipsPage() {
-  await getCurrentUser(); // gate to signed-in users
+  const user = await getCurrentUser(); // gate to signed-in users
   const slips = await listPackingSlips();
+  const canBill = canWrite(user.role, "invoices");
   return (
     <>
       <PageHeader
@@ -20,7 +22,7 @@ export default async function SavedSlipsPage() {
           </Link>
         }
       />
-      <SavedSlips initial={slips} />
+      <SavedSlips initial={slips} canBill={canBill} />
     </>
   );
 }

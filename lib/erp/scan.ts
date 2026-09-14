@@ -8,6 +8,22 @@ const TOKEN_ERROR: Record<string, string> = {
   disabled: "QR Code Disabled.",
   replaced: "This QR code has been replaced by a newer one.",
 };
+
+// Whether packing should BLOCK an item whose ERP inventory is short. OFF by default
+// (the stock ledger isn't maintained yet, so packing isn't gated on it — inventory
+// just goes negative, a reconcilable backorder). Flip company_settings.enforce_pack_stock
+// to true once opening stock is loaded. Cached ~30s so a multi-item pack doesn't re-query.
+let _packEnforce: { v: boolean; at: number } | null = null;
+async function packStockEnforced(): Promise<boolean> {
+  if (_packEnforce && Date.now() - _packEnforce.at < 30000) return _packEnforce.v;
+  let v = false;
+  try {
+    const [r] = await getSql()`SELECT COALESCE(enforce_pack_stock, false) AS v FROM company_settings ORDER BY id LIMIT 1`;
+    v = !!(r as { v?: boolean } | undefined)?.v;
+  } catch { v = false; } // column/table missing → don't block
+  _packEnforce = { v, at: Date.now() };
+  return v;
+}
 import type { ScanAction, Sku } from "./types";
 
 export interface ScanInput {
@@ -160,6 +176,7 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
   let message = "";
   let data: Record<string, unknown> = {};
   let eventId = 0;
+  const packEnforce = await packStockEnforced(); // block a short pack only if turned on
 
   try {
     await sql.begin(async (tx) => {
@@ -303,7 +320,10 @@ export async function performScan(input: ScanInput): Promise<ScanResult> {
 
           const loc = await resolveLoc(tx, sku.id, input.warehouseId, input.binId);
           const have = await qtyAt(tx, sku.id, loc.warehouseId, loc.binId, batch);
-          if (have < qty) throw new Error(`Insufficient stock to pack (have ${have}, need ${qty})`);
+          // Stock guard is OPT-IN (company_settings.enforce_pack_stock). While off, a
+          // short pack is allowed and inventory just goes negative (backorder) — the
+          // ERP stock ledger isn't the source of truth yet.
+          if (packEnforce && have < qty) throw new Error(`Insufficient stock to pack (have ${have}, need ${qty})`);
 
           // find or create the case (one row per so + case number)
           let [pkg] = await tx`SELECT id FROM packages WHERE so_id=${soRow.id} AND package_no=${caseNo}`;
