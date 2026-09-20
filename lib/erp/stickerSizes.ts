@@ -9,9 +9,11 @@ export const stickerSizeId = (baseId: string): string =>
   baseId.startsWith(STICKER_PREFIX) ? baseId : STICKER_PREFIX + baseId;
 export const isStickerSizeId = (id?: string | null): boolean => !!id && id.startsWith(STICKER_PREFIX);
 
-export const STICKER_SIZES: LabelSize[] = LABEL_SIZES.map((s) => ({
-  id: stickerSizeId(s.id), label: s.label, w: s.w, h: s.h,
-}));
+// No "med-70x40" sticker stock exists (unlike the label side, where it's a
+// real, actively-printed size) — excluded so it never shows as a sticker option.
+export const STICKER_SIZES: LabelSize[] = LABEL_SIZES
+  .filter((s) => s.id !== "med-70x40")
+  .map((s) => ({ id: stickerSizeId(s.id), label: s.label, w: s.w, h: s.h }));
 
 export const stickerSizeById = (id?: string | null): LabelSize | undefined =>
   STICKER_SIZES.find((s) => s.id === id);
