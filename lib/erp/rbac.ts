@@ -15,7 +15,7 @@ export type ModuleKey =
   | "purchase" | "financeReports" | "gstCompliance" | "administration";
 
 export const MODULES: { key: ModuleKey; label: string }[] = [
-  { key: "overview", label: "Overview (Ask AI, Analytics)" },
+  { key: "overview", label: "Overview (Home, Dashboard, Activity, Checklist, Rule Book, Ask AI, Analytics)" },
   { key: "scanning", label: "Scanning" },
   { key: "packing", label: "Packing" },
   { key: "inventory", label: "Inventory" },
@@ -86,9 +86,7 @@ export const NAV: NavGroup[] = [
           { href: "/erp/catalog/custom-list", label: "Custom List → PDF", icon: "📄", roles: ["admin", "inventory", "warehouse", "sales", "purchase", "accounts"] },
           { href: "/erp/skus/import", label: "Import SKUs", icon: "⬆", roles: ["admin", "inventory"] },
           { href: "/erp/skus/import-labels", label: "Backfill Barcode Info", icon: "⬆", roles: ["admin", "inventory"] },
-          { href: "/erp/labels", label: "Barcode Labels", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
-          { href: "/erp/labels/design", label: "Label Designer", icon: "🎨", roles: ["admin", "inventory"] },
-          { href: "/erp/stickers", label: "Abbreviation Stickers", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
+          { href: "/erp/stickers", label: "Print Stickers", icon: "🏷", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/stickers/design", label: "Sticker Designer", icon: "🎨", roles: ["admin", "inventory"] },
           { href: "/erp/labels/printers", label: "Printers", icon: "🖨", roles: ["admin", "inventory", "warehouse"] },
           { href: "/erp/print-queue", label: "Print Queue", icon: "🖨️", roles: ["admin", "inventory", "warehouse"] },
@@ -167,24 +165,26 @@ export function isFolder(e: NavEntry): e is NavFolder {
   return (e as NavFolder).children !== undefined;
 }
 
-// Every href's owning module, derived once from NAV — the "overview" group's
-// role-gated pages (Ask AI, Analytics) are the only ones not inside a folder,
-// so they're added explicitly; its "all" pages need no module (see canSee).
-// A few hrefs (e.g. /erp/customers, /erp/skus) are deliberately listed as a
-// child of TWO folders for navigational convenience — this map can only hold
-// one owner per href (last one registered wins), so it's a fine best-effort
-// for canSee's non-folder uses (the Overview items, the informational access
-// matrix), but NOT precise enough to gate actual sidebar rendering — that's
-// what visibleChildren is for below, which uses the folder's own key instead
-// and so never has this ambiguity.
+// Every href's owning module, derived once from NAV. The whole ungrouped
+// "Overview" group (including its "all"-role baseline pages: Home, ERP
+// Dashboard, Activity Feed, Checklist, Rule Book) maps to "overview" too —
+// for a module-restricted user those are NOT an unconditional bypass; a user
+// granted zero modules sees zero pages, matching Shopify's "nothing outside
+// what you checked" behaviour. A few hrefs (e.g. /erp/customers, /erp/skus)
+// are deliberately listed as a child of TWO folders for navigational
+// convenience — this map can only hold one owner per href (last one
+// registered wins), so it's a fine best-effort for canSee's non-folder uses
+// (the Overview items, the informational access matrix), but NOT precise
+// enough to gate actual sidebar rendering — that's what visibleChildren is
+// for below, which uses the folder's own key instead and so never has this
+// ambiguity.
 const HREF_TO_MODULE = new Map<string, ModuleKey>();
 for (const group of NAV) {
   for (const entry of group.items) {
     if (isFolder(entry)) for (const child of entry.children) HREF_TO_MODULE.set(child.href, entry.key);
+    else HREF_TO_MODULE.set(entry.href, "overview");
   }
 }
-HREF_TO_MODULE.set("/erp/assistant", "overview");
-HREF_TO_MODULE.set("/erp/analytics", "overview");
 
 // External/restricted roles (the retailer firm) see ONLY pages that name them
 // explicitly — never the "all" pages (dashboard, activity, etc.). This is a
@@ -195,12 +195,14 @@ const RESTRICTED: Role[] = ["retailer"];
 export function canSee(user: AccessUser, item: NavItem): boolean {
   if (user.role === "admin") return true;
   if (RESTRICTED.includes(user.role)) return item.roles !== "all" && item.roles.includes(user.role);
-  if (item.roles === "all") return true; // baseline pages stay universal even for a module-restricted user
   if (user.moduleAccess) {
+    // Per-user access is strict: "all" is not a bypass here — a user granted
+    // zero modules (including "overview") sees zero pages, full stop.
     const key = HREF_TO_MODULE.get(item.href);
-    return key ? !!user.moduleAccess[key] : item.roles.includes(user.role);
+    return key ? !!user.moduleAccess[key] : false;
   }
-  return item.roles.includes(user.role); // legacy/unmigrated user — today's role-array behaviour, unchanged
+  if (item.roles === "all") return true; // legacy/unmigrated user — baseline pages stay universal, as before
+  return item.roles.includes(user.role);
 }
 
 // Children of a folder this user may see (empty → hide the whole folder).
