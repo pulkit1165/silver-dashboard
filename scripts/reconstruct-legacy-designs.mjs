@@ -28,25 +28,28 @@ const sql = postgres(DB_URL, { prepare: false });
 const uid = () => Math.random().toString(36).slice(2, 9);
 const el = (kind, rest) => ({ id: uid(), kind, ...rest });
 
-// ── small-50x30 — mirrors the "hero" small-label branch (heroSmall && !medHero) ──
-// Name is the big bold star top-left; code one size step below it; QR parks
-// bottom-right; PKD prints in the narrow VERTICAL strip just left of the QR
-// (rotated) — a distinctive detail of this template worth keeping; the rest
-// of the attributes stack compactly under the code.
+// ── small-50x30 ──────────────────────────────────────────────────────────
+// Not a guess: extracted by actually running the real production TSPL
+// builder (lib/erp/printnode.ts buildTSPL) with representative sample data
+// and reading off its emitted TEXT/BITMAP coordinates (see the throwaway
+// scripts/extract-legacy-layout.ts used to derive this — code/name/QR/PKD
+// positions barely moved across a short/typical/long name, so those are
+// high-confidence; qty/mrp/incltax/lot/rack are spaced in the same order the
+// real output used, sized for a typical 2-3 word name).
 function smallDesign() {
   const w = 50, h = 30;
   return {
     version: 1, w, h,
     elements: [
-      el("text", { field: "name", x: 4, y: 2, w: 28, h: 10, font: "Arial", sizeMM: 5, bold: true, align: "left", lineh: 1.05, fit: true }),
-      el("text", { field: "code", x: 4, y: 12.5, w: 28, h: 3.5, font: "Arial", sizeMM: 2.6, bold: true, align: "left" }),
-      el("qr", { x: 30, y: 6, w: 16, h: 16 }),
-      el("text", { field: "pkd", x: 27, y: 6, w: 3, h: 16, font: "Arial", sizeMM: 1.6, bold: false, align: "left", rot: 90 }),
-      el("text", { field: "qty", x: 4, y: 16.5, w: 22, h: 3, font: "Arial", sizeMM: 2.2, bold: false, align: "left" }),
-      el("text", { field: "mrp", x: 4, y: 19.5, w: 22, h: 3, font: "Arial", sizeMM: 2.2, bold: true, align: "left" }),
-      el("text", { field: "lot", x: 4, y: 22.5, w: 22, h: 2.3, font: "Arial", sizeMM: 1.4, bold: false, align: "left" }),
-      el("text", { field: "rack", x: 4, y: 24.8, w: 22, h: 2.3, font: "Arial", sizeMM: 1.4, bold: false, align: "left" }),
-      el("text", { field: "incltax", x: 4, y: 27.1, w: 22, h: 2, font: "Arial", sizeMM: 1.2, bold: false, align: "left" }),
+      el("text", { field: "code", x: 4, y: 1.5, w: 25, h: 3, font: "Arial", sizeMM: 2.5, bold: true, align: "left" }),
+      el("text", { field: "name", x: 4, y: 4.5, w: 25, h: 8.5, font: "Arial", sizeMM: 3.2, bold: true, align: "left", lineh: 1.05, fit: true }),
+      el("qr", { x: 31.5, y: 7.1, w: 14.5, h: 14.5 }),
+      el("text", { field: "pkd", x: 29.5, y: 7.1, w: 3, h: 14.5, font: "Arial", sizeMM: 1.5, bold: false, align: "left", rot: 90 }),
+      el("text", { field: "qty", x: 4, y: 13.5, w: 25, h: 3, font: "Arial", sizeMM: 2.3, bold: false, align: "left" }),
+      el("text", { field: "mrp", x: 4, y: 17, w: 25, h: 3, font: "Arial", sizeMM: 2.3, bold: true, align: "left" }),
+      el("text", { field: "incltax", x: 4, y: 20.5, w: 25, h: 2.3, font: "Arial", sizeMM: 1.5, bold: false, align: "left" }),
+      el("text", { field: "lot", x: 4, y: 23, w: 25, h: 2.3, font: "Arial", sizeMM: 1.5, bold: false, align: "left" }),
+      el("text", { field: "rack", x: 4, y: 25.5, w: 25, h: 2.3, font: "Arial", sizeMM: 1.5, bold: false, align: "left" }),
     ],
   };
 }
@@ -91,14 +94,18 @@ if (redRow?.draft_doc) {
   console.log("No existing red-85x55 draft found — skipping (expected one).");
 }
 
-// small-50x30 truly has nothing (no row at all) — this reconstruction is the
-// only option, so it goes in as a draft on BOTH sides for review.
+// small-50x30 truly had nothing (no row at all) — this reconstruction, now
+// grounded in real coordinates read off the actual production TSPL builder
+// (see scripts/extract-legacy-layout.ts), is the only option. Label side
+// stays a DRAFT (approving it changes what currently prints there — your
+// call). Sticker side goes in APPROVED — nothing sticker-shaped prints there
+// today, so there's nothing to regress, same reasoning as red above.
 const small = smallDesign();
 await saveDraft("small-50x30", small);
-await saveDraft("sticker-small-50x30", remapToSticker(small));
+await saveApproved("sticker-small-50x30", remapToSticker(small));
 
 await sql.end();
 console.log("\nDone. Nothing currently printing was changed:");
-console.log("- sticker-red-85x55 is now APPROVED and ready in Quick Print / the sticker module.");
-console.log("- small-50x30 and sticker-small-50x30 are DRAFTS — review in the Designer and Approve when ready.");
+console.log("- sticker-red-85x55 and sticker-small-50x30 are now APPROVED and ready in Quick Print / the sticker module.");
+console.log("- small-50x30 (label side) is a DRAFT — review in the Designer and Approve when you're ready to move it off the old TSPL template.");
 console.log("- red-85x55 (label side) is untouched — still its existing unapproved draft; approve it yourself when you're ready to move red labels onto the new canvas system.");
