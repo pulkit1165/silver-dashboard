@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
 import PrintButton from "@/components/erp/PrintButton";
 import EditLabelInfo from "@/components/erp/EditLabelInfo";
+import SkuStatusBadge from "@/components/erp/SkuStatusBadge";
 import { getSku, totalQty, inventoryForSku, stockStatus, getScans } from "@/lib/erp/queries";
 import { qrSvg } from "@/lib/erp/qr";
 import { getCurrentUser } from "@/lib/erp/session";
@@ -28,8 +29,9 @@ export default async function SkuDetail({ params }: { params: Promise<{ id: stri
   return (
     <>
       <PageHeader title={sku.name} subtitle={`${sku.sku_code} · ${sku.category} · ${sku.brand}`} />
-      <div className="mb-4">
+      <div className="mb-4 flex items-center gap-3">
         <Link href="/erp/skus" className="text-sm font-semibold text-[var(--accent)]">← Back to SKU Master</Link>
+        <SkuStatusBadge id={sku.id} status={sku.status ?? "active"} editable={canWrite(user, "skus")} />
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">

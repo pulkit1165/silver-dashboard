@@ -18,9 +18,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
   const active = b.active === true || b.active === "true";
   const res = await setSkuActive(skuId, active);
   if (!res.ok) return NextResponse.json({ ok: false, error: res.error }, { status: 404 });
+  const verb = active ? (res.wasArchived ? "Reactivated" : "Activated") : "Deactivated";
   await logActivity({
-    actor: user.name, actorRole: user.role, action: "sku.active", entity: "sku", entityId: skuId,
-    summary: `${active ? "Activated" : "Deactivated"} item #${skuId}${active ? "" : " — will no longer print or appear in pick lists"}`,
+    actor: user.name, actorRole: user.role, action: res.wasArchived && active ? "sku.reactivate" : "sku.active", entity: "sku", entityId: skuId,
+    summary: `${verb} item #${skuId}${active ? "" : " — will no longer print or appear in pick lists"}`,
   });
   return NextResponse.json({ ok: true, status: res.status });
 }

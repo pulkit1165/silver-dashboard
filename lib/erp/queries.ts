@@ -41,11 +41,14 @@ export async function getSku(id: number): Promise<Sku | undefined> {
 
 /** Activate / deactivate one SKU (Item Master). Inactive items don't print or
  *  appear in browse/pick lists; the row stays for history and reactivation. */
-export async function setSkuActive(skuId: number, active: boolean): Promise<{ ok: boolean; status: string; error?: string }> {
+export async function setSkuActive(skuId: number, active: boolean): Promise<{ ok: boolean; status: string; wasArchived: boolean; error?: string }> {
   const status = active ? "active" : "inactive";
-  const rows = (await getSql()`UPDATE skus SET status=${status} WHERE id=${skuId} RETURNING id`) as unknown as Array<{ id: number }>;
-  if (!rows.length) return { ok: false, status, error: "Item not found." };
-  return { ok: true, status };
+  const sql = getSql();
+  const [prev] = (await sql`SELECT status FROM skus WHERE id=${skuId}`) as unknown as Array<{ status: string | null }>;
+  const wasArchived = prev?.status === "archived";
+  const rows = (await sql`UPDATE skus SET status=${status} WHERE id=${skuId} RETURNING id`) as unknown as Array<{ id: number }>;
+  if (!rows.length) return { ok: false, status, wasArchived, error: "Item not found." };
+  return { ok: true, status, wasArchived };
 }
 
 /** Change one SKU's category (Item Master). */

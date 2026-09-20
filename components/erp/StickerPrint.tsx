@@ -76,8 +76,15 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
     ).slice(0, 40);
   }, [q, items]);
 
-  const addSel = (code: string) => setSel((s) => (s.some((x) => x.code === code) ? s : [...s, { code, copies: 1 }]));
-  const setCopies = (code: string, n: number) => setSel((s) => s.map((x) => (x.code === code ? { ...x, copies: Math.max(1, Math.round(n) || 1) } : x)));
+  // Copies start at 0 (blank) so the operator types the count themselves; after a
+  // print command they reset to 0. Free typing (empty/backspace) is allowed — the
+  // value is only clamped to a non-negative whole number, never snapped up to 1.
+  const addSel = (code: string) => setSel((s) => (s.some((x) => x.code === code) ? s : [...s, { code, copies: 0 }]));
+  const setCopies = (code: string, raw: string | number) =>
+    setSel((s) => s.map((x) => (x.code === code ? { ...x, copies: Math.max(0, Math.floor(Number(raw) || 0)) } : x)));
+  const stepCopies = (code: string, d: number) =>
+    setSel((s) => s.map((x) => (x.code === code ? { ...x, copies: Math.max(0, x.copies + d) } : x)));
+  const resetCopies = () => setSel((s) => s.map((x) => ({ ...x, copies: 0 })));
   const removeSel = (code: string) => setSel((s) => s.filter((x) => x.code !== code));
 
   async function printAll() {
@@ -119,7 +126,7 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
         const d = await r.json();
         if (d.ok) done += it.copies; else { setMsg({ ok: false, text: `${it.code}: ${d.error || "print failed"}` }); }
       }
-      if (done > 0) setMsg({ ok: true, text: `🖨 Sent ${done} sticker(s) to the printer.` });
+      if (done > 0) { setMsg({ ok: true, text: `🖨 Sent ${done} sticker(s) to the printer.` }); resetCopies(); }
     } catch (e) { setMsg({ ok: false, text: String(e) }); }
     finally { setBusy(false); }
   }
@@ -256,7 +263,15 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
                         <td className="font-mono text-xs">{x.code}</td>
                         <td className="font-semibold">{it?.line1} <span className="text-[var(--muted)]">{it?.line2}</span></td>
                         <td className="text-[var(--muted)]">Qty. {packQty} {it?.unit}</td>
-                        <td className="!text-right"><input type="number" min={1} value={x.copies} onChange={(e) => setCopies(x.code, Number(e.target.value))} className={`${inp} w-20 text-right`} /></td>
+                        <td className="!text-right">
+                          <div className="inline-flex items-center gap-1">
+                            <button type="button" onClick={() => stepCopies(x.code, -1)} title="−1" className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-lg font-extrabold leading-none hover:bg-[var(--surface)]">−</button>
+                            <input type="number" min={0} inputMode="numeric" value={x.copies || ""} placeholder="0"
+                              onChange={(e) => setCopies(x.code, e.target.value)}
+                              className={`${inp} w-16 text-center`} />
+                            <button type="button" onClick={() => stepCopies(x.code, 1)} title="+1" className="h-8 w-8 shrink-0 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] text-lg font-extrabold leading-none hover:bg-[var(--surface)]">+</button>
+                          </div>
+                        </td>
                         <td className="!text-right"><button onClick={() => removeSel(x.code)} className="text-[var(--danger)]">✕</button></td>
                       </tr>
                     );

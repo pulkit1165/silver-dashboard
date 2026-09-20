@@ -340,12 +340,24 @@ export default function MrpMaster({ rows: initialRows, editable, basePath = "/er
                         ) : (s.category || "—")}
                       </td>
                       <td>
-                        <button type="button" disabled={!editable}
-                          onClick={() => toggleActive(s.id, (s.status ?? "active") !== "active")}
-                          title={(s.status ?? "active") === "active" ? "Active — click to deactivate (won't print or show in pick lists)" : "Inactive — click to activate"}
-                          className={`rounded px-2 py-0.5 text-[11px] font-bold disabled:opacity-60 ${(s.status ?? "active") === "active" ? "bg-[var(--accent-2-bg)] text-[var(--accent-2)]" : "bg-[var(--danger-bg)] text-[var(--danger)]"}`}>
-                          {(s.status ?? "active") === "active" ? "Active" : "Inactive"}
-                        </button>
+                        {s.status === "archived" ? (
+                          <span className="inline-flex items-center gap-1.5">
+                            <span className="rounded px-2 py-0.5 text-[11px] font-bold bg-[var(--surface-2)] text-[var(--muted)]" title="Archived — hidden from normal browse/pick lists, still findable by search">Archived</span>
+                            {editable && (
+                              <button type="button" onClick={() => toggleActive(s.id, true)} title="Bring this item back into the active catalogue"
+                                className="rounded px-2 py-0.5 text-[11px] font-bold bg-[var(--accent-2-bg)] text-[var(--accent-2)] hover:opacity-80">
+                                ↺ Reactivate
+                              </button>
+                            )}
+                          </span>
+                        ) : (
+                          <button type="button" disabled={!editable}
+                            onClick={() => toggleActive(s.id, (s.status ?? "active") !== "active")}
+                            title={(s.status ?? "active") === "active" ? "Active — click to deactivate (won't print or show in pick lists)" : "Inactive — click to activate"}
+                            className={`rounded px-2 py-0.5 text-[11px] font-bold disabled:opacity-60 ${(s.status ?? "active") === "active" ? "bg-[var(--accent-2-bg)] text-[var(--accent-2)]" : "bg-[var(--danger-bg)] text-[var(--danger)]"}`}>
+                            {(s.status ?? "active") === "active" ? "Active" : "Inactive"}
+                          </button>
+                        )}
                       </td>
                       <td className="num-cell">
                         {editable && st ? (
