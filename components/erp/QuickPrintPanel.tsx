@@ -33,6 +33,22 @@ const AUTO_PRINTER_BY_SIZE: Record<string, { pc: string; modelHint?: string }> =
   "med-70x40": { pc: "DESKTOP-CII1LAK", modelHint: "plus" },
 };
 
+// Same stock colours as the mock-up picker (components/erp/LabelSizePicker.tsx
+// SIZE_META) — the card frame around each live preview matches the real
+// label/sticker stock colour instead of a generic grey box. small-50x30 is
+// physically TWO die-cuts side by side per pitch (see the print-raster 2-up
+// fix) — its preview mirrors that by literally drawing the render twice.
+const baseSizeId = (id: string) => id.replace(/^sticker-/, "");
+const STOCK_COLOR: Record<string, { bg: string; border: string }> = {
+  "big-95x70": { bg: "#8cc63f", border: "#5f9a1e" },
+  "med-70x40": { bg: "#8cc63f", border: "#5f9a1e" },
+  "green-65x35": { bg: "#8cc63f", border: "#5f9a1e" },
+  "small-50x30": { bg: "#8cc63f", border: "#5f9a1e" },
+  "red-85x55": { bg: "#e11d2a", border: "#a3121c" },
+};
+const TWO_UP = new Set(["small-50x30"]);
+const PREVIEW_DP = 3.2; // px/mm — shared scale so card sizes stay truly proportional
+
 // Fast, single-SKU print: pick a SKU, lot auto-suggests from live inventory
 // (rack comes along with it — rack is a property of the (SKU, lot) pair, not
 // a separate guess), then click the photo of the size you want to print it.
@@ -154,6 +170,9 @@ export default function QuickPrintPanel({
 
   // Live-render every size's thumbnail whenever the fill (SKU/lot/rack) or the
   // designs change — this is the "photo of the label" the operator clicks.
+  // Card size is genuinely proportional (same px/mm for every size, no
+  // artificial cap), and the 2-up stock draws its render twice side by side
+  // with a die-cut gap, matching what actually comes out of the printer.
   useEffect(() => {
     if (!fill) return;
     let cancelled = false;
@@ -162,14 +181,30 @@ export default function QuickPrintPanel({
         const doc = docsBySize[s.id];
         const cv = canvasRefs.current[s.id];
         if (!doc || !cv) continue;
-        const dp = 4; // screen-preview scale, not printer resolution
-        cv.width = Math.round(doc.w * dp);
-        cv.height = Math.round(doc.h * dp);
-        const ctx = cv.getContext("2d");
-        if (!ctx) continue;
         await ensureFontsLoaded(doc);
         if (cancelled) return;
-        await renderDoc(ctx, doc, fill, dp);
+        const oneW = Math.round(doc.w * PREVIEW_DP), oneH = Math.round(doc.h * PREVIEW_DP);
+        if (TWO_UP.has(baseSizeId(s.id))) {
+          const buf = document.createElement("canvas");
+          buf.width = oneW; buf.height = oneH;
+          const bctx = buf.getContext("2d");
+          if (!bctx) continue;
+          await renderDoc(bctx, doc, fill, PREVIEW_DP);
+          const gap = 3;
+          cv.width = oneW * 2 + gap; cv.height = oneH;
+          const ctx = cv.getContext("2d");
+          if (!ctx) continue;
+          ctx.clearRect(0, 0, cv.width, cv.height);
+          ctx.drawImage(buf, 0, 0);
+          ctx.drawImage(buf, oneW + gap, 0);
+          ctx.fillStyle = "#cbd5e1";
+          ctx.fillRect(oneW, 0, gap, oneH); // faint die-cut line between the two
+        } else {
+          cv.width = oneW; cv.height = oneH;
+          const ctx = cv.getContext("2d");
+          if (!ctx) continue;
+          await renderDoc(ctx, doc, fill, PREVIEW_DP);
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -190,6 +225,8 @@ export default function QuickPrintPanel({
   }
 
   const inp = "rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
+  // Biggest stock first, left to right — a visual size ladder, not just a list.
+  const sortedSizes = useMemo(() => [...sizes].sort((a, b) => b.w * b.h - a.w * a.h), [sizes]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -239,13 +276,16 @@ export default function QuickPrintPanel({
 
       <section className="panel">
         <div className="panel-hd">2 · Click the size to print</div>
-        <div className="flex flex-wrap gap-4 p-4">
-          {sizes.map((s) => {
+        <div className="flex flex-wrap items-end gap-5 p-4">
+          {sortedSizes.map((s) => {
             const doc = docsBySize[s.id];
             const busy = printingSizeId === s.id;
+            const stock = STOCK_COLOR[baseSizeId(s.id)] ?? { bg: "var(--surface-2)", border: "var(--border)" };
+            const twoUp = TWO_UP.has(baseSizeId(s.id));
+            const cardW = Math.round(s.w * PREVIEW_DP) * (twoUp ? 2 : 1) + (twoUp ? 3 : 0);
             if (!doc) {
               return (
-                <div key={s.id} className="flex w-[160px] flex-col items-center gap-2 rounded-xl border border-dashed border-[var(--border)] p-3 text-center opacity-50">
+                <div key={s.id} className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed p-3 text-center opacity-50" style={{ borderColor: stock.border, width: cardW }}>
                   <div className="flex h-24 w-full items-center justify-center rounded-lg bg-[var(--surface-2)] text-xs text-[var(--muted)]">Not designed yet</div>
                   <div className="text-xs font-semibold text-[var(--muted)]">{s.label}</div>
                 </div>
@@ -257,13 +297,16 @@ export default function QuickPrintPanel({
                 type="button"
                 disabled={!data || !!printingSizeId}
                 onClick={() => handlePrint(s.id)}
-                className="flex flex-col items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3 text-center transition hover:border-[var(--accent)] hover:shadow-md disabled:cursor-not-allowed disabled:opacity-40"
+                className="flex flex-col items-center gap-2 rounded-2xl p-3 text-center shadow-sm transition hover:shadow-lg disabled:cursor-not-allowed disabled:opacity-40"
+                style={{ background: stock.bg, border: `3px solid ${stock.border}` }}
                 title={data ? `Print on ${s.label}` : "Pick a SKU first"}
               >
-                <canvas ref={(el) => { canvasRefs.current[s.id] = el; }} className="rounded border border-[var(--border)] bg-white" style={{ maxWidth: 220, maxHeight: 160 }} />
-                <div className="text-xs font-semibold">{s.label}</div>
-                <div className="text-[10px] text-[var(--muted)]">→ {printerLabelFor(s.id)}</div>
-                {busy && <div className="text-xs text-[var(--accent)]">Printing…</div>}
+                <div className="rounded bg-white p-1 shadow-inner">
+                  <canvas ref={(el) => { canvasRefs.current[s.id] = el; }} className="block" />
+                </div>
+                <div className="text-xs font-extrabold" style={{ color: stock.border === "#a3121c" ? "#fff" : "#141414" }}>{s.label}{twoUp ? " · 2-up" : ""}</div>
+                <div className="text-[10px] font-semibold" style={{ color: stock.border === "#a3121c" ? "#ffd9dc" : "#2f4a12" }}>→ {printerLabelFor(s.id)}</div>
+                {busy && <div className="text-xs font-bold text-[var(--accent)]">Printing…</div>}
               </button>
             );
           })}
