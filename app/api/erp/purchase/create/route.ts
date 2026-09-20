@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "purchase")) {
+  if (!canWrite(user, "purchase")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot create POs.` }, { status: 403 });
   }
 

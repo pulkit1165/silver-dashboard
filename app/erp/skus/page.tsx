@@ -22,8 +22,8 @@ export default async function ItemMasterPage({
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const canEditItems = canWrite(user.role, "skus");
-  const canEditRates = canWrite(user.role, "rates");
+  const canEditItems = canWrite(user, "skus");
+  const canEditRates = canWrite(user, "rates");
   const editable = canEditItems || canEditRates;
   const rows = await getSkusWithMrp(sp.q, PAGE_CAP);
   return (

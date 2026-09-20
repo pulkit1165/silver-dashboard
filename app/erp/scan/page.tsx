@@ -16,7 +16,7 @@ export default async function ScanPage() {
       />
       <ScanWorkspace
         user={{ name: user.name, role: user.role }}
-        canWrite={canWrite(user.role, "scan")}
+        canWrite={canWrite(user, "scan")}
         warehouses={warehouses.map((w) => ({ id: w.id, code: w.code, name: w.name }))}
         bins={bins.map((b) => ({ id: b.id, warehouse_id: b.warehouse_id, code: b.code }))}
       />

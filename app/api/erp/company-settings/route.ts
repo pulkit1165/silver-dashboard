@@ -22,7 +22,7 @@ const EDITABLE_KEYS: (keyof CompanySettings)[] = [
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "company_settings")) {
+  if (!canWrite(user, "company_settings")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit company settings.` }, { status: 403 });
   }
   const body = await req.json().catch(() => ({}));

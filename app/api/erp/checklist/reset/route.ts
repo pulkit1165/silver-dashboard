@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Sign in to edit" }, { status: 401 });
-  if (!canWrite(user.role, "users")) return NextResponse.json({ ok: false, error: "Only an admin can reset the checklist" }, { status: 403 });
+  if (!canWrite(user, "users")) return NextResponse.json({ ok: false, error: "Only an admin can reset the checklist" }, { status: 403 });
   try {
     await resetChecklist(user.name);
     return NextResponse.json({ ok: true });

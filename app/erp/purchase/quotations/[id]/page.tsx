@@ -28,7 +28,7 @@ export default async function QuotationDetailPage({ params }: { params: Promise<
       />
       <QuotationEditor
         quo={data.quo} lines={data.lines} vendors={vendors}
-        canEdit={canWrite(user.role, "purchase") && data.quo.status === "draft"}
+        canEdit={canWrite(user, "purchase") && data.quo.status === "draft"}
         isAdmin={user.role === "admin"}
       />
     </>

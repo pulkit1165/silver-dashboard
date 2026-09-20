@@ -17,7 +17,7 @@ export default async function ItemNetRatePage({
   const sp = await searchParams;
   const user = await getCurrentUser();
   const rows = await getSkusWithNetRate(sp.q, PAGE_CAP);
-  const editable = canWrite(user.role, "rates");
+  const editable = canWrite(user, "rates");
   return (
     <>
       <PageHeader

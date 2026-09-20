@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import Scanner from "./Scanner";
 import type { OrderPacking, PackingLine } from "@/lib/erp/types";
+import { pingLocation } from "@/lib/erp/deviceLocationClient";
 
 type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
 type LogEntry = { ts: string; ok: boolean; text: string };
@@ -83,6 +84,7 @@ export default function CasePacking({
     const qty = Number(pending.qty);
     if (!Number.isFinite(qty) || qty <= 0) return pushLog(false, "Enter a valid quantity.");
     setBusy(true);
+    pingLocation("scan");
     try {
       const r = await fetch("/api/erp/scan/action", {
         method: "POST",

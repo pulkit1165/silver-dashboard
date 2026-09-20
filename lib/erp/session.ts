@@ -4,9 +4,10 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { getSql } from "./db";
 import { verifySession, SESSION_COOKIE } from "./jwt";
-import type { Role } from "./rbac";
+import type { Role, ModuleAccess } from "./rbac";
+import { ensureUserModuleAccessCol } from "./users";
 
-export type CurrentUser = { id: number; name: string; role: Role; email: string };
+export type CurrentUser = { id: number; name: string; role: Role; email: string; moduleAccess: ModuleAccess | null };
 
 /**
  * The authenticated user, or null. (Use in layout/APIs that handle null themselves.)
@@ -19,7 +20,8 @@ export const getSessionUser = cache(async (): Promise<CurrentUser | null> => {
   if (!token) return null;
   const payload = await verifySession(token);
   if (!payload) return null;
-  const [u] = await getSql()`SELECT id,name,role,email FROM users WHERE id=${payload.uid} AND active=true`;
+  await ensureUserModuleAccessCol();
+  const [u] = await getSql()`SELECT id,name,role,email,module_access AS "moduleAccess" FROM users WHERE id=${payload.uid} AND active=true`;
   return (u as CurrentUser) ?? null;
 });
 
@@ -31,5 +33,6 @@ export async function getCurrentUser(): Promise<CurrentUser> {
 }
 
 export async function listUsers(): Promise<CurrentUser[]> {
-  return (await getSql()`SELECT id,name,role,email FROM users WHERE active=true ORDER BY id`) as unknown as CurrentUser[];
+  await ensureUserModuleAccessCol();
+  return (await getSql()`SELECT id,name,role,email,module_access AS "moduleAccess" FROM users WHERE active=true ORDER BY id`) as unknown as CurrentUser[];
 }

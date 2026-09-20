@@ -71,7 +71,7 @@ export async function POST(req: Request) {
 
   const cfg = body.master ? MASTERS[body.master as MasterKey] : undefined;
   if (!cfg) return NextResponse.json({ ok: false, error: "Unknown master." }, { status: 400 });
-  if (!canWrite(user.role, cfg.permission)) {
+  if (!canWrite(user, cfg.permission)) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit ${cfg.label}.` }, { status: 403 });
   }
 

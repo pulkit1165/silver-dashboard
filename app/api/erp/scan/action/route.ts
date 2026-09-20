@@ -19,7 +19,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: `Invalid action.` }, { status: 400 });
   }
   // a plain product lookup is allowed for any role; mutating actions need write rights
-  if (action !== "lookup" && action !== "verify" && !canWrite(user.role, "scan")) {
+  if (action !== "lookup" && action !== "verify" && !canWrite(user, "scan")) {
     return NextResponse.json(
       { ok: false, error: `Your role (${user.role}) cannot perform "${action}".` },
       { status: 403 },

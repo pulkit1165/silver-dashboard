@@ -16,7 +16,7 @@ export default async function MasterImportPage({
   const user = await getCurrentUser();
 
   // Only offer the masters this role may write.
-  const allowed = MASTER_LIST.filter((m) => canWrite(user.role, m.permission));
+  const allowed = MASTER_LIST.filter((m) => canWrite(user, m.permission));
   if (allowed.length === 0) {
     return (
       <>

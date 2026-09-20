@@ -15,7 +15,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "skus")) {
+  if (!canWrite(user, "skus")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot create SKUs.` }, { status: 403 });
   }
   const b = await req.json().catch(() => ({}));

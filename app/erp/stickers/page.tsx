@@ -14,7 +14,7 @@ const FONTS_HREF =
 
 export default async function StickerPrintPage() {
   const user = await getCurrentUser();
-  if (!canWrite(user.role, "labels")) {
+  if (!canWrite(user, "labels")) {
     return (
       <>
         <PageHeader title="Abbreviation Stickers" />

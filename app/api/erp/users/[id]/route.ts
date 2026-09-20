@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSessionUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
-import { updateUser } from "@/lib/erp/users";
+import { updateUser, deleteUser } from "@/lib/erp/users";
 import { logActivity } from "@/lib/erp/activity";
 
 export const dynamic = "force-dynamic";
@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "users")) return NextResponse.json({ ok: false, error: "Only admins can edit users." }, { status: 403 });
+  if (!canWrite(user, "users")) return NextResponse.json({ ok: false, error: "Only admins can edit users." }, { status: 403 });
   const idNum = Number((await ctx.params).id);
   if (!Number.isInteger(idNum) || idNum <= 0) return NextResponse.json({ ok: false, error: "User not found." }, { status: 404 });
   const b = await req.json().catch(() => ({}));
@@ -18,8 +18,26 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
   if (idNum === user.id && (b.active === false || (b.role && b.role !== user.role))) {
     return NextResponse.json({ ok: false, error: "You can't change your own role or deactivate your own account." }, { status: 400 });
   }
-  const res = await updateUser(idNum, { name: b.name, username: b.username, role: b.role, email: b.email, active: b.active, password: b.password });
+  const res = await updateUser(idNum, {
+    name: b.name, username: b.username, role: b.role, email: b.email, active: b.active,
+    password: b.password, moduleAccess: b.moduleAccess !== undefined ? b.moduleAccess : undefined,
+  });
   if (!res.ok) return NextResponse.json(res, { status: 400 });
   await logActivity({ actor: user.name, actorRole: user.role, action: "user.update", entity: "user", entityId: idNum, summary: `Updated user #${idNum}${b.password ? " (password reset)" : ""}` }).catch(() => {});
+  return NextResponse.json({ ok: true });
+}
+
+// DELETE → hard-delete a user. Guards: can't delete yourself, can't delete
+// the last remaining admin (see deleteUser() for the exact check).
+export async function DELETE(_req: Request, ctx: { params: Promise<{ id: string }> }) {
+  const user = await getSessionUser();
+  if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  if (!canWrite(user, "users")) return NextResponse.json({ ok: false, error: "Only admins can delete users." }, { status: 403 });
+  const idNum = Number((await ctx.params).id);
+  if (!Number.isInteger(idNum) || idNum <= 0) return NextResponse.json({ ok: false, error: "User not found." }, { status: 404 });
+  if (idNum === user.id) return NextResponse.json({ ok: false, error: "You can't delete your own account." }, { status: 400 });
+  const res = await deleteUser(idNum);
+  if (!res.ok) return NextResponse.json(res, { status: 400 });
+  await logActivity({ actor: user.name, actorRole: user.role, action: "user.delete", entity: "user", entityId: idNum, summary: `Deleted user #${idNum}` }).catch(() => {});
   return NextResponse.json({ ok: true });
 }

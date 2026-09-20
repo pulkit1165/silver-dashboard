@@ -20,7 +20,7 @@ function cityOf(billing?: string | null): string {
 // A second tab manages the global Item Net Rate that applies to ALL parties.
 export default async function DiscountMasterPage() {
   const [customers, user] = await Promise.all([getCustomers(), getCurrentUser()]);
-  const editable = canWrite(user.role, "rates");
+  const editable = canWrite(user, "rates");
   return (
     <>
       <PageHeader

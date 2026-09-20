@@ -11,7 +11,7 @@ export default async function ChecklistPage() {
   const stages = await listChecklist();
   // Everyone signed in can tick & edit tasks (it's a shared SOP the client co-owns);
   // only an admin can reset the whole thing back to template.
-  const canReset = canWrite(user.role, "users");
+  const canReset = canWrite(user, "users");
   return (
     <>
       <PageHeader

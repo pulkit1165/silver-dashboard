@@ -13,7 +13,7 @@ const isKind = (k: string): k is PartyPctKind => (KINDS as string[]).includes(k)
 export async function POST(req: Request, { params }: { params: Promise<{ kind: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "rates")) {
+  if (!canWrite(user, "rates")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit rates.` }, { status: 403 });
   }
   const { kind } = await params;

@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function SavedSlipsPage() {
   const user = await getCurrentUser(); // gate to signed-in users
   const slips = await listPackingSlips();
-  const canBill = canWrite(user.role, "invoices");
+  const canBill = canWrite(user, "invoices");
   return (
     <>
       <PageHeader

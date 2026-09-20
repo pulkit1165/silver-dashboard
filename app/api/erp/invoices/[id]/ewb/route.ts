@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "eway_bills")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view e-way bills.` }, { status: 403 });
+  if (!canWrite(user, "eway_bills")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view e-way bills.` }, { status: 403 });
   const { id } = await params;
   const payload = await computeEwbPayload(Number(id));
   if (!payload) return NextResponse.json({ ok: false, error: "Invoice not found." }, { status: 404 });
@@ -19,7 +19,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "eway_bills")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot record e-way bills.` }, { status: 403 });
+  if (!canWrite(user, "eway_bills")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot record e-way bills.` }, { status: 403 });
   const { id } = await params;
   const b = await req.json().catch(() => ({}));
   const result = await saveEwbNumber(Number(id), String(b.ewb_no ?? ""), String(b.ewb_valid_until ?? ""));

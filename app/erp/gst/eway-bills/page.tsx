@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function EwayBillsPage() {
   const user = await getCurrentUser();
-  if (!canWrite(user.role, "eway_bills")) {
+  if (!canWrite(user, "eway_bills")) {
     return (
       <>
         <PageHeader title="e-Way Bills" subtitle="Transport permits for shipments over the threshold value." />

@@ -15,7 +15,7 @@ export async function POST(req: Request) {
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   const b = await req.json().catch(() => ({}));
   const action = String(b.action || "");
-  const canPurchase = canWrite(user.role, "purchase");
+  const canPurchase = canWrite(user, "purchase");
   const isAdmin = user.role === "admin";
 
   try {

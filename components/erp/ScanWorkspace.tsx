@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Scanner from "./Scanner";
+import { pingLocation } from "@/lib/erp/deviceLocationClient";
 
 type WH = { id: number; code: string; name: string };
 type BIN = { id: number; warehouse_id: number; code: string };
@@ -89,6 +90,7 @@ export default function ScanWorkspace({
     if (!validated || !action) return;
     setBusy(true);
     setResult(null);
+    pingLocation("scan"); // fire-and-forget, never blocks the scan itself
     try {
       const body: Record<string, unknown> = {
         code: validated.token, action: action.key, device: "web",

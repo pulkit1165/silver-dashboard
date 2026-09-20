@@ -10,7 +10,7 @@ interface SkuOption {
   id: number; sku_code: string; name: string; price: number; unit: string;
   gst_rate: number; master_qty: number; bal_qty: number; item_net_rate: number; foc_pct: number; cost: number;
 }
-interface CustomerOption { id: number; code: string; name: string; discount_pct: number; ogl_pct: number; foc_pct: number }
+interface CustomerOption { id: number; code: string; name: string; city?: string; discount_pct: number; ogl_pct: number; foc_pct: number }
 interface RateRow { trdate: string; partyName: string; itemCode: string; itemDescription: string; rate: number; quantity: number }
 
 interface Line {
@@ -58,7 +58,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   }
   const skuById = useMemo(() => new Map(skus.map((s) => [s.id, s])), [skus]);
   const customerOptions = useMemo(
-    () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: c.code })),
+    () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: [c.code, c.city].filter(Boolean).join(" · ") })),
     [customers],
   );
   const skuOptions = useMemo(
@@ -169,6 +169,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     // Picking an item on the last line drops a fresh blank line, so you can keep
     // punching items straight down without clicking "+ Add item" each time.
     if (idx === lines.length - 1) setLines((ls) => (ls.length === idx + 1 ? [...ls, emptyLine()] : ls));
+    // Enter/select on the item search jumps straight to the NEXT item line's search
+    // box (qty defaults to 1), so items can be punched one after another.
+    focusLineItem(idx + 1);
     // optimistic default while we fetch the party-wise rate for this item
     const curIsK = lines[idx]?.isK ?? false;
     updateLine(idx, { skuId, ...deriveRate(sku, [], pctx(sku.id, curIsK)), loadingRates: true, itemRates: [], partyRates: [] });
@@ -292,7 +295,6 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                       onChange={(id) => onSkuChange(idx, id)}
                       placeholder="Search item…"
                       className={inp}
-                      advance
                     />
                   </F>
                 </div>

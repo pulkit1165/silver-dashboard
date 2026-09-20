@@ -16,7 +16,7 @@ const MAX_COPIES = 1000;
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "labels")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot print labels.` }, { status: 403 });
+  if (!canWrite(user, "labels")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot print labels.` }, { status: 403 });
 
   const b = await req.json().catch(() => ({}));
   const printerId = String(b.printerId || "").trim();

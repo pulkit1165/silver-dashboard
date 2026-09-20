@@ -13,7 +13,7 @@ export default async function PrintQueuePage() {
         title="Print Queue"
         subtitle="Live view of the self-hosted print bridge — which PCs' agents are online, and every label job as it goes queued → printing → done. Retry any that fail."
       />
-      <PrintQueue canRetry={canWrite(user.role, "labels")} />
+      <PrintQueue canRetry={canWrite(user, "labels")} />
     </>
   );
 }

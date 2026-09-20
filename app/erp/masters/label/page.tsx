@@ -16,7 +16,7 @@ export default async function LabelMasterPage({
   const sp = await searchParams;
   const q = (sp.q ?? "").trim();
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "labels");
+  const editable = canWrite(user, "labels");
   const sql = getSql();
 
   const like = `%${q}%`;

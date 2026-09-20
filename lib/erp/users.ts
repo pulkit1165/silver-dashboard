@@ -1,11 +1,11 @@
 import "server-only";
 import { getSql } from "./db";
 import { hashPassword } from "./auth";
-import { ROLES, type Role } from "./rbac";
+import { ROLES, type Role, type ModuleAccess } from "./rbac";
 
 export type ManagedUser = {
   id: number; name: string; username: string | null; email: string | null;
-  role: Role; active: boolean; hasPassword: boolean;
+  role: Role; active: boolean; hasPassword: boolean; moduleAccess: ModuleAccess | null;
 };
 
 const clean = (v: unknown, max = 80) => String(v ?? "").replace(/[\r\n]+/g, " ").trim().slice(0, max);
@@ -14,18 +14,39 @@ const isRole = (r: string): r is Role => (ROLES as readonly string[]).includes(r
 const normUsername = (v: unknown) => clean(v, 40).toLowerCase();
 const validUsername = (u: string) => /^[a-z0-9._-]{2,40}$/.test(u);
 
-export async function listAllUsers(): Promise<ManagedUser[]> {
-  const rows = (await getSql()`
-    SELECT id, name, username, email, role, COALESCE(active,true) AS active,
-           (password_hash IS NOT NULL AND password_hash <> '') AS has_password
-    FROM users ORDER BY id`) as unknown as
-    Array<{ id: number; name: string; username: string | null; email: string | null; role: string; active: boolean; has_password: boolean }>;
-  return rows.map((r) => ({ id: r.id, name: r.name, username: r.username, email: r.email, role: (r.role as Role), active: !!r.active, hasPassword: !!r.has_password }));
+// module_access is nullable jsonb: NULL means "not yet migrated to per-user
+// access" (canSee/canWrite fall back to the role-array defaults exactly as
+// before — see rbac.ts). Self-migrating, mirrors the rest of this session's
+// ensure()-column idiom instead of a db:push.
+let moduleAccessColEnsured = false;
+export async function ensureUserModuleAccessCol(): Promise<void> {
+  if (moduleAccessColEnsured) return;
+  try {
+    await getSql().unsafe(`ALTER TABLE users ADD COLUMN IF NOT EXISTS module_access jsonb`);
+    moduleAccessColEnsured = true;
+  } catch { /* ignore */ }
 }
 
-export type CreateUserInput = { name: string; username: string; password: string; role: string; email?: string | null; active?: boolean };
+export async function listAllUsers(): Promise<ManagedUser[]> {
+  await ensureUserModuleAccessCol();
+  const rows = (await getSql()`
+    SELECT id, name, username, email, role, COALESCE(active,true) AS active, module_access,
+           (password_hash IS NOT NULL AND password_hash <> '') AS has_password
+    FROM users ORDER BY id`) as unknown as
+    Array<{ id: number; name: string; username: string | null; email: string | null; role: string; active: boolean; has_password: boolean; module_access: ModuleAccess | null }>;
+  return rows.map((r) => ({
+    id: r.id, name: r.name, username: r.username, email: r.email, role: (r.role as Role),
+    active: !!r.active, hasPassword: !!r.has_password, moduleAccess: r.module_access,
+  }));
+}
+
+export type CreateUserInput = {
+  name: string; username: string; password: string; role: string; email?: string | null; active?: boolean;
+  moduleAccess?: ModuleAccess | null;
+};
 
 export async function createUser(input: CreateUserInput): Promise<{ ok: true; id: number } | { ok: false; error: string }> {
+  await ensureUserModuleAccessCol();
   const name = clean(input.name);
   const username = normUsername(input.username);
   const role = clean(input.role, 20);
@@ -43,8 +64,8 @@ export async function createUser(input: CreateUserInput): Promise<{ ok: true; id
   const hash = await hashPassword(password);
   try {
     const [row] = (await sql`
-      INSERT INTO users (name, username, email, role, password_hash, active)
-      VALUES (${name}, ${username}, ${email}, ${role}, ${hash}, ${input.active !== false})
+      INSERT INTO users (name, username, email, role, password_hash, active, module_access)
+      VALUES (${name}, ${username}, ${email}, ${role}, ${hash}, ${input.active !== false}, ${input.moduleAccess ? sql.json(input.moduleAccess as never) : null})
       RETURNING id`) as unknown as Array<{ id: number }>;
     return { ok: true, id: row.id };
   } catch {
@@ -52,9 +73,13 @@ export async function createUser(input: CreateUserInput): Promise<{ ok: true; id
   }
 }
 
-export type UpdateUserInput = { name?: string; username?: string; role?: string; email?: string | null; active?: boolean; password?: string };
+export type UpdateUserInput = {
+  name?: string; username?: string; role?: string; email?: string | null; active?: boolean; password?: string;
+  moduleAccess?: ModuleAccess | null;
+};
 
 export async function updateUser(id: number, input: UpdateUserInput): Promise<{ ok: true } | { ok: false; error: string }> {
+  await ensureUserModuleAccessCol();
   const sql = getSql();
   const [existing] = (await sql`SELECT id FROM users WHERE id=${id}`) as unknown as Array<{ id: number }>;
   if (!existing) return { ok: false, error: "User not found." };
@@ -75,6 +100,7 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<{ 
     set.email = e;
   }
   if (input.active != null) set.active = !!input.active;
+  if (input.moduleAccess !== undefined) set.module_access = input.moduleAccess ? sql.json(input.moduleAccess as never) : null;
   if (input.password != null && input.password !== "") {
     if (String(input.password).length < 6) return { ok: false, error: "Password must be at least 6 characters." };
     set.password_hash = await hashPassword(String(input.password));
@@ -87,4 +113,16 @@ export async function updateUser(id: number, input: UpdateUserInput): Promise<{ 
   } catch {
     return { ok: false, error: "Could not update the user (username or email may already exist)." };
   }
+}
+
+export async function deleteUser(id: number): Promise<{ ok: true } | { ok: false; error: string }> {
+  const sql = getSql();
+  const [target] = (await sql`SELECT id, role FROM users WHERE id=${id}`) as unknown as Array<{ id: number; role: string }>;
+  if (!target) return { ok: false, error: "User not found." };
+  if (target.role === "admin") {
+    const [{ count }] = (await sql`SELECT COUNT(*)::int AS count FROM users WHERE role='admin' AND COALESCE(active,true)=true`) as unknown as Array<{ count: number }>;
+    if (count <= 1) return { ok: false, error: "Can't delete the last remaining admin account." };
+  }
+  await sql`DELETE FROM users WHERE id=${id}`;
+  return { ok: true };
 }

@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
+  if (!canWrite(user, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
   const uploads = await listGstr2bUploads();
   return NextResponse.json({ ok: true, uploads });
 }
@@ -16,7 +16,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot upload GSTR-2B.` }, { status: 403 });
+  if (!canWrite(user, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot upload GSTR-2B.` }, { status: 403 });
   const body = await req.json().catch(() => ({}));
   const period = String(body.period ?? "").trim();
   if (!/^\d{6}$/.test(period)) return NextResponse.json({ ok: false, error: "period must be YYYYMM." }, { status: 400 });

@@ -66,13 +66,13 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
 
   const isActive = (href: string) =>
     href === "/" || href === "/erp" ? path === href : path === href || path.startsWith(href + "/");
-  const folderActive = (f: NavFolder) => visibleChildren(user.role, f).some((c) => isActive(c.href));
+  const folderActive = (f: NavFolder) => visibleChildren(user, f).some((c) => isActive(c.href));
 
   function toggleFolder(folder: NavFolder, e: React.MouseEvent<HTMLButtonElement>) {
     const r = e.currentTarget.getBoundingClientRect();
     const vh = window.innerHeight;
     const margin = 12;
-    const n = visibleChildren(user.role, folder).length;
+    const n = visibleChildren(user, folder).length;
     // Estimate the menu height (~40px/item + header) and lift the anchor up if it
     // would run past the bottom of the viewport, so no item is ever off-screen.
     const estH = Math.min(vh - margin * 2, n * 40 + 44);
@@ -119,7 +119,7 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
         {NAV.map((group) => {
           // keep only entries with something visible to this role
           const entries = group.items.filter((e: NavEntry) =>
-            isFolder(e) ? visibleChildren(user.role, e).length > 0 : canSee(user.role, e),
+            isFolder(e) ? visibleChildren(user, e).length > 0 : canSee(user, e),
           );
           if (entries.length === 0) return null;
           return (
@@ -128,7 +128,7 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
               <div className="flex flex-col gap-0.5">
                 {entries.map((e) => {
                   if (!isFolder(e)) return renderLeaf(e);
-                  const children = visibleChildren(user.role, e);
+                  const children = visibleChildren(user, e);
                   const active = folderActive(e);
                   const isOpen = openKey === e.label;
                   return (
@@ -181,7 +181,7 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
         >
           <div className="px-2 pb-1 pt-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--muted-2)]">{openFolder.label}</div>
           <div className="flex flex-col gap-0.5">
-            {visibleChildren(user.role, openFolder).map(renderLeaf)}
+            {visibleChildren(user, openFolder).map(renderLeaf)}
           </div>
         </div>,
         document.body,

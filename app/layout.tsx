@@ -3,6 +3,7 @@ import { Manrope, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 import LiveSync from "@/components/LiveSync";
+import LocationPing from "@/components/LocationPing";
 import { getSessionUser } from "@/lib/erp/session";
 
 const manrope = Manrope({
@@ -29,6 +30,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
               <div className="mx-auto w-full max-w-[1400px]">{children}</div>
             </main>
             <LiveSync />
+            <LocationPing />
           </div>
         ) : (
           children

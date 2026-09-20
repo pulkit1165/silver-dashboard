@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function Gstr1Page() {
   const user = await getCurrentUser();
-  if (!canWrite(user.role, "gst")) {
+  if (!canWrite(user, "gst")) {
     return (
       <>
         <PageHeader title="GSTR-1 Export" subtitle="Outward supply return." />

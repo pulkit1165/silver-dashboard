@@ -18,7 +18,7 @@ export async function GET() {
 export async function PATCH(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "labels")) {
+  if (!canWrite(user, "labels")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot configure printers.` }, { status: 403 });
   }
   const b = await req.json().catch(() => ({}));

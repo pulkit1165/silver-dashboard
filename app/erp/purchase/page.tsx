@@ -73,7 +73,7 @@ export default async function PurchasePage({
         <PoGenerator
           pos={pos}
           vendors={vendorList}
-          canWrite={canWrite(user.role, "purchase")}
+          canWrite={canWrite(user, "purchase")}
           aiEnabled={aiAvailable()}
         />
       ) : (

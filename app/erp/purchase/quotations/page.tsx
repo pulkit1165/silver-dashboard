@@ -23,7 +23,7 @@ export default async function QuotationsPage({ searchParams }: { searchParams: P
   const user = await getCurrentUser();
   if (!ALLOWED.has(user.role)) return (<><PageHeader title="Purchase Quotations" /><p className="text-sm text-[var(--muted)]">No access.</p></>);
   const rows = await listQuotations(status);
-  const canEdit = canWrite(user.role, "purchase");
+  const canEdit = canWrite(user, "purchase");
 
   return (
     <>

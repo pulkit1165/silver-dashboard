@@ -690,3 +690,27 @@ export const activityLog = pgTable(
   },
   (t) => ({ byId: index("activity_id_idx").on(t.id) }),
 );
+
+// Best-effort browser-geolocation trail for company-issued devices (see
+// lib/erp/deviceLocations.ts) — captured on login, on every QR scan action, and
+// on a periodic while-the-app-is-open heartbeat. Never blocks the action it
+// rides along with; a denied/unavailable permission just means no row.
+export const deviceLocations = pgTable(
+  "device_locations",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id"),
+    userName: text("user_name"),
+    role: text("role"),
+    deviceId: text("device_id"), // random id persisted in the browser's localStorage
+    source: text("source").notNull(), // "login" | "scan" | "ping"
+    lat: doublePrecision("lat").notNull(),
+    lng: doublePrecision("lng").notNull(),
+    accuracy: doublePrecision("accuracy"), // meters, from the GPS fix
+    createdAt: createdAt(),
+  },
+  (t) => ({
+    byUser: index("device_loc_user_idx").on(t.userId, t.createdAt),
+    byDevice: index("device_loc_device_idx").on(t.deviceId, t.createdAt),
+  }),
+);

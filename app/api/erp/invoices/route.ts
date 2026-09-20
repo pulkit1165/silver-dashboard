@@ -18,7 +18,7 @@ export async function GET() {
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "invoices")) {
+  if (!canWrite(user, "invoices")) {
     return NextResponse.json({ ok: false, error: `Your role (${user.role}) cannot create invoices.` }, { status: 403 });
   }
   const body = await req.json().catch(() => ({}));

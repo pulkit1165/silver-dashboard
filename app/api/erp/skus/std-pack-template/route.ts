@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return new Response("Unauthorized", { status: 401 });
-  if (!canWrite(user.role, "skus")) return new Response("Forbidden", { status: 403 });
+  if (!canWrite(user, "skus")) return new Response("Forbidden", { status: 403 });
 
   const rows = (await getSql()`
     SELECT sku_code, name, COALESCE(master_qty,0) AS master_qty

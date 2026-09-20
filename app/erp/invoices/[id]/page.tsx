@@ -14,7 +14,7 @@ export default async function InvoiceDetail({ params }: { params: Promise<{ id: 
   const data = await getInvoiceFull(id);
   if (!data) notFound();
   const user = await getSessionUser();
-  const editable = !!user && canWrite(user.role, "invoices");
+  const editable = !!user && canWrite(user, "invoices");
   // Render the real e-invoice QR once the IRN/QR payload is on file — until
   // then the print shows a "pending" placeholder (see saveEInvoiceDetails).
   const qrImage = data.invoice.qr_payload ? await qrDataUrl(data.invoice.qr_payload, 200) : null;

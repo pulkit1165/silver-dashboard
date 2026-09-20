@@ -15,7 +15,7 @@ export default async function QrManagePage() {
         title="SKU QR Codes"
         subtitle="Every SKU's secure QR code — status, scanning, printing, disable & regenerate."
       />
-      <QrManager items={items} canWrite={canWrite(user.role, "skus")} />
+      <QrManager items={items} canWrite={canWrite(user, "skus")} />
     </>
   );
 }

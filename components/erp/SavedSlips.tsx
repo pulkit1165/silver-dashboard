@@ -159,6 +159,14 @@ export default function SavedSlips({ initial, canBill = false }: { initial: Pack
                       >
                         Open →
                       </Link>
+                      <Link
+                        href={`/erp/packing-slip/print/${s.id}`}
+                        target="_blank"
+                        title="Open a printable packing slip"
+                        className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]"
+                      >
+                        🖨 Print
+                      </Link>
                       {canBill && (s.so_no || s.party) && (
                         <button
                           onClick={() => pushToBilling(s)}

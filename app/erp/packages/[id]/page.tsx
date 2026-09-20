@@ -17,7 +17,7 @@ export default async function DeliveryOrderPage({ params }: { params: Promise<{ 
   const doc = await getDeliveryOrder(Number(id));
   if (!doc) notFound();
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "dispatch");
+  const editable = canWrite(user, "dispatch");
   const headerEndpoint = `/api/erp/packages/${doc.package_id}`;
 
   const totalDoQty = doc.lines.reduce((a, l) => a + l.do_qty, 0);
@@ -36,7 +36,7 @@ export default async function DeliveryOrderPage({ params }: { params: Promise<{ 
         {doc.status === "verified" && (
           <>
             <span className="tag g">✓ Verified — billable</span>
-            {canWrite(user.role, "invoices") && <GenerateInvoiceButton soId={doc.so_id} label="🧾 Bill now" />}
+            {canWrite(user, "invoices") && <GenerateInvoiceButton soId={doc.so_id} label="🧾 Bill now" />}
           </>
         )}
       </div>

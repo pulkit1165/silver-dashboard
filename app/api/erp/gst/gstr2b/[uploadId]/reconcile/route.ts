@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_req: Request, { params }: { params: Promise<{ uploadId: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
+  if (!canWrite(user, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
   const { uploadId } = await params;
   const result = await reconcileGstr2b(Number(uploadId));
   if ("error" in result) return NextResponse.json({ ok: false, error: result.error }, { status: 404 });

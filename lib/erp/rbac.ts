@@ -7,10 +7,40 @@ export const ROLES: Role[] = [
   "admin", "sales", "purchase", "inventory", "warehouse", "dispatch", "accounts", "vendor", "retailer", "viewer",
 ];
 
+// Per-user module access (Shopify-style: pick which sections a specific person
+// can use, not just a fixed role bucket). One key per NAV folder below, plus
+// "overview" for the handful of role-gated top-level pages (Ask AI, Analytics).
+export type ModuleKey =
+  | "overview" | "scanning" | "packing" | "inventory" | "masterFiles" | "sales"
+  | "purchase" | "financeReports" | "gstCompliance" | "administration";
+
+export const MODULES: { key: ModuleKey; label: string }[] = [
+  { key: "overview", label: "Overview (Ask AI, Analytics)" },
+  { key: "scanning", label: "Scanning" },
+  { key: "packing", label: "Packing" },
+  { key: "inventory", label: "Inventory" },
+  { key: "masterFiles", label: "Master Files" },
+  { key: "sales", label: "Sales" },
+  { key: "purchase", label: "Purchase" },
+  { key: "financeReports", label: "Finance & Reports" },
+  { key: "gstCompliance", label: "GST Compliance" },
+  { key: "administration", label: "Administration" },
+];
+
+export type ModuleAccess = Partial<Record<ModuleKey, boolean>>;
+
+// The minimal shape canSee/canWrite need — a structural subset of session.ts's
+// CurrentUser, kept local (rather than imported) to avoid a circular import
+// (session.ts already imports Role from here).
+export interface AccessUser {
+  role: Role;
+  moduleAccess?: ModuleAccess | null;
+}
+
 // A leaf is a single page (a link). A folder is a module that opens a flyout
 // submenu listing its pages/"reports" (e.g. Packing → Slip / Saved / Live).
 export type NavItem = { href: string; label: string; icon: string; roles: Role[] | "all" };
-export type NavFolder = { label: string; icon: string; children: NavItem[] };
+export type NavFolder = { key: ModuleKey; label: string; icon: string; children: NavItem[] };
 export type NavEntry = NavItem | NavFolder;
 export type NavGroup = { group: string; items: NavEntry[] };
 
@@ -33,7 +63,7 @@ export const NAV: NavGroup[] = [
     group: "Workspaces",
     items: [
       {
-        label: "Scanning", icon: "▣",
+        key: "scanning", label: "Scanning", icon: "▣",
         children: [
           { href: "/erp/scan", label: "QR Scanner", icon: "▣", roles: ["admin", "warehouse", "dispatch", "inventory"] },
           { href: "/erp/qr", label: "QR Codes", icon: "❒", roles: ["admin", "warehouse", "inventory"] },
@@ -41,7 +71,7 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Packing", icon: "▤",
+        key: "packing", label: "Packing", icon: "▤",
         children: [
           { href: "/erp/packing-slip", label: "Pack & Dispatch", icon: "▤", roles: ["admin", "warehouse", "dispatch"] },
           { href: "/erp/packing-slip/saved", label: "Saved Slips", icon: "🗂", roles: ["admin", "warehouse", "dispatch", "accounts", "sales"] },
@@ -49,7 +79,7 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Inventory", icon: "▦",
+        key: "inventory", label: "Inventory", icon: "▦",
         children: [
           { href: "/erp/skus", label: "SKU Master", icon: "▦", roles: ["admin", "inventory", "warehouse", "sales", "purchase"] },
           { href: "/erp/catalog", label: "Product Catalogue", icon: "📖", roles: ["admin", "inventory", "warehouse", "sales", "purchase", "accounts"] },
@@ -68,7 +98,7 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Master Files", icon: "🗎",
+        key: "masterFiles", label: "Master Files", icon: "🗎",
         children: [
           { href: "/erp/customers", label: "Customer Master", icon: "☻", roles: ["admin", "sales", "accounts"] },
           { href: "/erp/vendors", label: "Vendor Master", icon: "⚒", roles: ["admin", "purchase", "accounts", "vendor"] },
@@ -81,7 +111,7 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Sales", icon: "↗",
+        key: "sales", label: "Sales", icon: "↗",
         children: [
           { href: "/erp/sales", label: "Sales Orders", icon: "↗", roles: ["admin", "sales", "dispatch", "accounts"] },
           { href: "/erp/sales/silver-retailer-network", label: "Silver Retailer Network", icon: "🤝", roles: ["admin", "sales", "accounts", "retailer"] },
@@ -93,7 +123,7 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Purchase", icon: "↙",
+        key: "purchase", label: "Purchase", icon: "↙",
         children: [
           { href: "/erp/purchase/quotations", label: "Quotations", icon: "📝", roles: ["admin", "purchase", "accounts"] },
           { href: "/erp/purchase/quotations?status=pending", label: "Approvals", icon: "✔", roles: ["admin"] },
@@ -106,14 +136,14 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Finance & Reports", icon: "₹",
+        key: "financeReports", label: "Finance & Reports", icon: "₹",
         children: [
           { href: "/erp/finance", label: "Finance", icon: "₹", roles: ["admin", "accounts"] },
           { href: "/erp/reports", label: "Reports", icon: "▤", roles: ["admin", "sales", "purchase", "accounts", "inventory"] },
         ],
       },
       {
-        label: "GST Compliance", icon: "🧮",
+        key: "gstCompliance", label: "GST Compliance", icon: "🧮",
         children: [
           { href: "/erp/gst/gstr1", label: "GSTR-1 Export", icon: "📤", roles: ["admin", "accounts"] },
           { href: "/erp/gst/eway-bills", label: "e-Way Bills", icon: "🚛", roles: ["admin", "accounts", "sales", "dispatch"] },
@@ -121,10 +151,11 @@ export const NAV: NavGroup[] = [
         ],
       },
       {
-        label: "Administration", icon: "⚿",
+        key: "administration", label: "Administration", icon: "⚿",
         children: [
           { href: "/erp/users", label: "Users & Roles", icon: "⚿", roles: ["admin"] },
           { href: "/erp/masters/company", label: "Company Settings", icon: "🏢", roles: ["admin"] },
+          { href: "/erp/device-locations", label: "Device Locations", icon: "📍", roles: ["admin"] },
           { href: "/connection", label: "Oracle Link", icon: "⚙", roles: ["admin", "accounts"] },
         ],
       },
@@ -136,17 +167,53 @@ export function isFolder(e: NavEntry): e is NavFolder {
   return (e as NavFolder).children !== undefined;
 }
 
+// Every href's owning module, derived once from NAV — the "overview" group's
+// role-gated pages (Ask AI, Analytics) are the only ones not inside a folder,
+// so they're added explicitly; its "all" pages need no module (see canSee).
+// A few hrefs (e.g. /erp/customers, /erp/skus) are deliberately listed as a
+// child of TWO folders for navigational convenience — this map can only hold
+// one owner per href (last one registered wins), so it's a fine best-effort
+// for canSee's non-folder uses (the Overview items, the informational access
+// matrix), but NOT precise enough to gate actual sidebar rendering — that's
+// what visibleChildren is for below, which uses the folder's own key instead
+// and so never has this ambiguity.
+const HREF_TO_MODULE = new Map<string, ModuleKey>();
+for (const group of NAV) {
+  for (const entry of group.items) {
+    if (isFolder(entry)) for (const child of entry.children) HREF_TO_MODULE.set(child.href, entry.key);
+  }
+}
+HREF_TO_MODULE.set("/erp/assistant", "overview");
+HREF_TO_MODULE.set("/erp/analytics", "overview");
+
 // External/restricted roles (the retailer firm) see ONLY pages that name them
-// explicitly — never the "all" pages (dashboard, activity, etc.).
+// explicitly — never the "all" pages (dashboard, activity, etc.). This is a
+// role-level policy (not per-user module access) — retailer accounts aren't
+// given custom module_access in the admin UI.
 const RESTRICTED: Role[] = ["retailer"];
-export function canSee(role: Role, item: NavItem): boolean {
-  if (RESTRICTED.includes(role)) return item.roles !== "all" && item.roles.includes(role);
-  return item.roles === "all" || item.roles.includes(role);
+
+export function canSee(user: AccessUser, item: NavItem): boolean {
+  if (user.role === "admin") return true;
+  if (RESTRICTED.includes(user.role)) return item.roles !== "all" && item.roles.includes(user.role);
+  if (item.roles === "all") return true; // baseline pages stay universal even for a module-restricted user
+  if (user.moduleAccess) {
+    const key = HREF_TO_MODULE.get(item.href);
+    return key ? !!user.moduleAccess[key] : item.roles.includes(user.role);
+  }
+  return item.roles.includes(user.role); // legacy/unmigrated user — today's role-array behaviour, unchanged
 }
 
-// Children of a folder this role may see (empty → hide the whole folder).
-export function visibleChildren(role: Role, folder: NavFolder): NavItem[] {
-  return folder.children.filter((c) => canSee(role, c));
+// Children of a folder this user may see (empty → hide the whole folder).
+// Deliberately does NOT delegate to canSee's href lookup — several hrefs are
+// shared between two folders (e.g. /erp/customers under both Master Files and
+// Sales), and resolving by folder.key here (rather than by href) is what
+// keeps "granted Sales but not Master Files" from also exposing the
+// Master-Files-flavoured link to that same page.
+export function visibleChildren(user: AccessUser, folder: NavFolder): NavItem[] {
+  if (user.role === "admin") return folder.children;
+  if (RESTRICTED.includes(user.role)) return folder.children.filter((c) => c.roles !== "all" && c.roles.includes(user.role));
+  if (user.moduleAccess) return user.moduleAccess[folder.key] ? folder.children : [];
+  return folder.children.filter((c) => c.roles === "all" || c.roles.includes(user.role)); // legacy/unmigrated user
 }
 
 // Every leaf page in the nav, folders flattened out — used by the access matrix.
@@ -154,7 +221,7 @@ export function leafNavItems(): NavItem[] {
   return NAV.flatMap((g) => g.items.flatMap((e) => (isFolder(e) ? e.children : [e])));
 }
 
-// Write/approve capability per role (used to gate mutating actions).
+// Write/approve capability per module (used to gate mutating actions).
 const WRITERS: Record<string, Role[]> = {
   scan: ["admin", "warehouse", "dispatch", "inventory"],
   skus: ["admin", "inventory"],
@@ -171,10 +238,60 @@ const WRITERS: Record<string, Role[]> = {
   company_settings: ["admin"],
   gst: ["admin", "accounts"],
   eway_bills: ["admin", "accounts", "sales", "dispatch"],
+  device_locations: ["admin"],
 };
 
-export function canWrite(role: Role, module: keyof typeof WRITERS): boolean {
-  return role === "admin" || (WRITERS[module]?.includes(role) ?? false);
+// Which module folder each WRITERS key belongs to, for the per-user check.
+const WRITER_MODULE: Record<keyof typeof WRITERS, ModuleKey> = {
+  scan: "scanning",
+  skus: "inventory",
+  inventory: "inventory",
+  sales: "sales",
+  dispatch: "packing",
+  purchase: "purchase",
+  vendors: "purchase",
+  customers: "sales",
+  invoices: "sales",
+  users: "administration",
+  labels: "inventory",
+  rates: "masterFiles",
+  company_settings: "administration",
+  gst: "gstCompliance",
+  eway_bills: "gstCompliance",
+  device_locations: "administration",
+};
+
+export function canWrite(user: AccessUser, module: keyof typeof WRITERS): boolean {
+  if (user.role === "admin") return true;
+  if (user.moduleAccess) {
+    const key = WRITER_MODULE[module];
+    return key ? !!user.moduleAccess[key] : (WRITERS[module]?.includes(user.role) ?? false);
+  }
+  return WRITERS[module]?.includes(user.role) ?? false; // legacy/unmigrated user — unchanged
+}
+
+// Which roles currently touch each module at all (nav visibility OR write
+// capability) — the single source of truth both for "unmigrated user" fallback
+// (see canSee/canWrite above, which don't use this directly but derive the
+// same facts from NAV/WRITERS) and for prefilling the admin UI's checkbox grid
+// when a template role is picked for a new/edited user.
+const MODULE_ROLES = new Map<ModuleKey, Set<Role>>(MODULES.map((m) => [m.key, new Set<Role>()]));
+for (const [href, key] of HREF_TO_MODULE) {
+  const item = leafNavItems().find((i) => i.href === href);
+  if (!item) continue;
+  const set = MODULE_ROLES.get(key)!;
+  if (item.roles === "all") for (const r of ROLES) set.add(r);
+  else for (const r of item.roles) set.add(r);
+}
+for (const w of Object.keys(WRITERS) as (keyof typeof WRITERS)[]) {
+  const set = MODULE_ROLES.get(WRITER_MODULE[w])!;
+  for (const r of WRITERS[w]) set.add(r);
+}
+
+export function roleModuleDefaults(role: Role): ModuleAccess {
+  const out: ModuleAccess = {};
+  for (const m of MODULES) out[m.key] = role === "admin" || (MODULE_ROLES.get(m.key)?.has(role) ?? false);
+  return out;
 }
 
 export function roleLabel(role: Role): string {

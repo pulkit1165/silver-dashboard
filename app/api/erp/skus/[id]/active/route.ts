@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "skus")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit items.` }, { status: 403 });
+  if (!canWrite(user, "skus")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit items.` }, { status: 403 });
   const { id } = await params;
   const skuId = Number(id);
   const b = (await req.json().catch(() => ({}))) as { active?: unknown };

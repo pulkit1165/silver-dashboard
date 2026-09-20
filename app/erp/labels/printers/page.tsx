@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 export default async function PrintersPage() {
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "labels");
+  const editable = canWrite(user, "labels");
   return (
     <>
       <PageHeader

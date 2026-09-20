@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "invoices")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot record e-invoice details.` }, { status: 403 });
+  if (!canWrite(user, "invoices")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot record e-invoice details.` }, { status: 403 });
   const { id } = await params;
   const b = await req.json().catch(() => ({}));
   const result = await saveEInvoiceDetails(Number(id), {

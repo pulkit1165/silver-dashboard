@@ -14,7 +14,7 @@ export default async function GrnDetailPage({ params }: { params: Promise<{ id: 
   const doc = await getGoodsReceipt(Number(id));
   if (!doc) notFound();
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "purchase");
+  const editable = canWrite(user, "purchase");
   const totalQty = doc.lines.reduce((a, l) => a + l.received_qty, 0);
 
   return (

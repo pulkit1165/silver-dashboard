@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export default async function CompanySettingsPage() {
   const user = await getCurrentUser();
   const settings = await getCompanySettings();
-  const editable = canWrite(user.role, "company_settings");
+  const editable = canWrite(user, "company_settings");
 
   return (
     <>

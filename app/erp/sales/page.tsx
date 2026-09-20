@@ -17,7 +17,7 @@ export default async function SalesOrdersPage({
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const canCreate = canWrite(user.role, "sales");
+  const canCreate = canWrite(user, "sales");
 
   const size = SIZES.includes(sp.size ?? "") ? Number(sp.size) : 60;
   const page = Math.max(1, Number(sp.page) || 1);

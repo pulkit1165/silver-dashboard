@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 export async function PATCH(req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "rates")) {
+  if (!canWrite(user, "rates")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot edit rates.` }, { status: 403 });
   }
   const { id } = await params;

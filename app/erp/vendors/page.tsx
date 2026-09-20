@@ -21,7 +21,7 @@ export default async function VendorsPage({
       <PageHeader
         title="Vendors"
         subtitle="Vendor master, approval status, terms and performance rating."
-        right={canWrite(user.role, "vendors") ? <UploadMasterLink master="vendors" /> : undefined}
+        right={canWrite(user, "vendors") ? <UploadMasterLink master="vendors" /> : undefined}
       />
       <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or GST…" }]} />
       <section className="panel">

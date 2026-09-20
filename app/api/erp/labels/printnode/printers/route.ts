@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export async function GET() {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "labels")) {
+  if (!canWrite(user, "labels")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot print labels.` }, { status: 403 });
   }
   if (!process.env.PRINTNODE_API_KEY) {

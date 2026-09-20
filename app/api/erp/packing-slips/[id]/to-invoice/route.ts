@@ -63,7 +63,7 @@ async function materializeSlipPackage(sql: Sql, soId: number, slipNo: string, li
 export async function POST(_req: Request, { params }: { params: Promise<{ id: string }> }) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "invoices")) {
+  if (!canWrite(user, "invoices")) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot create bills.` }, { status: 403 });
   }
 

@@ -40,7 +40,7 @@ function toWorkbook(data: Awaited<ReturnType<typeof getGstr1Data>>) {
 export async function GET(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
+  if (!canWrite(user, "gst")) return NextResponse.json({ ok: false, error: `Role ${user.role} cannot view GST reports.` }, { status: 403 });
 
   const sp = new URL(req.url).searchParams;
   const from = sp.get("from"); const to = sp.get("to");

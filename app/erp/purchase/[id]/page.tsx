@@ -18,7 +18,7 @@ export default async function PurchaseOrderPage({ params }: { params: Promise<{ 
     getGoodsReceipts({}),
     getWarehouses(),
   ]);
-  const editable = canWrite(user.role, "purchase");
+  const editable = canWrite(user, "purchase");
   const myGrns = grns.filter((g) => g.po_id === po.id);
   const pendingLines = po.lines.filter((l) => l.remaining > 0);
 

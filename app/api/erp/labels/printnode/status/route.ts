@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   const user = await getSessionUser();
   if (!user) return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
-  if (!canWrite(user.role, "labels")) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
+  if (!canWrite(user, "labels")) return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
   const body = await req.json().catch(() => ({}));
   const ids: number[] = (Array.isArray(body.ids) ? body.ids : []).map(Number).filter((n: number) => Number.isFinite(n));
   if (!ids.length) return NextResponse.json({ ok: true, states: {} });

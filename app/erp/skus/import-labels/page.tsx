@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ImportLabelInfoPage() {
   const user = await getCurrentUser();
-  if (!canWrite(user.role, "skus")) {
+  if (!canWrite(user, "skus")) {
     return (
       <>
         <PageHeader title="Backfill Barcode / Master Qty" />

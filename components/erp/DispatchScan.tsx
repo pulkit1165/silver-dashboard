@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Scanner from "./Scanner";
+import { pingLocation } from "@/lib/erp/deviceLocationClient";
 
 type Line = {
   id: number; sku_id: number; sku_code?: string; sku_name?: string; qr_token?: string;
@@ -33,6 +34,7 @@ export default function DispatchScan({ orders }: { orders: Order[] }) {
   async function onDetect(code: string) {
     if (!order) return;
     setBusy(true);
+    pingLocation("scan");
     try {
       const r = await fetch("/api/erp/scan/action", {
         method: "POST",

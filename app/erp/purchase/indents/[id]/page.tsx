@@ -21,7 +21,7 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   const byVendor = new Map<number, typeof data.lines>();
   for (const l of data.lines) (byVendor.get(l.vendor_id) ?? byVendor.set(l.vendor_id, []).get(l.vendor_id)!).push(l);
   const pending = data.lines.filter((l) => !l.po_id).length;
-  const canOrder = (canWrite(user.role, "purchase") || user.role === "admin");
+  const canOrder = (canWrite(user, "purchase") || user.role === "admin");
 
   return (
     <>

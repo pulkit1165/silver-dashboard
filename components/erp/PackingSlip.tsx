@@ -1,13 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import * as XLSX from "xlsx";
 import Scanner from "./Scanner";
 import {
-  type Row, type Case, type Header, type SlipDoc, type SlipMeta,
+  type Row, type Case, type Header, type SlipDoc,
   num, fmtDate, buildSlipItems, casesLabel,
 } from "@/lib/erp/packing-slip-format";
+import { pingLocation } from "@/lib/erp/deviceLocationClient";
 
 // Only the string-valued Row keys can be columns (excludes the boolean `fromMaster`),
 // so cell values are always strings.
@@ -60,17 +60,22 @@ const emptyHeader = (): Header => ({ slipNo: "", billNo: "", salesOrderNo: "", p
 type OrderOpt = { id: number; so_no: string; customer_name?: string; status: string };
 type SoLineInfo = { sku_code?: string; sku_name?: string; qr_token?: string; qty: number; dispatched_qty: number; mrp: number; std_pack?: number };
 
-export default function PackingSlip({ orders = [], parties = [], canBill = false }: { orders?: OrderOpt[]; parties?: string[]; canBill?: boolean }) {
+export default function PackingSlip({ orders = [], parties = [] }: { orders?: OrderOpt[]; parties?: string[]; canBill?: boolean }) {
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
   const [completed, setCompleted] = useState<Case[]>([]);
+  // On a scan, this item popup opens (ordered pcs, case no, editable count). A red
+  // banner warns if it's already in this case (re-scan allowed) or not on the order.
+  const [scanModal, setScanModal] = useState<{
+    skuCode: string; name: string; unit: string; mrp: string;
+    caseNo: number; ordered: number; alreadyDisp: number; onSo: boolean;
+    tier: "single" | "master"; count: string;
+    priorCases: { caseNo: number; qty: number }[]; // same item packed in OTHER (closed) cases
+  } | null>(null);
   const [pickCase, setPickCase] = useState<number>(1);
-  const [slips, setSlips] = useState<SlipMeta[]>([]);
   const [slipId, setSlipId] = useState<number | null>(null);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
-  const [pushingBill, setPushingBill] = useState(false);
-  const router = useRouter();
   const [collab, setCollab] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [errors, setErrors] = useState<string[]>([]);
@@ -100,9 +105,6 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
   const touch = () => { dirtyRef.current = true; lastEditRef.current = Date.now(); };
   function flash(ok: boolean, text: string) { setMsg({ ok, text }); setTimeout(() => setMsg(null), 2500); }
 
-  const refreshList = async () => {
-    try { const r = await fetch("/api/erp/packing-slips", { cache: "no-store" }); const d = await r.json(); setSlips(d.slips || []); } catch { /* ignore */ }
-  };
   function applyDoc(doc: SlipDoc | null | undefined) {
     // A legacy/partial/corrupt row can have null `data` — never let that white-screen the
     // editor (the cast `as SlipDoc` hides it). Fall back to a clean empty doc.
@@ -189,28 +191,21 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
     finally { savingRef.current = false; }
   }
 
-  // Push this saved slip to billing → create the draft invoice, then open it to
-  // finalize + print + e-way. Saves first so the latest dispatched qty is billed.
-  async function pushToBilling() {
-    if (pushingBill) return;
-    if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; await doSave(); }
-    const sid = slipIdRef.current;
-    if (!sid) { alert("Save the slip first (enter a Slip No.)."); return; }
-    if (!confirm("Create a bill from this packing slip? A draft invoice opens next — review, finalize, print, then generate the e-way bill.")) return;
-    setPushingBill(true);
-    try {
-      const r = await fetch(`/api/erp/packing-slips/${sid}/to-invoice`, { method: "POST" });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok || !d.ok) { alert("Could not create bill: " + (d.error || `server ${r.status}`)); return; }
-      router.push(`/erp/invoices/${d.invoiceId}`);
-    } catch { alert("Could not create bill — network error."); }
-    finally { setPushingBill(false); }
+  // Explicit end-of-pack save: flush to the server, then show the "saved — go to
+  // Saved Slips to print & bill" confirmation. (Autosave already persists as you
+  // go; this button gives a clear finish + a jump to the archive.)
+  const [saved, setSaved] = useState(false);
+  async function saveAndFinish() {
+    if (!hdr.slipNo.trim()) { await assignNewSlipNo(); }
+    dirtyRef.current = true;
+    await doSave();
+    setSaved(true);
+    flash(true, "Saved — find it in Saved Slips to print & bill.");
   }
 
-  // load list + last opened slip (a ?open=<id> in the URL — e.g. from the Saved Slips
+  // load last opened slip (a ?open=<id> in the URL — e.g. from the Saved Slips
   // archive — wins over the last-opened-locally slip)
   useEffect(() => {
-    refreshList();
     let openId: number | null = null;
     try {
       const p = new URLSearchParams(window.location.search).get("open");
@@ -231,11 +226,8 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
     const saver = setInterval(() => {
       if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; doSave(); }
     }, 800);
-    let tick = 0;
     const poller = setInterval(async () => {
       if (document.hidden) return; // don't poll a backgrounded packing tab (cost)
-      // keep the "Open slip" dropdown fresh so slips created on another device show up
-      if (tick++ % 3 === 0) refreshList();
       const id = slipIdRef.current;
       if (!id) return;
       try {
@@ -316,6 +308,7 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
       pendingQty: String(l.qty),
     }));
     packedRowsRef.current.clear(); // fresh case → nothing packed yet
+    setSaved(false); // packing more → the finish/save state is stale again
     setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
   // A scan (camera tap or typed code) adds straight into the active case, with two
@@ -347,30 +340,38 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
       return;
     }
 
+    // Open the item popup — the operator sees ordered pcs + case no, sets the
+    // count, then confirms. Warnings (already-in-case / not-on-order) show inside it.
     const skuCode = sku.sku_code;
     const soLine = soLines.find((l) => l.sku_code === skuCode);
-
-    // (1) WRONG ITEM — scanned an item that isn't on this Sales Order.
-    if (soId && !soLine) {
-      if (!confirm(`⚠ Wrong item scanned\n\n${skuCode}${sku.name ? ` — ${sku.name}` : ""} is NOT on this sales order.\n\nDo you want to continue and add it anyway?`)) return;
-    }
-
-    // (2) OVER-DISPATCH — would exceed the ordered qty for this line.
     const existing = activeRows.find((r) => r.itemCode === skuCode);
-    const orderedStr = existing?.qtyOrdered || (soLine ? String(soLine.qty) : "");
-    const ordered = num(orderedStr);
-    const newDisp = num(existing?.qtyDispatched ?? "") + addQty;
-    if (ordered > 0 && newDisp > ordered) {
-      if (!confirm(`⚠ More than ordered\n\n${skuCode}: dispatching ${newDisp} but only ${ordered} were ordered.\n\nContinue anyway?`)) return;
-    }
+    const ordered = num(existing?.qtyOrdered || (soLine ? String(soLine.qty) : ""));
+    // How much of this item was already packed in OTHER (closed) cases.
+    const priorCases = completed
+      .map((c) => ({ caseNo: c.caseNo, qty: c.rows.filter((r) => r.itemCode === skuCode).reduce((a, r) => a + num(r.quantity), 0) }))
+      .filter((x) => x.qty > 0);
+    setScanModal({
+      skuCode, name: sku.name || "", unit: sku.unit || "",
+      mrp: sku.price != null ? String(sku.price) : "",
+      caseNo: activeCaseNo, ordered, alreadyDisp: num(existing?.qtyDispatched ?? ""),
+      onSo: !!soLine, tier, count: String(addQty), priorCases,
+    });
+  }
 
-    // Add / merge into the case.
+  // Confirm the item popup → add `count` pcs into the active case (merging into the
+  // item's row if it's already there — a re-scan in the same case accumulates).
+  function addScannedCount() {
+    const m = scanModal;
+    if (!m || !activeCaseNo) return;
+    const add = num(m.count);
+    if (!(add > 0)) { flash(false, "Enter a count greater than 0."); return; }
+    const orderedStr = m.ordered > 0 ? String(m.ordered) : "";
     setActiveRows((rows) => {
-      const idx = rows.findIndex((row) => row.itemCode === skuCode);
+      const idx = rows.findIndex((row) => row.itemCode === m.skuCode);
       if (idx >= 0) {
         return rows.map((row, i) => {
           if (i !== idx) return row;
-          const disp = num(row.qtyDispatched) + addQty;
+          const disp = num(row.qtyDispatched) + add;
           const ord = row.qtyOrdered || orderedStr;
           return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ord, pendingQty: String(num(ord) - disp) };
         });
@@ -378,13 +379,14 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
       return [...rows, {
         ...blankRow(activeCaseNo),
         fromMaster: true,
-        itemCode: skuCode, itemDesc: sku!.name || "", unit: sku!.unit || "",
-        mrp: sku!.price != null ? String(sku!.price) : "", mMrp: sku!.price != null ? String(sku!.price) : "",
-        qtyOrdered: orderedStr, qtyDispatched: String(addQty), quantity: String(addQty),
-        pendingQty: String(num(orderedStr) - addQty),
+        itemCode: m.skuCode, itemDesc: m.name, unit: m.unit,
+        mrp: m.mrp, mMrp: m.mrp,
+        qtyOrdered: orderedStr, qtyDispatched: String(add), quantity: String(add),
+        pendingQty: String(num(orderedStr) - add),
       }];
     });
-    flash(true, `${skuCode}: +${addQty} dispatched (${tier})`);
+    flash(true, `${m.skuCode}: +${add} into Case ${m.caseNo}`);
+    setScanModal(null);
     touch();
   }
   const updateRow = (id: string, key: keyof Row, value: string) => {
@@ -462,6 +464,7 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
     // already typed an exact qty per row, so overpack is allowed without an
     // extra confirm step (unlike scan-by-scan packing).
     setPacking(true);
+    pingLocation("scan"); // once per pack action, not once per row
     // Skip rows that already packed on a previous (partially-failed) attempt — this is what
     // stops a retry from deducting the same stock twice.
     const toPack = scanned.filter((r) => !packedRowsRef.current.has(r.id));
@@ -582,34 +585,73 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
         </div>
       )}
 
-      {/* slip bar: open existing / new / save status */}
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-        <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Open slip</span>
-        <select className="ctl !w-auto" value={slipId ?? ""} onChange={async (e) => {
-          if (!e.target.value) return;
-          // Flush unsaved work before switching so opening another slip can't discard it.
-          if (dirtyRef.current && stateRef.current.hdr.slipNo.trim()) { dirtyRef.current = false; await doSave(); }
-          openById(Number(e.target.value));
-        }}>
-          <option value="">— select —</option>
-          {slips.map((s) => <option key={s.id} value={s.id}>{s.slip_no} · {s.party || "—"} · {s.updated_by || ""}</option>)}
-        </select>
-        <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
-        <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
-        <a href="/erp/packing-slip/saved" title="Browse all saved packing slips, filter by customer or date" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">🗂 Saved slips</a>
-        {canBill && (soId || hdr.salesOrderNo.trim() || hdr.partyName.trim()) && (
-          <button onClick={pushToBilling} disabled={pushingBill} title="Create a GST bill from this packing slip" className="rounded-lg bg-[var(--accent-2)] px-3 py-1.5 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
-            {pushingBill ? "Billing…" : "🧾 Push to Billing"}
-          </button>
-        )}
-        <a href="/erp/sales/decode" title="Upload a Sales Order (Excel/CSV or photo) — it becomes an order you can pack here" className="rounded-lg border border-[var(--accent)] bg-[var(--accent-bg)] px-3 py-1.5 text-xs font-bold text-[var(--accent-strong)] hover:bg-[var(--accent)] hover:text-white">⬆ Upload Sales Order</a>
-        <span className="ml-auto flex items-center gap-3 text-xs">
+      {/* compact save/live indicator (the slip toolbar moved to the end-of-pack
+          Save step + the Saved Slips page, to keep the phone screen uncluttered) */}
+      {(collab || save !== "idle") && (
+        <div className="flex items-center gap-2 text-xs">
           {collab && <span className="rounded-full bg-[var(--accent-bg)] px-2 py-1 font-bold text-[var(--accent-strong)]">{collab}</span>}
-          <span className="font-semibold text-[var(--muted)]">
-            {save === "saving" ? "Saving…" : save === "saved" ? "✓ Saved · shared live" : hdr.slipNo ? "Enter a Slip No. saves & shares it" : "Not saved"}
-          </span>
-        </span>
-      </div>
+          <span className="font-semibold text-[var(--muted)]">{save === "saving" ? "Saving…" : save === "saved" ? "✓ Saved" : ""}</span>
+        </div>
+      )}
+
+      {/* ITEM POPUP — opens on every scan: ordered pcs, case no, editable count. */}
+      {scanModal && (() => {
+        const m = scanModal;
+        const cnt = num(m.count);
+        const projected = m.alreadyDisp + cnt;
+        const over = m.ordered > 0 && projected > m.ordered;
+        const setCount = (v: string) => setScanModal((s) => (s ? { ...s, count: v } : s));
+        const step = (d: number) => setScanModal((s) => (s ? { ...s, count: String(Math.max(0, num(s.count) + d)) } : s));
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4" onClick={() => setScanModal(null)}>
+            <div className="w-full max-w-sm overflow-hidden rounded-3xl bg-white shadow-2xl" onClick={(e) => e.stopPropagation()}>
+              {/* dark header */}
+              <div className="bg-black px-5 pb-4 pt-4 text-white">
+                <div className="font-mono text-xs tracking-wide text-white/70">{m.skuCode} · Case {m.caseNo}{m.tier === "master" ? " · CARTON" : ""}</div>
+                <div className="mt-1 truncate text-lg font-bold">{m.name || "(item)"}</div>
+                <div className="mt-1"><span className="text-3xl font-extrabold tabular-nums">{m.ordered || "—"}</span> <span className="text-white/60">pcs ordered</span></div>
+              </div>
+
+              {/* red banner(s) on top of the body */}
+              {(!m.onSo && soId) && (
+                <div className="border-b-2 border-[var(--danger)] bg-[var(--danger-bg)] px-5 py-2 text-sm font-bold text-[var(--danger)]">⚠ Not on this sales order — wrong item</div>
+              )}
+              {m.alreadyDisp > 0 && (
+                <div className="border-b-2 border-[var(--danger)] bg-[var(--danger-bg)] px-5 py-2 text-sm font-bold text-[var(--danger)]">⚠ Already in this case ({m.alreadyDisp} pcs) — scanning again adds more</div>
+              )}
+              {m.priorCases.length > 0 && (
+                <div className="border-b-2 border-[var(--danger)] bg-[var(--danger-bg)] px-5 py-2 text-sm font-bold text-[var(--danger)]">⚠ Already packed in {m.priorCases.map((p) => `Case ${p.caseNo} (${p.qty} pcs)`).join(", ")} — you can still add it here</div>
+              )}
+
+              <div className="flex flex-col gap-4 p-5">
+                <div className="grid grid-cols-2 gap-2 text-center text-xs">
+                  <div className="rounded-lg bg-[var(--surface-2)] px-3 py-2"><div className="text-[10px] font-bold uppercase text-[var(--muted-2)]">Ordered</div><div className="text-base font-extrabold tabular-nums">{m.ordered || "—"}</div></div>
+                  <div className="rounded-lg bg-[var(--surface-2)] px-3 py-2"><div className="text-[10px] font-bold uppercase text-[var(--muted-2)]">In this case</div><div className="text-base font-extrabold tabular-nums">{m.alreadyDisp}</div></div>
+                </div>
+
+                {/* count stepper */}
+                <div>
+                  <div className="mb-1 text-xs font-bold uppercase text-[var(--muted)]">Count (pcs to add)</div>
+                  <div className="flex items-stretch gap-2">
+                    <button onClick={() => step(-1)} className="w-12 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-2xl font-extrabold hover:bg-[var(--surface)]">−</button>
+                    <input type="number" inputMode="numeric" autoFocus value={m.count} onChange={(e) => setCount(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") addScannedCount(); }}
+                      className="min-w-0 flex-1 rounded-xl border-2 border-[var(--accent)] bg-white px-3 py-3 text-center text-2xl font-extrabold outline-none" />
+                    <button onClick={() => step(1)} className="w-12 rounded-xl border border-[var(--border)] bg-[var(--surface-2)] text-2xl font-extrabold hover:bg-[var(--surface)]">+</button>
+                  </div>
+                  {over && <div className="mt-1 text-xs font-bold" style={{ color: "#b45309" }}>This makes {projected} — more than the {m.ordered} ordered.</div>}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <button onClick={() => setScanModal(null)} className="rounded-xl border border-[var(--border)] bg-white px-4 py-3 text-sm font-bold text-[var(--muted)] hover:bg-[var(--surface-2)]">Cancel</button>
+                  <button onClick={addScannedCount} className="rounded-xl bg-[var(--accent-2)] px-4 py-3 text-sm font-extrabold text-white hover:opacity-90">✓ Add to Case {m.caseNo}</button>
+                </div>
+                <p className="text-center text-[11px] text-[var(--muted-2)]">Scan the same item again to add more to this case, or start another case to pack it there too.</p>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* HEADER */}
       <section className="panel">
@@ -821,6 +863,33 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
               </table>
             </div>
             <p className="mt-2 text-xs text-[var(--muted)]"><span className="font-bold text-[var(--accent-2)]">● green</span> = fully packed · <span className="font-bold" style={{ color: "#b45309" }}>● orange</span> = part packed · ○ grey = not yet · <span className="font-bold text-[var(--danger)]">● red</span> = wrong item (not on the order).</p>
+          </div>
+        </section>
+      )}
+
+      {/* SAVE & FINISH — when cases are done: review the summary above, then save.
+          Printing & billing happen from Saved Slips. */}
+      {completed.length > 0 && !activeCaseNo && (
+        <section className="panel">
+          <div className="flex flex-col gap-3 p-4">
+            {!saved ? (
+              <>
+                <div className="text-sm font-semibold">All packed? Review the summary above, then save this slip.</div>
+                <button onClick={saveAndFinish} disabled={save === "saving"}
+                  className="rounded-xl bg-[var(--accent-2)] px-6 py-3 text-base font-extrabold text-white shadow-sm hover:opacity-90 disabled:opacity-60">
+                  {save === "saving" ? "Saving…" : "✓ Save packing slip"}
+                </button>
+                <span className="text-xs text-[var(--muted)]">Saved as <b>{hdr.slipNo || "PS…"}</b> — then open Saved Slips to print &amp; push to billing.</span>
+              </>
+            ) : (
+              <>
+                <div className="rounded-lg bg-[var(--accent-2-bg)] px-4 py-3 text-sm font-bold text-[var(--accent-2)]">✓ Saved as {hdr.slipNo}. Find it in Saved Slips to print &amp; push to billing.</div>
+                <div className="flex flex-wrap gap-2">
+                  <a href="/erp/packing-slip/saved" className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-bold text-white hover:bg-[var(--accent-strong)]">🗂 Go to Saved Slips</a>
+                  <button onClick={() => { setSaved(false); newSlip(); }} className="rounded-lg border border-[var(--border)] bg-white px-4 py-2.5 text-sm font-bold hover:bg-[var(--surface-2)]">+ Pack another order</button>
+                </div>
+              </>
+            )}
           </div>
         </section>
       )}

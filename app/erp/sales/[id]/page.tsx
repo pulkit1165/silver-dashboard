@@ -24,7 +24,7 @@ export default async function SalesOrderDetail({ params }: { params: Promise<{ i
   const so = await getSalesOrder(Number(id));
   if (!so) notFound();
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "sales");
+  const editable = canWrite(user, "sales");
 
   // Totals + discount breakdown.
   const gross = so.lines.reduce((a, l) => a + l.qty * (l.mrp || 0), 0); // subtotal at MRP

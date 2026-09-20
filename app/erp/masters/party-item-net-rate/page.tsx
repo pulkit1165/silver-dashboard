@@ -16,7 +16,7 @@ export default async function PartyItemNetRatePage({
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const editable = canWrite(user.role, "rates");
+  const editable = canWrite(user, "rates");
   const customers = await getCustomers();
   const partyId = sp.party ? Number(sp.party) : undefined;
   const rows = partyId ? await getPartyItemRates({ partyId, itemSearch: sp.q, cap: 1500 }) : [];

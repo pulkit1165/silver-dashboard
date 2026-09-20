@@ -18,7 +18,7 @@ export default async function ItemRateMasterPage({
   const user = await getCurrentUser();
   const all = await getSkus(sp.q);
   const rows = all.slice(0, PAGE_CAP);
-  const editable = canWrite(user.role, "rates");
+  const editable = canWrite(user, "rates");
   return (
     <>
       <PageHeader

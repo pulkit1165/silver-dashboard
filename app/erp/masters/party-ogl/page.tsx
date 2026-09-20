@@ -19,7 +19,7 @@ export default async function PartyOglMasterPage({
   const sp = await searchParams;
   const user = await getCurrentUser();
   const rows = await getCustomersWithPct("ogl", sp.q, PAGE_CAP);
-  const editable = canWrite(user.role, "rates");
+  const editable = canWrite(user, "rates");
   return (
     <>
       <PageHeader

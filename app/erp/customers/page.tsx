@@ -17,7 +17,7 @@ export default async function CustomersPage({
   const sp = await searchParams;
   const user = await getCurrentUser();
   const [rows, discountClasses] = await Promise.all([getCustomers(sp.q), listDiscountClasses()]);
-  const editable = canWrite(user.role, "customers");
+  const editable = canWrite(user, "customers");
   return (
     <>
       <PageHeader
