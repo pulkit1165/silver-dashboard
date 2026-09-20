@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { STICKER_SIZES } from "@/lib/erp/stickerSizes";
 import { type LabelDoc, type LabelFill } from "@/lib/erp/labelDoc";
 import { renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
+import QuickPrintPanel, { type QuickSkuData } from "./QuickPrintPanel";
+import type { SearchOption } from "./SearchSelect";
 
 export type AbbrevItem = {
   sku_code: string; line1: string; line2: string; unit: string;
@@ -23,6 +25,7 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
     return m;
   }, [items]);
 
+  const [mode, setMode] = useState<"quick" | "bulk">("quick");
   const [q, setQ] = useState("");
   const [sel, setSel] = useState<Sel[]>([]);
   const [sizeId, setSizeId] = useState(STICKER_SIZES[2]?.id ?? STICKER_SIZES[0].id); // default green-65x35
@@ -121,10 +124,75 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
     finally { setBusy(false); }
   }
 
+  // Quick Print: pick one SKU, click the size photo, it prints — no cart, no
+  // separate "print" button. `value` in skuOptions is just the index into
+  // `items` (AbbrevItem has no numeric id of its own); fetchQuickSkuData maps
+  // that back to a sku_code and resolves it server-side via /api/erp/labels/quick.
+  const skuOptions: SearchOption[] = useMemo(
+    () => items.map((it, i) => ({ value: i, label: it.sku_code, sublabel: it.line1 })),
+    [items],
+  );
+  async function fetchQuickSkuData(idx: number): Promise<QuickSkuData | null> {
+    const it = items[idx];
+    if (!it) return null;
+    try {
+      const r = await fetch(`/api/erp/labels/quick?code=${encodeURIComponent(it.sku_code)}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!d.ok) return null;
+      return { ...d.sku, locations: d.locations, pkd: d.pkd, qrTokenSingle: d.qrTokenSingle, qrTokenMaster: d.qrTokenMaster, qrSvgSingle: d.qrSvgSingle, qrSvgMaster: d.qrSvgMaster, qrMatrixSingle: d.qrMatrixSingle, qrMatrixMaster: d.qrMatrixMaster };
+    } catch { return null; }
+  }
+  function extendQuickFill(data: QuickSkuData): Partial<LabelFill> {
+    const abbr = byCode.get(data.sku_code.toUpperCase());
+    return {
+      abbr1: abbr?.line1 ?? "", abbr2: abbr?.line2 ?? "",
+      unit: abbr?.unit || data.unit,
+      singleQty: abbr?.singlePack || 1,
+      masterQty: abbr?.masterPack || abbr?.singlePack || 1,
+      address: companyAddress,
+    };
+  }
+  async function printOneSticker(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number): Promise<{ ok: boolean; text: string }> {
+    if (!brPrinterId) return { ok: false, text: "Pick a printer." };
+    const name = brPrinters.find((p) => p.id === brPrinterId)?.name || "";
+    const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
+    const dp = dpi === 203 ? 8 : dpi / 25.4;
+    const bmp = await renderDocToTSPL(doc, fill, dp);
+    const r = await fetch("/api/erp/labels/print-raster", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
+    });
+    const d = await r.json();
+    return d.ok ? { ok: true, text: `🖨 Sent ${copies} sticker(s) to the printer.` } : { ok: false, text: d.error || "Print failed." };
+  }
+
   const inp = "rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)]";
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <div className="flex overflow-hidden rounded-lg border border-[var(--border)]">
+          {(["quick", "bulk"] as const).map((m) => (
+            <button key={m} onClick={() => setMode(m)} className={`px-4 py-2 text-sm font-bold ${mode === m ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)]"}`}>
+              {m === "quick" ? "⚡ Quick Print" : "☰ Bulk Print"}
+            </button>
+          ))}
+        </div>
+        {mode === "quick" && (
+          <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">Printer
+            <select value={brPrinterId} onChange={(e) => setBrPrinterId(e.target.value)} className={inp}>
+              <option value="">Pick a printer…</option>
+              {brPrinters.map((p) => <option key={p.id} value={p.id} disabled={!p.online}>{(p.code || p.name)}{p.online ? "" : " (offline)"}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+
+      {mode === "quick" && (
+        <QuickPrintPanel sizes={STICKER_SIZES} skuOptions={skuOptions} fetchSkuData={fetchQuickSkuData} extendFill={extendQuickFill} onPrint={printOneSticker} />
+      )}
+
+      {mode === "bulk" && <>
       {/* controls */}
       <section className="panel">
         <div className="panel-hd">1 · Size, printer & mode</div>
@@ -211,6 +279,7 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
           </div>
         </div>
       </section>
+      </>}
     </div>
   );
 }

@@ -100,6 +100,12 @@ const RULES: RuleDef[] = [
     check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, oglPct: 10, isK: true, focPct: 10 }); return near(r.final, 64.8) ? ok("₹100 −20% −10% then −10% FOC = ₹64.80") : bad(`got ₹${r.final}`); },
   },
   {
+    id: "price-party-item-foc", module: "Sales · Pricing", icon: "↗",
+    title: "Party-item FOC % beats the party FOC %",
+    detail: "A party's own FOC for an item (Discount Master) is the most specific FOC and supersedes the party-level FOC%; blank falls back to the party FOC.",
+    check: () => { const r = computeLineRate({ mrp: 100, partyDiscPct: 20, focPct: 10, partyItemFocPct: 25 }); return near(r.final, 60) ? ok("₹100 −20% then −25% item FOC = ₹60 (party 10% ignored)") : bad(`got ₹${r.final}`); },
+  },
+  {
     id: "party-item-versioned", module: "Masters · Recency", icon: "💲",
     title: "Party-item net rate master is versioned",
     detail: "party_item_net_rates keeps every prior value; the latest per (party, item) is live on the sales order.",

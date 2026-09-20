@@ -8,6 +8,7 @@ import {
   MASTERS,
   parseRows,
   parsePairRows,
+  parsePairAssign,
   detectColumns,
   type MasterConfig,
   type MasterKey,
@@ -17,6 +18,7 @@ import {
 } from "@/lib/erp/masterImport";
 import { ensurePricingTables } from "@/lib/erp/pricing-masters";
 import { ensureAbbrevTable } from "@/lib/erp/skuAbbrev";
+import { ensurePartyKItemsTable } from "@/lib/erp/partyKItems";
 
 export const dynamic = "force-dynamic";
 
@@ -103,6 +105,11 @@ export async function POST(req: Request) {
   // before parseRows (which assumes a single key column).
   if (cfg.kind === "pair-rate") {
     return handlePairRate(sql, cfg, rows, dryRun, user);
+  }
+  // Party × item ASSIGNMENT (no value) — e.g. party-k-items. Same two-key
+  // resolution; presence of the (party,item) pair records the assignment.
+  if (cfg.kind === "pair") {
+    return handlePairAssign(sql, cfg, rows, dryRun, user);
   }
 
   const { parsed, errors } = parseRows(cfg, rows);
@@ -469,6 +476,91 @@ async function handlePairRate(
     label: cfg.label,
     mode: "partial",
     kind: "pair-rate",
+    updated,
+    notFound: notFound.length,
+    skipped: allErrors.length,
+    errors: allErrors.slice(0, 300),
+  });
+}
+
+// ─── Pair-assignment master (party × item, no value — e.g. party-k-items) ─────
+// Records each (party, item) pair as an assignment. Party resolved by code OR
+// name; item by code. Unknown party/item → reported and skipped, the rest apply.
+// Idempotent (ON CONFLICT DO NOTHING), so re-uploading is safe.
+async function handlePairAssign(
+  sql: postgres.Sql,
+  cfg: MasterConfig,
+  rows: Record<string, unknown>[],
+  dryRun: boolean,
+  user: SessionUser,
+) {
+  if (cfg.key === "party-k-items") await ensurePartyKItemsTable();
+  const { pairs, errors } = parsePairAssign(cfg, rows);
+
+  const custRows = (await sql`SELECT id, code, name FROM customers`) as unknown as Array<{ id: number; code: string | null; name: string | null }>;
+  const byCode = new Map<string, { id: number; code: string }>();
+  const byName = new Map<string, { id: number; code: string }>();
+  for (const r of custRows) {
+    if (r.code) byCode.set(r.code.trim().toUpperCase(), { id: r.id, code: r.code });
+    if (r.name) byName.set(r.name.trim().toUpperCase(), { id: r.id, code: r.code ?? "" });
+  }
+  const skuRows = (await sql`SELECT id, sku_code FROM skus`) as unknown as Array<{ id: number; sku_code: string }>;
+  const skuByCode = new Map<string, { id: number; code: string }>();
+  for (const r of skuRows) skuByCode.set(r.sku_code.trim().toUpperCase(), { id: r.id, code: r.sku_code });
+
+  const notFound: ParseError[] = [];
+  const matched: { cid: number; code: string; skuId: number; skuCode: string }[] = [];
+  for (const p of pairs) {
+    const cust = byCode.get(p.party.toUpperCase()) ?? byName.get(p.party.toUpperCase());
+    if (!cust) { notFound.push({ row: 0, key: `${p.party}/${p.sku_code}`, reason: `Party not found: ${p.party}` }); continue; }
+    const sku = skuByCode.get(p.sku_code.toUpperCase());
+    if (!sku) { notFound.push({ row: 0, key: `${p.party}/${p.sku_code}`, reason: `Item not found: ${p.sku_code}` }); continue; }
+    matched.push({ cid: cust.id, code: cust.code, skuId: sku.id, skuCode: sku.code });
+  }
+
+  if (dryRun) {
+    return NextResponse.json({
+      ok: true,
+      dryRun: true,
+      master: cfg.key,
+      label: cfg.label,
+      mode: "partial",
+      kind: "pair",
+      willUpdate: matched.length,
+      notFound: notFound.length,
+      errors: [...errors, ...notFound].slice(0, 300),
+      sample: matched.slice(0, 6).map((m) => ({ party: m.code, sku_code: m.skuCode })),
+    });
+  }
+
+  let updated = 0;
+  for (const m of matched) {
+    try {
+      await sql`INSERT INTO party_k_items (customer_id, code, sku_id, sku_code, created_by)
+        VALUES (${m.cid}, ${m.code}, ${m.skuId}, ${m.skuCode}, ${user.name})
+        ON CONFLICT (customer_id, sku_id) DO NOTHING`;
+      updated++;
+    } catch (e) {
+      errors.push({ row: 0, key: `${m.code}/${m.skuCode}`, reason: (e as Error).message });
+    }
+  }
+
+  const allErrors = [...errors, ...notFound];
+  await logActivity({
+    actor: user.name,
+    actorRole: user.role,
+    action: `${cfg.action}.import`,
+    entity: cfg.entity,
+    summary: `Party K-items upload — ${updated} applied${notFound.length ? `, ${notFound.length} not found` : ""}`,
+    meta: { updated, notFound: notFound.length, skipped: allErrors.length },
+  });
+
+  return NextResponse.json({
+    ok: true,
+    master: cfg.key,
+    label: cfg.label,
+    mode: "partial",
+    kind: "pair",
     updated,
     notFound: notFound.length,
     skipped: allErrors.length,

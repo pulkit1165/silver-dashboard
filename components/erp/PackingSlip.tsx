@@ -589,7 +589,7 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
         <button onClick={newSlip} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ New slip</button>
         <a href="/erp/packing-slip/live" target="_blank" rel="noopener" title="Open a read-only big-screen view that mirrors live scanning" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">📺 Live View</a>
         <a href="/erp/packing-slip/saved" title="Browse all saved packing slips, filter by customer or date" className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">🗂 Saved slips</a>
-        {soId && canBill && (
+        {canBill && (soId || hdr.salesOrderNo.trim() || hdr.partyName.trim()) && (
           <button onClick={pushToBilling} disabled={pushingBill} title="Create a GST bill from this packing slip" className="rounded-lg bg-[var(--accent-2)] px-3 py-1.5 text-xs font-bold text-white hover:opacity-90 disabled:opacity-50">
             {pushingBill ? "Billing…" : "🧾 Push to Billing"}
           </button>

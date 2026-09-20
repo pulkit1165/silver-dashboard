@@ -166,6 +166,9 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
     }
     setDupError(null);
     if (!sku) { updateLine(idx, { skuId, price: 0, rateType: "MRP", netApplied: false, loadingRates: false, itemRates: [], partyRates: [] }); return; }
+    // Picking an item on the last line drops a fresh blank line, so you can keep
+    // punching items straight down without clicking "+ Add item" each time.
+    if (idx === lines.length - 1) setLines((ls) => (ls.length === idx + 1 ? [...ls, emptyLine()] : ls));
     // optimistic default while we fetch the party-wise rate for this item
     const curIsK = lines[idx]?.isK ?? false;
     updateLine(idx, { skuId, ...deriveRate(sku, [], pctx(sku.id, curIsK)), loadingRates: true, itemRates: [], partyRates: [] });
@@ -228,7 +231,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
   }
 
   return (
-    <div className="panel space-y-4" data-keyflow>
+    <div className="panel space-y-4" data-keyflow data-fullbleed>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <F label="Customer *">
           <SearchSelect
@@ -280,8 +283,8 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
           const hasItemNetRate = !!sku && sku.item_net_rate > 0 && sku.item_net_rate !== sku.price;
           return (
             <div key={idx} data-line={idx} className="rounded-xl border border-[var(--border)] p-3">
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-9 sm:items-end">
-                <div className="sm:col-span-2">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-12 lg:items-end">
+                <div className="lg:col-span-2">
                   <F label="Item">
                     <SearchSelect
                       options={skuOptions}
@@ -346,7 +349,7 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
                     </button>
                   </F>
                 )}
-                <div className="flex items-end justify-between gap-2">
+                <div className={`flex items-end justify-between gap-2 ${billType === "O/K" ? "lg:col-span-2" : "lg:col-span-3"}`}>
                   <div className="text-sm font-bold">₹{(line.qty * line.price).toFixed(2)}</div>
                   {lines.length > 1 && (
                     <button
@@ -361,55 +364,34 @@ export default function NewSalesOrder({ customers, skus }: { customers: Customer
               </div>
 
               {sku && (
-                <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-[var(--muted)]">
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
                   <span title="Master pack size — orders are shipped in full packs">Std Pack: <span className="font-semibold text-[var(--foreground)]">{sku.master_qty || "—"}</span></span>
                   <span title="Current stock on hand">Bal Qty: <span className={`font-semibold ${sku.bal_qty < line.qty ? "text-[var(--danger)]" : "text-[var(--foreground)]"}`}>{sku.bal_qty.toLocaleString("en-IN")}</span></span>
                   {hasItemNetRate && <span className="font-semibold text-[var(--accent)]" title="This item has a fixed net rate — party discount is skipped">Fixed item net rate applies</span>}
-                </div>
-              )}
-
-              {sku && (
-                <div className="mt-2 text-xs text-[var(--muted)]">
                   {line.loadingRates ? (
-                    "Checking Oracle history for past rates…"
+                    <span>Checking Oracle history for past rates…</span>
                   ) : (
-                    <div className="flex flex-wrap gap-2">
+                    <>
                       {hasItemNetRate && (
-                        <Suggestion
-                          label="Item-wise net rate"
-                          rate={sku.item_net_rate}
-                          date="fixed"
-                          onUse={() => updateLine(idx, { price: sku.item_net_rate, rateType: "NET" })}
-                        />
+                        <Suggestion label="Item-wise net rate" rate={sku.item_net_rate} date="fixed"
+                          onUse={() => updateLine(idx, { price: sku.item_net_rate, rateType: "NET" })} />
                       )}
                       {!hasItemNetRate && discPct > 0 && (
-                        <Suggestion
-                          label={`MRP rate (${discPct.toFixed(2)}% off)`}
-                          rate={round2(sku.price * (1 - discPct / 100))}
-                          date="MRP"
-                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" })}
-                        />
+                        <Suggestion label={`MRP rate (${discPct.toFixed(2)}% off)`} rate={round2(sku.price * (1 - discPct / 100))} date="MRP"
+                          onUse={() => updateLine(idx, { price: round2(sku.price * (1 - discPct / 100)), rateType: "MRP" })} />
                       )}
                       {line.partyRates.length > 0 && (
-                        <Suggestion
-                          label={`${customer?.name ?? "This party"} net rate`}
-                          rate={line.partyRates[0].rate}
-                          date={line.partyRates[0].trdate.slice(0, 10)}
-                          onUse={() => updateLine(idx, { price: line.partyRates[0].rate, rateType: "NET" })}
-                        />
+                        <Suggestion label={`${customer?.name ?? "This party"} net rate`} rate={line.partyRates[0].rate} date={line.partyRates[0].trdate.slice(0, 10)}
+                          onUse={() => updateLine(idx, { price: line.partyRates[0].rate, rateType: "NET" })} />
                       )}
                       {line.itemRates.length > 0 && (
-                        <Suggestion
-                          label="Recent market rate (any party)"
-                          rate={line.itemRates[0].rate}
-                          date={line.itemRates[0].trdate.slice(0, 10)}
-                          onUse={() => updateLine(idx, { price: line.itemRates[0].rate, rateType: "NET" })}
-                        />
+                        <Suggestion label="Recent market rate (any party)" rate={line.itemRates[0].rate} date={line.itemRates[0].trdate.slice(0, 10)}
+                          onUse={() => updateLine(idx, { price: line.itemRates[0].rate, rateType: "NET" })} />
                       )}
                       {!hasItemNetRate && discPct === 0 && line.partyRates.length === 0 && line.itemRates.length === 0 && (
                         <span>No party discount set and no Oracle history for this item.</span>
                       )}
-                    </div>
+                    </>
                   )}
                 </div>
               )}

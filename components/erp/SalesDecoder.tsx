@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import SearchSelect from "./SearchSelect";
 
 function computeGp(rate: number, purchasePrice: number): number {
   if (!rate || rate <= 0) return 0;
@@ -28,7 +29,7 @@ function applyGpCompensation(rows: Row[], topGpSkus: SkuCandidate[], threshold =
   return result;
 }
 
-type CustomerLite = { id: number; code: string; name: string };
+type CustomerLite = { id: number; code: string; name: string; city?: string };
 type SalesmanLite = { id: number; name: string; territory: string };
 type SkuCandidate = {
   id: number; sku_code: string; name: string; unit: string;
@@ -55,6 +56,7 @@ type Row = {
   candidates: SkuCandidate[];
   confidence: Confidence;
   auto_added?: boolean;
+  isK?: boolean; // O/K orders: this line goes to the retailer network
 };
 
 let ROW_SEQ = 1;
@@ -89,12 +91,48 @@ export default function SalesDecoder({
 
   const [rows, setRows] = useState<Row[] | null>(null);
   const [customerId, setCustomerId] = useState<number | "">("");
+  const [billType, setBillType] = useState<string>("O"); // O = ours; K / O/K route to the retailer network
   const [orderDate, setOrderDate] = useState<string>("");
   const [remarks, setRemarks] = useState<string>("");
   const [hint, setHint] = useState<string>("");
   const [salesmanId, setSalesmanId] = useState<number | "">("");
   const [source, setSource] = useState<string>("manual");
   const [topGpSkus, setTopGpSkus] = useState<SkuCandidate[]>([]);
+  // Party picker options — searchable by name; the sublabel shows code · city.
+  const customerOptions = useMemo(
+    () => customers.map((c) => ({ value: c.id, label: c.name, sublabel: [c.code, c.city].filter(Boolean).join(" · ") })),
+    [customers],
+  );
+
+  // Party-wise auto-K: the sku_ids flagged K for the selected party (Party K-items
+  // master). When such an item appears on the order it auto-marks K and the order
+  // becomes O/K. Applied once per (party, item) so a manual un-toggle sticks.
+  const [partyKSkus, setPartyKSkus] = useState<Set<number>>(new Set());
+  const autoKRef = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    autoKRef.current = new Set(); // new party → allow auto-applying afresh
+    if (customerId === "") { setPartyKSkus(new Set()); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/erp/masters/party-k-items?customer_id=${customerId}`);
+        const data = await res.json();
+        if (!cancelled) setPartyKSkus(new Set<number>((data.sku_ids ?? []).map((n: number) => Number(n))));
+      } catch { if (!cancelled) setPartyKSkus(new Set()); }
+    })();
+    return () => { cancelled = true; };
+  }, [customerId]);
+
+  useEffect(() => {
+    if (partyKSkus.size === 0 || !rows || customerId === "") return;
+    const toMark = rows.filter((r) => r.sku && partyKSkus.has(r.sku.id) && !autoKRef.current.has(`${customerId}:${r.sku.id}`));
+    if (toMark.length === 0) return;
+    const marked = new Set(toMark.map((r) => r.key));
+    for (const r of toMark) autoKRef.current.add(`${customerId}:${r.sku!.id}`);
+    setRows((rs) => (rs ? rs.map((r) => (marked.has(r.key) ? { ...r, isK: true } : r)) : rs));
+    setBillType((bt) => (bt === "O" ? "O/K" : bt)); // K flags only bite on an O/K (or K) order
+  }, [partyKSkus, rows, customerId]);
 
   const [punching, setPunching] = useState(false);
   const [recording, setRecording] = useState(false);
@@ -243,7 +281,8 @@ export default function SalesDecoder({
           remarks: remarks || undefined,
           salesman_id: salesmanId || undefined,
           source: source && source !== "manual" ? source : "decode-photo",
-          lines: rows.filter((r) => r.sku).map((r) => ({ sku_id: r.sku!.id, qty: r.qty, price: r.rate, raw_text: r.raw_text })),
+          bill_type: billType,
+          lines: rows.filter((r) => r.sku).map((r) => ({ sku_id: r.sku!.id, qty: r.qty, price: r.rate, raw_text: r.raw_text, is_k: billType === "O/K" ? !!r.isK : undefined })),
         }),
       });
       const d = await r.json();
@@ -284,7 +323,38 @@ export default function SalesDecoder({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-5 lg:grid-cols-[380px_1fr]">
+    <div className="flex flex-col gap-5">
+      {/* 1 · Party first — pick the party, then upload the order below */}
+      <section className="panel">
+        <div className="panel-hd">1 · Party &amp; bill type</div>
+        <div className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3">
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Party / customer <span className="font-normal">(type a name to search)</span>
+            <SearchSelect
+              options={customerOptions}
+              value={customerId === "" ? null : customerId}
+              onChange={(v) => setCustomerId(v)}
+              placeholder="Type party name to search…"
+            />
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Bill Type
+            <select className={inp} value={billType} onChange={(e) => setBillType(e.target.value)}>
+              <option value="O">O — ours</option>
+              <option value="O/K">O/K — mark K lines per item</option>
+              <option value="K">K — whole order to retailer network</option>
+            </select>
+          </label>
+          {partyKSkus.size > 0 && (
+            <div className="sm:col-span-2 lg:col-span-3 rounded-lg border border-[var(--danger)] bg-[var(--surface-2)] p-2 text-xs text-[var(--muted)]">
+              <b className="text-[var(--danger)]">Party K-items:</b> {partyKSkus.size} item(s) are set as K for this party — any that appear on this order are auto-marked <b>K</b> and the order is set to <b>O/K</b>. You can still un-toggle a line.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {/* 2 · Upload / decode + verify */}
+      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[380px_1fr]">
       {/* Input panel */}
       <section className="panel self-start">
         <div className="flex border-b border-[var(--border)]">
@@ -360,11 +430,11 @@ export default function SalesDecoder({
             {/* Order header */}
             <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
-                Customer {hint && <span className="font-normal">· read as "{hint}"</span>}
-                <select className={inp} value={customerId} onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : "")}>
-                  <option value="">— select customer —</option>
-                  {customers.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
-                </select>
+                Party · Bill type {hint && <span className="font-normal">· read as "{hint}"</span>}
+                <div className={`${inp} flex items-center justify-between bg-[var(--surface-2)]`}>
+                  <span className="font-bold text-[var(--fg)]">{customerOptions.find((o) => o.value === customerId)?.label ?? "— pick party above —"}</span>
+                  <span className="font-bold text-[var(--muted)]">{billType}</span>
+                </div>
               </label>
               <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
                 Order date
@@ -415,6 +485,13 @@ export default function SalesDecoder({
                         </td>
                         <td className="align-top">
                           <SkuPicker row={r} onPick={(sku) => patchRow(r.key, { sku, rate: r.rate > 0 ? r.rate : sku.selling_price, unit: r.unit || sku.unit })} />
+                          {billType === "O/K" && (
+                            <button type="button" onClick={() => patchRow(r.key, { isK: !r.isK })}
+                              title="Mark K to route this line to the Silver Retailer Network (the other firm)"
+                              className={`mt-1 rounded px-2 py-0.5 text-[10px] font-bold ${r.isK ? "bg-[var(--danger)] text-white" : "border border-[var(--border)] bg-[var(--surface-2)]"}`}>
+                              {r.isK ? "K · retailer" : "O · ours"}
+                            </button>
+                          )}
                         </td>
                         <td className="num-cell align-top">
                           <input type="number" min={0} step="any" value={r.qty}
@@ -469,6 +546,7 @@ export default function SalesDecoder({
           </div>
         )}
       </section>
+      </div>
     </div>
   );
 }

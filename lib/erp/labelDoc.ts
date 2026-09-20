@@ -202,6 +202,9 @@ export function defaultAbbrevDoc(w: number, h: number): LabelDoc {
       { id: uid(), kind: "text", field: "abbr2", x: pad, y: pad + 6.5, w: textW, h: 4.5,
         font: "Arial", sizeMM: 3, bold: true, align: "left", fit: true },
       { id: uid(), kind: "qr", x: rightQrX, y: pad, w: qrSize, h: qrSize },
+      // Item (SKU) code — printed under the QR (below the lot line) so it's always visible.
+      { id: uid(), kind: "text", field: "code", x: rightQrX, y: pad + qrSize + 4.5, w: qrSize + pad, h: 4,
+        font: "Arial", sizeMM: 2.8, bold: true, align: "left" },
       { id: uid(), kind: "text", field: "mrp", x: pad, y: pad + 12, w: textW * 0.6, h: 5,
         font: "Arial", sizeMM: 3.6, bold: true, align: "left" },
       { id: uid(), kind: "text", field: "incltax", x: pad + textW * 0.6, y: pad + 12.8, w: textW * 0.4, h: 4,

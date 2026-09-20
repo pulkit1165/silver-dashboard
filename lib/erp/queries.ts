@@ -22,18 +22,38 @@ export async function getSkus(search?: string): Promise<Sku[]> {
   // status <> 'archived' hides retired SKUs (e.g. items not in the price list)
   // from browse/pick lists; lookups by id/code below still resolve them so old
   // orders, scans and QR codes keep working.
+  // Manually INACTIVE items (status='inactive', set in the Item Master) are never
+  // shown in browse/pick and never found by search, so they never get printed or
+  // ordered. Archived items stay findable by search (below) as before.
   if (search) {
     // A search finds ANY SKU incl. archived (so nothing is unreachable by code/name);
     // browsing (below) stays active-only to keep the catalogue clean.
     const q = `%${search}%`;
-    return (await sql`SELECT * FROM skus WHERE (sku_code ILIKE ${q} OR name ILIKE ${q} OR category ILIKE ${q}) ORDER BY sku_code`) as unknown as Sku[];
+    return (await sql`SELECT * FROM skus WHERE (sku_code ILIKE ${q} OR name ILIKE ${q} OR category ILIKE ${q}) AND COALESCE(status,'active') <> 'inactive' ORDER BY sku_code`) as unknown as Sku[];
   }
-  return (await sql`SELECT * FROM skus WHERE status <> 'archived' ORDER BY sku_code`) as unknown as Sku[];
+  return (await sql`SELECT * FROM skus WHERE status <> 'archived' AND COALESCE(status,'active') <> 'inactive' ORDER BY sku_code`) as unknown as Sku[];
 }
 
 export async function getSku(id: number): Promise<Sku | undefined> {
   const [row] = await getSql()`SELECT * FROM skus WHERE id=${id}`;
   return row as Sku | undefined;
+}
+
+/** Activate / deactivate one SKU (Item Master). Inactive items don't print or
+ *  appear in browse/pick lists; the row stays for history and reactivation. */
+export async function setSkuActive(skuId: number, active: boolean): Promise<{ ok: boolean; status: string; error?: string }> {
+  const status = active ? "active" : "inactive";
+  const rows = (await getSql()`UPDATE skus SET status=${status} WHERE id=${skuId} RETURNING id`) as unknown as Array<{ id: number }>;
+  if (!rows.length) return { ok: false, status, error: "Item not found." };
+  return { ok: true, status };
+}
+
+/** Change one SKU's category (Item Master). */
+export async function setSkuCategory(skuId: number, category: string): Promise<{ ok: boolean; category: string; error?: string }> {
+  const cat = String(category ?? "").trim();
+  const rows = (await getSql()`UPDATE skus SET category=${cat} WHERE id=${skuId} RETURNING id`) as unknown as Array<{ id: number }>;
+  if (!rows.length) return { ok: false, category: cat, error: "Item not found." };
+  return { ok: true, category: cat };
 }
 
 /**
@@ -130,6 +150,7 @@ export async function stockLevels(search?: string): Promise<SkuLevel[]> {
     -- Browse (no search) shows active only; an actual SEARCH also finds archived
     -- SKUs, so any item can still be printed/looked up by typing its code/name.
     WHERE (${q}::text IS NOT NULL OR s.status <> 'archived')
+      AND COALESCE(s.status,'active') <> 'inactive'
       AND (${q}::text IS NULL OR s.sku_code ILIKE ${q} OR s.name ILIKE ${q} OR s.category ILIKE ${q})
     GROUP BY s.id ORDER BY s.sku_code`) as unknown as Array<Sku & { qty: number }>;
   return rows.map((s) => ({ ...s, status: stockStatus(s, s.qty) }));
@@ -312,12 +333,15 @@ export interface DecodedOrderInput {
   // Where the order came from: decode-manual | decode-photo | decode-text |
   // decode-excel | decode-voice. Shown as a badge in the Decode Orders queue.
   source?: string;
+  // Bill type: 'O' (ours, default) | 'K' (whole order for the retailer network) |
+  // 'O/K' (per-line — the K-flagged lines go to the retailer). Drives OGL at promote.
+  billType?: string;
   // Per-line pricing is OPTIONAL. The manual writer sends only skuId+qty and we
   // price at MRP; the AI decoder already computed a net rate, so it can pass
   // price/mrp/discountPct/rateType/focQty through and we keep them.
   lines: Array<{
     skuId: number; qty: number;
-    price?: number; mrp?: number; discountPct?: number; rateType?: string; focQty?: number;
+    price?: number; mrp?: number; discountPct?: number; rateType?: string; focQty?: number; isK?: boolean;
   }>;
 }
 
@@ -349,8 +373,10 @@ export async function createDecodedOrder(
     return {
       skuId: l.skuId, qty: l.qty, price, mrp,
       discountPct: l.discountPct ?? 0, rateType: l.rateType ?? "MRP", focQty: l.focQty ?? 0,
+      isK: !!l.isK,
     };
   });
+  const billType = input.billType === "K" || input.billType === "O/K" ? input.billType : "";
   const total = resolved.reduce((s, l) => s + l.qty * l.price, 0);
 
   return await sql.begin(async (tx) => {
@@ -360,14 +386,14 @@ export async function createDecodedOrder(
     const soNo = `DEC-${next}`;
     const [so] = await tx`
       INSERT INTO sales_orders (so_no, customer_id, status, order_date, total, remarks,
-        salesman_id, salesman_name, required_by, source)
+        salesman_id, salesman_name, required_by, source, bill_type)
       VALUES (${soNo}, ${input.customerId}, 'decoded', ${input.orderDate}, ${total},
         ${input.remarks ?? ""}, ${input.salesmanId ?? input.createdById ?? null}, ${input.salesmanName ?? ""},
-        ${input.requiredBy ?? ""}, ${input.source ?? "decode-manual"})
+        ${input.requiredBy ?? ""}, ${input.source ?? "decode-manual"}, ${billType})
       RETURNING id`;
     for (const l of resolved) {
-      await tx`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty)
-        VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price}, ${l.mrp}, ${l.discountPct}, ${l.rateType}, ${l.focQty})`;
+      await tx`INSERT INTO so_lines (so_id, sku_id, qty, price, mrp, discount_pct, rate_type, foc_qty, is_k)
+        VALUES (${so.id}, ${l.skuId}, ${l.qty}, ${l.price}, ${l.mrp}, ${l.discountPct}, ${l.rateType}, ${l.focQty}, ${billType === "K" ? true : billType === "O/K" ? l.isK : false})`;
     }
     return { id: so.id as number, so_no: soNo };
   });
@@ -408,6 +434,10 @@ export async function promoteDecodedOrder(
       const pir = (await tx`SELECT DISTINCT ON (sku_id) sku_id, net_rate FROM party_item_net_rates WHERE customer_id=${so.customer_id} ORDER BY sku_id, effective_at DESC, id DESC`) as unknown as Array<{ sku_id: number; net_rate: number }>;
       const pirMap = new Map<number, number>();
       for (const r of pir) pirMap.set(r.sku_id, Number(r.net_rate) || 0);
+      // Party × item FOC (most specific FOC — supersedes party FOC per pair).
+      const pifoc = (await tx`SELECT DISTINCT ON (sku_id) sku_id, foc_pct FROM party_item_foc WHERE customer_id=${so.customer_id} ORDER BY sku_id, effective_at DESC, id DESC`) as unknown as Array<{ sku_id: number; foc_pct: number }>;
+      const pifocMap = new Map<number, number>();
+      for (const r of pifoc) pifocMap.set(r.sku_id, Number(r.foc_pct) || 0);
       const lines = (await tx`
         SELECT l.id, l.sku_id, COALESCE(l.qty,0)::float8 qty, COALESCE(l.is_k,false) AS is_k,
                COALESCE(NULLIF(l.mrp,0), s.price, 0)::float8 mrp, COALESCE(s.item_net_rate,0)::float8 inr
@@ -418,7 +448,7 @@ export async function promoteDecodedOrder(
       let total = 0;
       for (const l of lines) {
         const lineIsK = so.bill_type === "K" || (so.bill_type === "O/K" && l.is_k);
-        const r = computeLineRate({ mrp: l.mrp, partyDiscPct: dp, oglPct: ogl, isK: lineIsK, itemNetRate: l.inr, partyItemNetRate: pirMap.get(l.sku_id) ?? null, focPct: foc });
+        const r = computeLineRate({ mrp: l.mrp, partyDiscPct: dp, oglPct: ogl, isK: lineIsK, itemNetRate: l.inr, partyItemNetRate: pirMap.get(l.sku_id) ?? null, focPct: foc, partyItemFocPct: pifocMap.get(l.sku_id) ?? null });
         const rateType = r.netRateApplied ? r.netRateSource : (dp || ogl || foc ? "disc" : "mrp");
         await tx`UPDATE so_lines SET price=${r.final}, mrp=${l.mrp}, discount_pct=${r.effectiveDiscPct}, rate_type=${rateType} WHERE id=${l.id}`;
         total += l.qty * r.final;

@@ -1,6 +1,7 @@
 import "server-only";
 import { getSql } from "./db";
 import { ensurePricingTables } from "./pricing-masters";
+import { getPartyKSkuIds } from "./partyKItems";
 
 /**
  * Party-level pricing masters, all on the same append-only recency ledger the
@@ -232,4 +233,100 @@ export async function applyPartyItemBulk(
     }
   }
   return { applied, failed: errors.length, errors: errors.slice(0, 50) };
+}
+
+// ── Party × item FOC % matrix ───────────────────────────────────────────────
+// The MOST specific FOC — for one party+item it supersedes the party-level FOC%.
+// Blank/none for a pair = the line falls back to the party FOC%. Append-only.
+
+/** Latest party-item FOC% per SKU for one customer — the SO pricing lookup. */
+export async function getPartyItemFocForCustomer(customerId: number): Promise<Map<number, number>> {
+  await ensurePricingTables();
+  const rows = await getSql()`
+    SELECT DISTINCT ON (sku_id) sku_id, foc_pct
+      FROM party_item_foc WHERE customer_id=${customerId}
+     ORDER BY sku_id, effective_at DESC, id DESC`;
+  const m = new Map<number, number>();
+  for (const r of rows as unknown as { sku_id: number; foc_pct: number }[]) m.set(r.sku_id, Number(r.foc_pct) || 0);
+  return m;
+}
+
+export type SetPartyItemFocResult = { ok: true; customerId: number; skuId: number; foc_pct: number } | { ok: false; error: string };
+export async function setPartyItemFoc(opts: {
+  customerId?: number; partyCode?: string; skuId?: number; skuCode?: string;
+  focPct: number; note?: string; actor?: string | null;
+}): Promise<SetPartyItemFocResult> {
+  const focPct = Number(opts.focPct);
+  if (!Number.isFinite(focPct) || focPct < 0 || focPct > 100) return { ok: false, error: "FOC % must be between 0 and 100." };
+  await ensurePricingTables();
+  const sql = getSql();
+  const [cust] = opts.customerId
+    ? await sql`SELECT id, code FROM customers WHERE id=${opts.customerId}`
+    : await sql`SELECT id, code FROM customers WHERE code=${String(opts.partyCode ?? "").trim()}`;
+  if (!cust) return { ok: false, error: `Customer ${opts.partyCode ?? opts.customerId} not found.` };
+  const [sku] = opts.skuId
+    ? await sql`SELECT id, sku_code FROM skus WHERE id=${opts.skuId}`
+    : await sql`SELECT id, sku_code FROM skus WHERE sku_code=${String(opts.skuCode ?? "").trim()}`;
+  if (!sku) return { ok: false, error: `Item ${opts.skuCode ?? opts.skuId} not found.` };
+  const customerId = (cust as { id: number }).id;
+  const code = (cust as { code: string }).code;
+  const skuId = (sku as { id: number }).id;
+  const skuCode = (sku as { sku_code: string }).sku_code;
+  await sql`INSERT INTO party_item_foc (customer_id, code, sku_id, sku_code, foc_pct, note, created_by)
+    VALUES (${customerId}, ${code}, ${skuId}, ${skuCode}, ${focPct}, ${opts.note ?? ""}, ${opts.actor ?? null})`;
+  return { ok: true, customerId, skuId, foc_pct: focPct };
+}
+
+// ── Discount Master hub: everything for one party in one shot ────────────────
+export type DiscountPartyItemRow = {
+  sku_id: number; sku_code: string; name: string; category: string; mrp: number;
+  net_rate: number | null; foc_pct: number | null; is_k: boolean;
+};
+export type DiscountPartyData = {
+  customer: { id: number; code: string; name: string; disc_pct: number; ogl_pct: number; foc_pct: number };
+  items: DiscountPartyItemRow[];
+};
+
+/**
+ * All per-party discount data in one payload for the Discount Master hub: the
+ * party's disc%/OGL%/FOC% (on top), plus the union of every item that has a
+ * party net rate, a party FOC, or a K flag for this party — each row carrying
+ * its net rate, FOC%, and K state.
+ */
+export async function getDiscountPartyData(customerId: number): Promise<DiscountPartyData | null> {
+  await ensurePricingTables();
+  const sql = getSql();
+  const [cust] = (await sql`SELECT id, code, name, COALESCE(discount_pct,0)::float8 disc, COALESCE(ogl_pct,0)::float8 ogl, COALESCE(foc_pct,0)::float8 foc FROM customers WHERE id=${customerId}`) as unknown as
+    Array<{ id: number; code: string | null; name: string | null; disc: number; ogl: number; foc: number }>;
+  if (!cust) return null;
+
+  const [netMap, focMap] = await Promise.all([
+    getPartyItemRatesForCustomer(customerId),
+    getPartyItemFocForCustomer(customerId),
+  ]);
+  // getPartyKSkuIds ensures the party_k_items table exists first (it may not on a
+  // DB where no K-items were ever added — a bare query there would 500).
+  const kSet = new Set<number>(await getPartyKSkuIds(customerId));
+
+  const ids = new Set<number>([...netMap.keys(), ...focMap.keys(), ...kSet]);
+  const items: DiscountPartyItemRow[] = [];
+  if (ids.size) {
+    const idList = [...ids];
+    const skuRows = (await sql`SELECT id, sku_code, name, COALESCE(category,'') AS category, COALESCE(price,0)::float8 mrp FROM skus WHERE id IN ${sql(idList)}`) as unknown as
+      Array<{ id: number; sku_code: string; name: string; category: string; mrp: number }>;
+    for (const s of skuRows) {
+      items.push({
+        sku_id: s.id, sku_code: s.sku_code, name: s.name, category: s.category, mrp: Number(s.mrp) || 0,
+        net_rate: netMap.has(s.id) ? Number(netMap.get(s.id)) : null,
+        foc_pct: focMap.has(s.id) ? Number(focMap.get(s.id)) : null,
+        is_k: kSet.has(s.id),
+      });
+    }
+    items.sort((a, b) => a.sku_code.localeCompare(b.sku_code));
+  }
+
+  return {
+    customer: { id: cust.id, code: cust.code ?? "", name: cust.name ?? "", disc_pct: cust.disc, ogl_pct: cust.ogl, foc_pct: cust.foc },
+    items,
+  };
 }

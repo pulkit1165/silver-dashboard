@@ -17,7 +17,7 @@
 // This module is pure data + string helpers (no server-only imports) so the
 // client can import the metadata list too.
 
-export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "party-ogl" | "party-foc" | "item-rates" | "item-net-rate" | "party-item-net-rate" | "sku-abbrev";
+export type MasterKey = "customers" | "vendors" | "skus" | "party-rates" | "party-ogl" | "party-foc" | "item-rates" | "item-net-rate" | "party-item-net-rate" | "sku-abbrev" | "party-k-items";
 
 /** Collapse a header to a comparison key: lowercase, strip non-alphanumerics. */
 export const norm = (k: string) => String(k).toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -69,7 +69,7 @@ export interface MasterConfig {
   permission: string; // WRITERS key in rbac.ts
   entity: string; // activity-log entity
   action: string; // activity-log action prefix
-  kind: "row" | "rate" | "pair-rate"; // pair-rate = a value keyed by TWO records (party × item)
+  kind: "row" | "rate" | "pair-rate" | "pair"; // pair-rate = a value keyed by TWO records (party × item); pair = an ASSIGNMENT keyed by two records (no value)
   fields: FieldDef[];
   refs?: RefCheck[]; // for row-kind full-overwrite protection
   cleanupChildren?: { table: string; col: string }[]; // child rows to purge when a row is deleted
@@ -340,6 +340,30 @@ export const MASTERS: Record<MasterKey, MasterConfig> = {
     ],
     sampleColumns: ["code", "label desc.", "label desc.1", "units", "master pack", "singal pack"],
   },
+
+  // Party → K-items assignment. Per party, the item codes that are "K" (retailer
+  // network / OGL-eligible). Keyed by TWO records (party + item) with NO value —
+  // a "pair" (presence = the item is K for that party). When such a party is
+  // picked on an order, its listed items auto-mark K and the order becomes O/K.
+  // Its own table (party_k_items); does NOT touch pricing masters. See
+  // [[erp-retailer-network]] / [[erp-pricing-and-rulebook]].
+  "party-k-items": {
+    key: "party-k-items",
+    label: "Party K-items (auto-K / OGL)",
+    table: "party_k_items",
+    keyCol: "sku_code", // not used for matching (pair resolves both sides itself)
+    keyAliases: ITEM_CODE_ALIASES,
+    keyLabel: "Party (code/name) + Item code",
+    permission: "rates",
+    entity: "customer",
+    action: "customer.party_k",
+    kind: "pair",
+    fields: [
+      { col: "party", type: "text", aliases: ["party", "partyname", "partycode", "customer", "customername", "customercode", "account", "acntdesc", "ac"], required: true },
+      { col: "sku_code", type: "text", aliases: ["skucode", "itemcode", "sku", "item", "code", "partno", "partnumber"], required: true },
+    ],
+    sampleColumns: ["party", "sku_code"],
+  },
 };
 
 export const MASTER_KEYS = Object.keys(MASTERS) as MasterKey[];
@@ -373,7 +397,7 @@ export const MASTER_LIST = MASTER_KEYS.map((k) => {
     // Full field metadata so the client can render a single-entry "add one" form.
     // For row/rate masters the match KEY is a separate column (not in fields), so we
     // prepend it; for pair-rate the two keys ARE fields already.
-    formFields: (m.kind === "pair-rate"
+    formFields: (m.kind === "pair-rate" || m.kind === "pair"
       ? m.fields
       : [{ col: m.keyCol, type: "text" as FieldType, aliases: m.keyAliases, required: true }, ...m.fields]
     ).map((f) => ({ col: f.col, label: fieldLabel(f.col), type: f.type, required: !!f.required })),
@@ -470,12 +494,12 @@ export function detectColumns(cfg: MasterConfig, rows: Record<string, unknown>[]
   const headerKeys = headers.map(norm).filter(Boolean);
   const has = (aliases: string[]) => aliases.some((a) => headerKeys.includes(a));
 
-  if (cfg.kind === "pair-rate") {
+  if (cfg.kind === "pair-rate" || cfg.kind === "pair") {
     const party = cfg.fields.find((f) => f.col === "party")!;
     const item = cfg.fields.find((f) => f.col === "sku_code")!;
-    const rate = cfg.fields.find((f) => f.col === "net_rate")!;
+    const rate = cfg.fields.find((f) => f.col === "net_rate"); // pair (assignment) has none
     const keyFound = has(party.aliases) && has(item.aliases);
-    const fieldsFound = [party, item, rate].filter((f) => has(f.aliases)).length;
+    const fieldsFound = [party, item, rate].filter((f): f is FieldDef => !!f && has(f.aliases)).length;
     return { headers, keyFound, fieldsFound };
   }
   return {
@@ -514,6 +538,37 @@ export function parsePairRows(cfg: MasterConfig, rows: Record<string, unknown>[]
     if (seen.has(dupKey)) { errors.push({ row: i + 1, key: `${party}/${sku}`, reason: "Duplicate party+item in file" }); return; }
     seen.add(dupKey);
     pairs.push({ party, sku_code: sku, net_rate: num(rateCell) });
+  });
+
+  return { pairs, errors };
+}
+
+/** A parsed pair ASSIGNMENT source row (party × item, no value), pre-DB-resolution. */
+export interface PairAssign { party: string; sku_code: string }
+
+/**
+ * Parse raw sheet rows for a "pair" (assignment) master — party × item with NO
+ * value (e.g. party-k-items). Shape/blank validation only; existence is checked
+ * in the route. Presence of the pair = the assignment.
+ */
+export function parsePairAssign(cfg: MasterConfig, rows: Record<string, unknown>[]): { pairs: PairAssign[]; errors: ParseError[] } {
+  const pairs: PairAssign[] = [];
+  const errors: ParseError[] = [];
+  const seen = new Set<string>();
+  const partyF = cfg.fields.find((f) => f.col === "party")!;
+  const itemF = cfg.fields.find((f) => f.col === "sku_code")!;
+
+  rows.forEach((raw, i) => {
+    const rn = normalizeRaw(raw);
+    const party = pickFrom(rn, partyF.aliases).trim();
+    const sku = pickFrom(rn, itemF.aliases).trim();
+    if (!party && !sku) return; // blank line
+    if (!party) { errors.push({ row: i + 1, key: sku, reason: "Missing party" }); return; }
+    if (!sku) { errors.push({ row: i + 1, key: party, reason: "Missing item code" }); return; }
+    const dupKey = `${party.toUpperCase()}|${sku.toUpperCase()}`;
+    if (seen.has(dupKey)) { errors.push({ row: i + 1, key: `${party}/${sku}`, reason: "Duplicate party+item in file" }); return; }
+    seen.add(dupKey);
+    pairs.push({ party, sku_code: sku });
   });
 
   return { pairs, errors };

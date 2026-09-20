@@ -354,3 +354,10 @@ body {
   background: var(--border);
   border-radius: 8px;
 }
+
+/* Full-bleed opt-in: a page that renders an element with [data-fullbleed]
+   removes the global max-w-[1400px] cap on the content wrapper, so it can use
+   the full width of the main area. Scoped — only such pages are affected. */
+main > div:has([data-fullbleed]) {
+  max-width: none;
+}

@@ -159,7 +159,7 @@ export default function SavedSlips({ initial, canBill = false }: { initial: Pack
                       >
                         Open →
                       </Link>
-                      {canBill && s.so_no && (
+                      {canBill && (s.so_no || s.party) && (
                         <button
                           onClick={() => pushToBilling(s)}
                           disabled={billing === s.id}

@@ -389,6 +389,79 @@ export async function createDraftFromSalesOrder(
   });
 }
 
+/**
+ * Create a DRAFT invoice DIRECTLY from a packing slip that has NO Sales Order —
+ * a "manual" slip (party + dispatched lines). Prices each line at the party's
+ * standing discount off MRP (no SO/net-rate overrides), computes GST, and stores an
+ * SO-less invoice (so_id NULL, so_line_id NULL — both are guarded downstream). Used
+ * for slips whose so_no doesn't resolve to a Sales Order.
+ */
+export async function createDraftFromPackingSlip(opts: {
+  packingSlipId: number;
+  party: string;
+  lines: Array<{ code: string; qty: number; mrp?: number; unit?: string; desc?: string }>;
+  createdBy?: string | null;
+}): Promise<{ id: number } | { error: string }> {
+  await ensureInvoiceExtraCols();
+  const sql = getSql();
+  const company = await getCompanySettings();
+  const party = (opts.party || "").trim();
+  if (!party) return { error: "This slip has no party/customer to bill." };
+
+  const [cust] = (await sql`
+    SELECT id, name, gst, state_code, pos_state_code, COALESCE(discount_pct,0)::float8 AS discount_pct,
+           billing, phone
+      FROM customers WHERE name = ${party} OR name ILIKE ${party}
+     ORDER BY (name = ${party}) DESC LIMIT 1`) as unknown as Array<{
+    id: number; name: string; gst: string | null; state_code: string | null; pos_state_code: string | null;
+    discount_pct: number; billing: string | null; phone: string | null;
+  }>;
+  if (!cust) return { error: `Customer "${party}" isn't in the master — add them first, then bill.` };
+
+  const wanted = opts.lines.filter((l) => l.code && l.qty > 0);
+  if (!wanted.length) return { error: "This slip has no dispatched quantities to bill." };
+  const codes = Array.from(new Set(wanted.map((l) => l.code.toUpperCase())));
+  const skuRows = (await sql`
+    SELECT id, upper(sku_code) AS code, name, COALESCE(price,0)::float8 AS price, hsn, unit, COALESCE(gst_rate,18)::float8 AS gst_rate
+      FROM skus WHERE upper(sku_code) = ANY(${codes})`) as unknown as
+    Array<{ id: number; code: string; name: string; price: number; hsn: string | null; unit: string | null; gst_rate: number }>;
+  const byCode = new Map(skuRows.map((s) => [s.code, s]));
+
+  const disc = Number(cust.discount_pct) || 0;
+  const draftLines: DraftLine[] = [];
+  for (const l of wanted) {
+    const s = byCode.get(l.code.toUpperCase());
+    if (!s) continue; // item not in the SKU master → skip (reported by count mismatch)
+    draftLines.push({
+      skuId: s.id, skuCode: s.code, description: (l.desc || s.name || s.code),
+      hsn: s.hsn ?? "", unit: l.unit || s.unit || "PCS",
+      qty: l.qty, mrp: l.mrp && l.mrp > 0 ? l.mrp : s.price,
+      gstRate: s.gst_rate ?? 18, discountPct: disc,
+    });
+  }
+  if (!draftLines.length) return { error: "None of the slip's items are in the SKU master." };
+
+  const posStateCode = (cust.pos_state_code || cust.state_code || "").trim();
+  const computed = computeInvoice(draftLines, { sellerStateCode: company.state_code, posStateCode });
+
+  return await sql.begin(async (tx) => {
+    const [inv] = await tx`
+      INSERT INTO invoices (status, so_id, packing_slip_id, customer_id, seller_state_code,
+        buyer_name, buyer_gstin, buyer_state_code, buyer_address, buyer_phone, pos_state_code,
+        tax_type, invoice_date, mrp_total, discount_total, taxable_total,
+        igst, cgst, sgst, round_off, grand_total, created_by)
+      VALUES ('draft', NULL, ${opts.packingSlipId}, ${cust.id}, ${company.state_code},
+        ${cust.name}, ${cust.gst ?? ""}, ${cust.state_code ?? ""}, ${cust.billing ?? ""}, ${cust.phone ?? ""},
+        ${posStateCode}, ${computed.taxType}, ${today()}, ${computed.mrpTotal}, ${computed.discountTotal},
+        ${computed.taxableTotal}, ${computed.igst}, ${computed.cgst}, ${computed.sgst},
+        ${computed.roundOff}, ${computed.grandTotal}, ${opts.createdBy ?? null})
+      RETURNING id`;
+    const invoiceId = (inv as { id: number }).id;
+    await insertLines(tx as unknown as Sql, invoiceId, computed.lines, draftLines);
+    return { id: invoiceId };
+  });
+}
+
 async function insertLines(sql: Sql, invoiceId: number, computed: ComputedLine[], src: DraftLine[]) {
   for (let i = 0; i < computed.length; i++) {
     const l = computed[i];

@@ -6,6 +6,16 @@ import { aiAvailable } from "@/lib/erp/sales-decode";
 
 export const dynamic = "force-dynamic";
 
+// Customers have no city column — derive a short city/place from the billing address
+// (its last meaningful comma segment; skip a 2-3 letter state code + any PIN token).
+function cityOf(billing?: string | null): string {
+  const parts = String(billing ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return "";
+  let last = parts[parts.length - 1];
+  if (/^[A-Za-z]{2,3}$/.test(last) && parts.length >= 2) last = parts[parts.length - 2];
+  return last.replace(/\bPIN\s*\d+\b/i, "").replace(/\b\d{6}\b/, "").trim();
+}
+
 export default async function SalesDecodePage() {
   const [customers, salesmen] = await Promise.all([getCustomers(), getSalesmen()]);
   return (
@@ -32,7 +42,7 @@ export default async function SalesDecodePage() {
       </div>
       <div className="panel-hd mb-3 rounded-lg">📷 Or decode from a photo / text / Excel (AI)</div>
       <SalesDecoder
-        customers={customers.map((c) => ({ id: c.id, code: c.code, name: c.name }))}
+        customers={customers.map((c) => ({ id: c.id, code: c.code, name: c.name, city: cityOf((c as { billing?: string }).billing) }))}
         salesmen={salesmen}
         aiReady={aiAvailable()}
       />

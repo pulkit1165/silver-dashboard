@@ -1,73 +1,55 @@
 import Link from "next/link";
 import PageHeader from "@/components/PageHeader";
 import AddSku from "@/components/erp/AddSku";
-import ListFilters from "@/components/erp/ListFilters";
+import MrpMaster from "@/components/erp/MrpMaster";
+import MrpSearch from "@/components/erp/MrpSearch";
+import SyncMrpButton from "@/components/erp/SyncMrpButton";
 import UploadMasterLink from "@/components/erp/UploadMasterLink";
-import { stockLevels } from "@/lib/erp/queries";
+import { getSkusWithMrp } from "@/lib/erp/mrp";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
+const PAGE_CAP = 1000;
 
-const TAG: Record<string, string> = { out: "r", low: "r", reorder: "n", ok: "g" };
-const PAGE_CAP = 300;
-
-export default async function SkuMasterPage({
+// Item Master — the single item file. Combines the SKU list with MRP editing +
+// history (from the old MRP Master), plus per-item category change and an
+// active/inactive toggle (inactive items don't print or show in pick lists).
+export default async function ItemMasterPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const sp = await searchParams;
   const user = await getCurrentUser();
-  const all = await stockLevels(sp.q);
-  const rows = all.slice(0, PAGE_CAP);
+  const canEditItems = canWrite(user.role, "skus");
+  const canEditRates = canWrite(user.role, "rates");
+  const editable = canEditItems || canEditRates;
+  const rows = await getSkusWithMrp(sp.q, PAGE_CAP);
   return (
     <>
       <PageHeader
-        title="SKU Master"
-        subtitle="Item master — every SKU has a unique QR token for scanning and labels."
-        right={canWrite(user.role, "skus") ? <UploadMasterLink master="skus" /> : undefined}
+        title="Item Master"
+        subtitle="Every item in one place — set the MRP (with full history), change the category, and mark items active/inactive. Inactive items won't print or appear in pick lists. The latest MRP flows to labels, sales orders, invoices and stock value."
+        right={canEditRates ? <SyncMrpButton /> : undefined}
       />
-      <div className="mb-3">
+      <div className="mb-3 flex flex-wrap items-center gap-3">
         <Link href="/erp/labels" className="text-sm font-semibold text-[var(--accent)]">Print barcode labels →</Link>
+        {canEditItems && <UploadMasterLink master="skus" />}
       </div>
-      <AddSku canCreate={canWrite(user.role, "skus")} />
-      <ListFilters fields={[{ key: "q", label: "Search", placeholder: "Name, code, or category…" }]} />
-      {!sp.q && all.length > PAGE_CAP && (
-        <p className="mb-3 text-xs font-semibold text-[var(--muted)]">
-          Showing first {PAGE_CAP} of {all.length} items — use Search to narrow down.
-        </p>
+      <AddSku canCreate={canEditItems} />
+      <div className="mb-4 mt-4 flex flex-wrap items-center gap-3">
+        <MrpSearch initial={sp.q ?? ""} basePath="/erp/skus" />
+        {sp.q && (
+          <span className="text-xs font-semibold text-[var(--muted)]">
+            Filtered to “{sp.q}” · <Link href="/erp/skus" className="text-[var(--accent)]">clear</Link>
+          </span>
+        )}
+      </div>
+      {!sp.q && rows.length >= PAGE_CAP && (
+        <p className="mb-3 text-xs font-semibold text-[var(--muted)]">Showing {PAGE_CAP} items. Use the search above to find any item across the whole catalogue.</p>
       )}
-      <section className="panel">
-        <div className="overflow-x-auto">
-          <table className="rtable">
-            <thead>
-              <tr>
-                <th>SKU</th><th>Header (label line 1)</th><th>Category</th><th>Brand</th>
-                <th className="!text-right">Price</th><th className="!text-right">On hand</th>
-                <th>Status</th><th>QR token</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((s) => (
-                <tr key={s.id}>
-                  <td>
-                    <Link href={`/erp/skus/${s.id}`} className="font-semibold text-[var(--accent)] hover:underline">{s.name}</Link>
-                    <div className="font-mono text-xs text-[var(--muted)]">{s.sku_code}</div>
-                  </td>
-                  <td className="text-xs font-semibold">{s.header || <span className="text-[var(--muted-2)]">—</span>}</td>
-                  <td>{s.category}</td>
-                  <td>{s.brand}</td>
-                  <td className="num-cell">{s.price.toFixed(2)}</td>
-                  <td className="num-cell">{s.qty}</td>
-                  <td><span className={`tag ${TAG[s.status]}`}>{s.status}</span></td>
-                  <td className="font-mono text-xs text-[var(--muted)]">{s.qr_token}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <MrpMaster rows={rows} editable={editable} basePath="/erp/skus" />
     </>
   );
 }

@@ -40,7 +40,7 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
   const [mounted, setMounted] = useState(false);
   // which folder's submenu is open, and where to anchor the desktop flyout
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const [coords, setCoords] = useState<{ top: number; left: number } | null>(null);
+  const [coords, setCoords] = useState<{ top: number; left: number; maxH: number } | null>(null);
 
   useEffect(() => setMounted(true), []);
   // close the submenu whenever the route changes
@@ -68,10 +68,18 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
     href === "/" || href === "/erp" ? path === href : path === href || path.startsWith(href + "/");
   const folderActive = (f: NavFolder) => visibleChildren(user.role, f).some((c) => isActive(c.href));
 
-  function toggleFolder(label: string, e: React.MouseEvent<HTMLButtonElement>) {
+  function toggleFolder(folder: NavFolder, e: React.MouseEvent<HTMLButtonElement>) {
     const r = e.currentTarget.getBoundingClientRect();
-    setCoords({ top: r.top, left: r.right + 10 });
-    setOpenKey((k) => (k === label ? null : label));
+    const vh = window.innerHeight;
+    const margin = 12;
+    const n = visibleChildren(user.role, folder).length;
+    // Estimate the menu height (~40px/item + header) and lift the anchor up if it
+    // would run past the bottom of the viewport, so no item is ever off-screen.
+    const estH = Math.min(vh - margin * 2, n * 40 + 44);
+    let top = r.top;
+    if (top + estH > vh - margin) top = Math.max(margin, vh - margin - estH);
+    setCoords({ top, left: r.right + 10, maxH: vh - margin - top });
+    setOpenKey((k) => (k === folder.label ? null : folder.label));
   }
 
   async function logout() {
@@ -126,7 +134,7 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
                   return (
                     <div key={e.label} data-nav-folder>
                       <button
-                        onClick={(ev) => toggleFolder(e.label, ev)}
+                        onClick={(ev) => toggleFolder(e, ev)}
                         className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
                           active || isOpen
                             ? "bg-[var(--accent-bg)] text-[var(--accent-strong)]"
@@ -168,8 +176,8 @@ function NavBody({ user, onNavigate, className = "" }: { user: U; onNavigate?: (
       {mounted && openFolder && coords && createPortal(
         <div
           data-nav-flyout
-          className="hidden md:block fixed z-50 w-64 max-h-[70vh] overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2 shadow-xl"
-          style={{ top: coords.top, left: coords.left }}
+          className="hidden md:block fixed z-50 w-64 overflow-y-auto rounded-xl border border-[var(--border)] bg-[var(--surface)] p-2 shadow-xl"
+          style={{ top: coords.top, left: coords.left, maxHeight: coords.maxH }}
         >
           <div className="px-2 pb-1 pt-1 text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--muted-2)]">{openFolder.label}</div>
           <div className="flex flex-col gap-0.5">

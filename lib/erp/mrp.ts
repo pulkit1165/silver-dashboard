@@ -30,7 +30,7 @@ export function ensureMrpTable(): Promise<void> {
 }
 
 export type MrpRow = {
-  id: number; sku_code: string; name: string; category: string;
+  id: number; sku_code: string; name: string; category: string; status: string;
   price: number; last_mrp: number | null; last_mrp_at: string | null;
   last_mrp_by: string | null; prev_mrp: number | null; change_count: number;
 };
@@ -41,7 +41,7 @@ export async function getSkusWithMrp(search?: string, cap = 400): Promise<MrpRow
   const sql = getSql();
   const like = search && search.trim() ? `%${search.trim()}%` : null;
   const rows = await sql`
-    SELECT s.id, s.sku_code, s.name, s.category, COALESCE(s.price, 0) AS price,
+    SELECT s.id, s.sku_code, s.name, s.category, COALESCE(s.status, 'active') AS status, COALESCE(s.price, 0) AS price,
            h.mrp AS last_mrp, h.effective_at AS last_mrp_at, h.created_by AS last_mrp_by,
            p.mrp AS prev_mrp, COALESCE(c.n, 0) AS change_count
       FROM skus s

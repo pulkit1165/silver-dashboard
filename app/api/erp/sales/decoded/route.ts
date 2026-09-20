@@ -21,7 +21,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: false, error: `Role ${user.role} cannot write orders.` }, { status: 403 });
   }
   const b = await req.json().catch(() => ({}));
-  type RawLine = { sku_id: unknown; qty: unknown; raw_text?: unknown; price?: unknown; mrp?: unknown; discount_pct?: unknown; rate_type?: unknown; foc_qty?: unknown };
+  type RawLine = { sku_id: unknown; qty: unknown; raw_text?: unknown; price?: unknown; mrp?: unknown; discount_pct?: unknown; rate_type?: unknown; foc_qty?: unknown; is_k?: unknown };
   const rawLines: RawLine[] = Array.isArray(b.lines) ? b.lines : [];
   const lines = rawLines.map((l) => ({
     skuId: Number(l.sku_id), qty: Number(l.qty),
@@ -30,6 +30,7 @@ export async function POST(req: Request) {
     discountPct: l.discount_pct != null ? Number(l.discount_pct) : undefined,
     rateType: typeof l.rate_type === "string" ? l.rate_type : undefined,
     focQty: l.foc_qty != null ? Number(l.foc_qty) : undefined,
+    isK: l.is_k === true || l.is_k === "true",
   }));
 
   const result = await createDecodedOrder({
@@ -41,6 +42,7 @@ export async function POST(req: Request) {
     createdById: user.id,
     salesmanId: b.salesman_id != null ? Number(b.salesman_id) : undefined,
     source: typeof b.source === "string" ? b.source : "decode-manual",
+    billType: typeof b.bill_type === "string" ? b.bill_type : undefined,
     lines,
   });
   if ("error" in result) return NextResponse.json({ ok: false, error: result.error }, { status: 422 });

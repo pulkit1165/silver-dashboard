@@ -8,7 +8,7 @@ type Result = { id: number; sku_code: string; name: string; price: number; chang
 // Server-backed search-as-you-type for the MRP master. Opens a results menu as
 // you type (searches the whole catalogue), and picking one filters the editable
 // list to that item.
-export default function MrpSearch({ initial = "" }: { initial?: string }) {
+export default function MrpSearch({ initial = "", basePath = "/erp/masters/mrp" }: { initial?: string; basePath?: string }) {
   const router = useRouter();
   const [q, setQ] = useState(initial);
   const [results, setResults] = useState<Result[]>([]);
@@ -42,11 +42,11 @@ export default function MrpSearch({ initial = "" }: { initial?: string }) {
   function pick(r: Result) {
     setOpen(false);
     setQ(r.sku_code);
-    router.push(`/erp/masters/mrp?q=${encodeURIComponent(r.sku_code)}`);
+    router.push(`${basePath}?q=${encodeURIComponent(r.sku_code)}`);
   }
   function submit() {
     if (results[hi]) pick(results[hi]);
-    else if (q.trim()) router.push(`/erp/masters/mrp?q=${encodeURIComponent(q.trim())}`);
+    else if (q.trim()) router.push(`${basePath}?q=${encodeURIComponent(q.trim())}`);
   }
 
   return (

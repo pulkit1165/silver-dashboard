@@ -1,7 +1,8 @@
 "use client";
 
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import * as XLSX from "xlsx";
 import type { MrpRow, MrpHistoryRow } from "@/lib/erp/mrp";
 
@@ -31,7 +32,7 @@ function todayStr(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRow[]; editable: boolean }) {
+export default function MrpMaster({ rows: initialRows, editable, basePath = "/erp/masters/mrp" }: { rows: MrpRow[]; editable: boolean; basePath?: string }) {
   const router = useRouter();
   const [rows, setRows] = useState<MrpRow[]>(initialRows);
   const [edit, setEdit] = useState<Record<number, { value: string; busy: boolean; err: string | null }>>({});
@@ -49,6 +50,9 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
   const [cat, setCat] = useState("all");
   const [sort, setSort] = useState<"code" | "mrp_desc" | "mrp_asc" | "recent">("code");
   const [quick, setQuick] = useState("");
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  // Inline category editing: id → the value being typed (null = not editing).
+  const [catEdit, setCatEdit] = useState<Record<number, string>>({});
 
   // bulk
   const [showBulk, setShowBulk] = useState(false);
@@ -66,6 +70,8 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
     if (status === "changed") v = v.filter((r) => r.change_count > 0 || r.last_mrp_at);
     else if (status === "never") v = v.filter((r) => r.change_count === 0 && !r.last_mrp_at);
     if (cat !== "all") v = v.filter((r) => r.category === cat);
+    if (activeFilter === "active") v = v.filter((r) => (r.status ?? "active") === "active");
+    else if (activeFilter === "inactive") v = v.filter((r) => (r.status ?? "active") !== "active");
     if (quick.trim()) {
       const q = quick.trim().toLowerCase();
       v = v.filter((r) => r.sku_code.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
@@ -76,16 +82,60 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
     else if (sort === "recent") s.sort((a, b) => String(b.last_mrp_at ?? "").localeCompare(String(a.last_mrp_at ?? "")));
     else s.sort((a, b) => a.sku_code.localeCompare(b.sku_code));
     return s;
-  }, [rows, status, cat, quick, sort]);
+  }, [rows, status, cat, quick, sort, activeFilter]);
+
+  // Toggle a SKU active/inactive (inactive won't print or show in pick lists).
+  async function toggleActive(id: number, makeActive: boolean) {
+    const prev = rows.find((r) => r.id === id)?.status ?? "active";
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: makeActive ? "active" : "inactive" } : r)));
+    try {
+      const r = await fetch(`/api/erp/skus/${id}/active`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ active: makeActive }),
+      });
+      const d = await r.json();
+      if (!d.ok) setRows((rs) => rs.map((row) => (row.id === id ? { ...row, status: prev } : row))); // revert
+    } catch { setRows((rs) => rs.map((row) => (row.id === id ? { ...row, status: prev } : row))); }
+  }
+
+  // Save a new category for a SKU.
+  async function saveCategory(id: number) {
+    const val = (catEdit[id] ?? "").trim();
+    const row = rows.find((r) => r.id === id);
+    setCatEdit((c) => { const n = { ...c }; delete n[id]; return n; });
+    if (!row || val === row.category) return;
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, category: val } : r)));
+    try {
+      const r = await fetch(`/api/erp/skus/${id}/category`, {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ category: val }),
+      });
+      const d = await r.json();
+      if (!d.ok && row) setRows((rs) => rs.map((rr) => (rr.id === id ? { ...rr, category: row.category } : rr)));
+    } catch { if (row) setRows((rs) => rs.map((rr) => (rr.id === id ? { ...rr, category: row.category } : rr))); }
+  }
 
   function startEdit(r: MrpRow) {
     setEdit((e) => ({ ...e, [r.id]: { value: String(Number(r.price).toFixed(2)), busy: false, err: null } }));
   }
+  // Guards against writing a bogus MRP change: (1) the input saves on BOTH Enter and
+  // blur, so pressing Enter used to fire this twice → two history rows; a per-id
+  // in-flight ref drops the duplicate. (2) Clicking the field to inspect it and then
+  // clicking away must NOT re-stamp the same value as a "new" MRP — bail when nothing
+  // actually changed. (These caused MRPs to look like they changed on their own.)
+  const savingRef = useRef<Set<number>>(new Set());
   async function saveMrp(id: number) {
+    if (savingRef.current.has(id)) return; // already saving (Enter + blur double-fire)
     const st = edit[id];
     if (!st) return;
     const num = Number(st.value);
     if (!Number.isFinite(num) || num < 0) { setEdit((e) => ({ ...e, [id]: { ...st, err: "Invalid" } })); return; }
+    const row = rows.find((r) => r.id === id);
+    if (row && num === Number(row.price)) { // unchanged → just close, write nothing
+      setEdit((e) => { const n = { ...e }; delete n[id]; return n; });
+      return;
+    }
+    savingRef.current.add(id);
     setEdit((e) => ({ ...e, [id]: { ...st, busy: true, err: null } }));
     try {
       const r = await fetch(`/api/erp/skus/${id}/mrp`, {
@@ -102,6 +152,7 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
         setHistory((h) => { const n = { ...h }; delete n[id]; return n; });
       } else setEdit((e) => ({ ...e, [id]: { ...st, busy: false, err: d.error ?? "Failed" } }));
     } catch { setEdit((e) => ({ ...e, [id]: { ...st, busy: false, err: "Network error" } })); }
+    finally { savingRef.current.delete(id); }
   }
   async function toggleHistory(id: number) {
     if (openId === id) { setOpenId(null); return; }
@@ -180,6 +231,14 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
             </select>
           </label>
           <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
+            Active?
+            <select value={activeFilter} onChange={(e) => setActiveFilter(e.target.value as typeof activeFilter)} className={selCls}>
+              <option value="all">All</option>
+              <option value="active">Active only</option>
+              <option value="inactive">Inactive only</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
             Sort by
             <select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)} className={selCls}>
               <option value="code">Code</option>
@@ -191,7 +250,7 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
           <label className="flex min-w-[160px] flex-1 flex-col gap-1 text-xs font-semibold text-[var(--muted)]">
             Search parts <span className="font-normal text-[var(--muted-2)]">(press Enter to search all {rows.length}+)</span>
             <input value={quick} onChange={(e) => setQuick(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter" && quick.trim()) router.push(`/erp/masters/mrp?q=${encodeURIComponent(quick.trim())}`); }}
+              onKeyDown={(e) => { if (e.key === "Enter" && quick.trim()) router.push(`${basePath}?q=${encodeURIComponent(quick.trim())}`); }}
               placeholder="Type a code/name, Enter to search all…" className={selCls} />
           </label>
         </div>
@@ -240,36 +299,60 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
         <div className="flex items-center justify-between px-4 py-2 text-xs font-semibold text-[var(--muted)]">
           <span>Showing {view.length} of {rows.length} items</span>
         </div>
+        <datalist id="itemmaster-cats">{categories.map((c) => <option key={c} value={c} />)}</datalist>
         <div className="overflow-x-auto border-t border-[var(--border)]">
           <table className="rtable">
             <thead>
               <tr>
-                <th>Code</th><th>Item</th><th>Category</th>
+                <th>Code</th><th>Item</th><th>Category</th><th>Active</th>
                 <th className="!text-right">Current MRP</th><th className="!text-right">Previous</th>
                 <th>Date changed</th><th>By</th><th></th>
               </tr>
             </thead>
             <tbody>
               {view.length === 0 && (
-                <tr><td colSpan={8} className="!py-6 text-center text-[var(--muted)]">
+                <tr><td colSpan={9} className="!py-6 text-center text-[var(--muted)]">
                   No loaded item matches{quick.trim() ? ` "${quick.trim()}"` : ""}.
-                  {quick.trim() && <button type="button" onClick={() => router.push(`/erp/masters/mrp?q=${encodeURIComponent(quick.trim())}`)} className="ml-2 rounded-lg bg-[var(--accent)] px-3 py-1 text-xs font-bold text-white">🔍 Search all parts for &quot;{quick.trim()}&quot; →</button>}
+                  {quick.trim() && <button type="button" onClick={() => router.push(`${basePath}?q=${encodeURIComponent(quick.trim())}`)} className="ml-2 rounded-lg bg-[var(--accent)] px-3 py-1 text-xs font-bold text-white">🔍 Search all parts for &quot;{quick.trim()}&quot; →</button>}
                 </td></tr>
               )}
               {view.map((s) => {
                 const st = edit[s.id];
                 return (
                   <Fragment key={s.id}>
-                    <tr>
+                    <tr className={(s.status ?? "active") !== "active" ? "opacity-55" : ""}>
                       <td className="font-mono text-xs">{s.sku_code}</td>
-                      <td className="font-semibold">{s.name}</td>
-                      <td className="text-[var(--muted)]">{s.category}</td>
+                      <td className="font-semibold">
+                        <Link href={`/erp/skus/${s.id}`} className="text-[var(--accent)] hover:underline">{s.name}</Link>
+                      </td>
+                      <td className="text-[var(--muted)]">
+                        {editable && catEdit[s.id] !== undefined ? (
+                          <input autoFocus list="itemmaster-cats" value={catEdit[s.id]}
+                            onChange={(e) => setCatEdit((c) => ({ ...c, [s.id]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setCatEdit((c) => { const n = { ...c }; delete n[s.id]; return n; }); }}
+                            onBlur={() => saveCategory(s.id)}
+                            className="w-36 rounded border border-[var(--accent)] bg-[var(--surface)] px-2 py-1 text-sm outline-none" />
+                        ) : editable ? (
+                          <button type="button" onClick={() => setCatEdit((c) => ({ ...c, [s.id]: s.category ?? "" }))} title="Click to change category"
+                            className="rounded px-2 py-1 text-left hover:bg-[var(--surface-2)]">
+                            {s.category || <span className="text-[var(--muted-2)]">— set —</span>}
+                          </button>
+                        ) : (s.category || "—")}
+                      </td>
+                      <td>
+                        <button type="button" disabled={!editable}
+                          onClick={() => toggleActive(s.id, (s.status ?? "active") !== "active")}
+                          title={(s.status ?? "active") === "active" ? "Active — click to deactivate (won't print or show in pick lists)" : "Inactive — click to activate"}
+                          className={`rounded px-2 py-0.5 text-[11px] font-bold disabled:opacity-60 ${(s.status ?? "active") === "active" ? "bg-[var(--accent-2-bg)] text-[var(--accent-2)]" : "bg-[var(--danger-bg)] text-[var(--danger)]"}`}>
+                          {(s.status ?? "active") === "active" ? "Active" : "Inactive"}
+                        </button>
+                      </td>
                       <td className="num-cell">
                         {editable && st ? (
                           <span className="inline-flex items-center gap-1">
                             <input type="number" step="0.01" autoFocus value={st.value}
                               onChange={(e) => setEdit((ed) => ({ ...ed, [s.id]: { ...st, value: e.target.value } }))}
-                              onKeyDown={(e) => { if (e.key === "Enter") saveMrp(s.id); if (e.key === "Escape") setEdit((ed) => { const n = { ...ed }; delete n[s.id]; return n; }); }}
+                              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEdit((ed) => { const n = { ...ed }; delete n[s.id]; return n; }); }}
                               onBlur={() => saveMrp(s.id)} disabled={st.busy}
                               className="w-24 rounded border border-[var(--accent)] bg-[var(--surface)] px-2 py-1 text-right text-sm outline-none" />
                             {st.err && <span className="text-xs font-semibold text-[var(--danger)]">{st.err}</span>}
@@ -295,7 +378,7 @@ export default function MrpMaster({ rows: initialRows, editable }: { rows: MrpRo
                     </tr>
                     {openId === s.id && (
                       <tr>
-                        <td colSpan={8} className="bg-[var(--surface-2)]">
+                        <td colSpan={9} className="bg-[var(--surface-2)]">
                           <div className="p-2 text-xs">
                             <div className="mb-1 font-bold text-[var(--muted)]">MRP history — {s.sku_code} (most recent first)</div>
                             {!history[s.id] ? <div className="text-[var(--muted)]">Loading…</div>

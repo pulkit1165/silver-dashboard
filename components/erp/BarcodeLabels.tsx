@@ -7,6 +7,8 @@ import LabelSizePicker from "./LabelSizePicker";
 import { mrp } from "@/lib/format";
 import { renderDocToTSPL, ensureFontsLoaded } from "@/lib/erp/labelRender";
 import type { LabelDoc, LabelFill } from "@/lib/erp/labelDoc";
+import QuickPrintPanel, { type QuickSkuData } from "./QuickPrintPanel";
+import type { SearchOption } from "./SearchSelect";
 
 type Item = { id: number; sku_code: string; name: string; category: string; masterQty: number; singleQty: number; barcodeCode: string; nameClass?: "auto" | "short" | "long" };
 // Keep in sync with LONG_NAME_CHARS / resolveNameClass in lib/erp/labelMaster.ts.
@@ -54,6 +56,7 @@ const LABEL_SIZES: LabelSize[] = [
 ];
 
 export default function BarcodeLabels({ items }: { items: Item[] }) {
+  const [quickTab, setQuickTab] = useState<"quick" | "bulk">("quick");
   const [labels, setLabels] = useState<Record<number, Label>>({});
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [type, setType] = useState<Record<number, LabelType>>({});
@@ -530,6 +533,53 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     setPnMsg({ ok: false, text: `⚠ Queued but no confirmation yet — is the print agent running on that PC? It'll print as soon as the agent picks it up.` });
   }
 
+  // Quick Print: pick one SKU, click the size photo, it prints — no cart, no
+  // multi-select. Always uses the bridge/raster pipeline (the only one that
+  // can render an approved canvas design — PrintNode's path here still uses
+  // the older fixed-template TSPL builder, not the designer's doc), so
+  // whatever design is shown in the thumbnail is exactly what prints.
+  const LABEL_SIZES_QUICK = useMemo(() => LABEL_SIZES.filter((s) => s.id !== "custom"), []);
+  const skuOptions: SearchOption[] = useMemo(
+    () => items.map((i) => ({ value: i.id, label: i.sku_code, sublabel: i.name })),
+    [items],
+  );
+  async function fetchQuickSkuData(id: number): Promise<QuickSkuData | null> {
+    try {
+      const r = await fetch(`/api/erp/labels/quick?skuId=${id}`, { cache: "no-store" });
+      const d = await r.json();
+      if (!d.ok) return null;
+      return { ...d.sku, locations: d.locations, pkd: d.pkd, qrTokenSingle: d.qrTokenSingle, qrTokenMaster: d.qrTokenMaster, qrSvgSingle: d.qrSvgSingle, qrSvgMaster: d.qrSvgMaster, qrMatrixSingle: d.qrMatrixSingle, qrMatrixMaster: d.qrMatrixMaster };
+    } catch { return null; }
+  }
+  // Same name/unit precedence the bulk flow uses (Label Master → name override →
+  // SKU name) so the same SKU prints identically whichever tab you use.
+  function extendQuickFill(data: QuickSkuData): Partial<LabelFill> {
+    const m = labelMaster[data.sku_code];
+    const masterName = m ? [m.line1, m.line2, m.line3].filter(Boolean).join("\n") : "";
+    const name = masterName || labelNames[data.sku_code] || data.name;
+    const unit = m?.units || data.unit;
+    const unitQty = m?.unitQty && m.unitQty > 0 ? m.unitQty : undefined;
+    return { name, unit, ...(unitQty ? { singleQty: unitQty, masterQty: unitQty } : {}) };
+  }
+  async function quickPrintOne(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number): Promise<{ ok: boolean; text: string }> {
+    if (!brPrinterId) return { ok: false, text: "Pick a printer above." };
+    const nm = brPrinters.find((x) => x.id === brPrinterId)?.name || "";
+    const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(nm) ? 300 : 203;
+    const dp = dpi === 203 ? 8 : dpi / 25.4;
+    await ensureFontsLoaded(doc);
+    const bmp = await renderDocToTSPL(doc, fill, dp);
+    const r = await fetch("/api/erp/labels/print-raster", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      fetch("/api/erp/labels/log-print", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ skuCodes: [data.sku_code], labelCount: copies }) }).catch(() => {});
+      return { ok: true, text: `✓ Queued ${copies} label(s) — printing…` };
+    }
+    return { ok: false, text: d.error || "Print failed." };
+  }
+
   // Emergency STOP: cancel every label still WAITING in the queue for the selected
   // printer so the agent stops pulling them. Labels already handed to Windows/the
   // printer buffer can't be recalled here — power-cycle the printer to flush those.
@@ -635,6 +685,29 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
 
   return (
     <div className="flex flex-col gap-4">
+      <div className="no-print flex items-center gap-3">
+        <div className="flex overflow-hidden rounded-lg border border-[var(--border)]">
+          {(["quick", "bulk"] as const).map((t) => (
+            <button key={t} onClick={() => setQuickTab(t)} className={`px-4 py-2 text-sm font-bold ${quickTab === t ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)]"}`}>
+              {t === "quick" ? "⚡ Quick Print" : "☰ Bulk Print"}
+            </button>
+          ))}
+        </div>
+        {quickTab === "quick" && (
+          <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">Printer
+            <select value={brPrinterId ?? ""} onChange={(e) => setBrPrinterId(e.target.value || null)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
+              <option value="">Pick a printer…</option>
+              {brPrinters.map((p) => <option key={p.id} value={p.id}>{p.code || p.name}</option>)}
+            </select>
+          </label>
+        )}
+      </div>
+
+      {quickTab === "quick" && (
+        <QuickPrintPanel sizes={LABEL_SIZES_QUICK} skuOptions={skuOptions} fetchSkuData={fetchQuickSkuData} extendFill={extendQuickFill} onPrint={quickPrintOne} />
+      )}
+
+      {quickTab === "bulk" && <>
       {/* On a roll, force the paper size to the die-cut label so ONE label lands on
           ONE die-cut. Injected here so it overrides the global @page. */}
       {roll && (
@@ -1086,6 +1159,7 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
           }}
         />
       )}
+      </>}
     </div>
   );
 }

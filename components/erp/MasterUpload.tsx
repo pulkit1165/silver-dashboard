@@ -8,7 +8,7 @@ type Row = Record<string, unknown>;
 type Err = { row: number; key: string; reason: string };
 
 interface Preview {
-  kind: "row" | "rate" | "pair-rate";
+  kind: "row" | "rate" | "pair-rate" | "pair";
   willInsert?: number;
   willUpdate?: number;
   willDelete?: number;
@@ -18,7 +18,7 @@ interface Preview {
   errors: Err[];
 }
 interface Result {
-  kind: "row" | "rate" | "pair-rate";
+  kind: "row" | "rate" | "pair-rate" | "pair";
   inserted?: number;
   updated?: number;
   deleted?: number;
@@ -153,7 +153,7 @@ export default function MasterUpload({
   }
 
   const headers = rows[0] ? Object.keys(rows[0]) : [];
-  const isPair = meta.kind === "pair-rate"; // party×item net rate — append-only, no full overwrite
+  const isPair = meta.kind === "pair-rate" || meta.kind === "pair"; // party×item — append-only, no full overwrite
   const isFull = !isPair && mode === "full";
   const isSku = master === "skus";
   const applyReady = !!preview && (!isFull || confirmText.trim().toUpperCase() === "OVERWRITE");
@@ -171,7 +171,7 @@ export default function MasterUpload({
               onChange={(e) => {
                 const k = e.target.value as MasterKey;
                 setMaster(k);
-                if (masters.find((m) => m.key === k)?.kind === "pair-rate") setMode("partial");
+                { const kk = masters.find((m) => m.key === k)?.kind; if (kk === "pair-rate" || kk === "pair") setMode("partial"); }
                 setRows([]);
                 setFileName("");
                 setSingle({});
@@ -190,9 +190,9 @@ export default function MasterUpload({
 
           {isPair ? (
             <div className="rounded-lg border border-[var(--accent)] bg-[var(--surface-2)] p-3 text-xs text-[var(--muted)]">
-              This master <b>always appends</b> — each upload adds the latest net rate for every party+item in the file
-              (a versioned history is kept). Rows for a party or item that doesn&apos;t exist are reported and skipped;
-              the rest still go through.
+              {meta.kind === "pair"
+                ? <>This master <b>always merges</b> — each upload records the party+item assignment (safe to re-upload). Rows for a party or item that doesn&apos;t exist are reported and skipped; the rest still go through.</>
+                : <>This master <b>always appends</b> — each upload adds the latest net rate for every party+item in the file (a versioned history is kept). Rows for a party or item that doesn&apos;t exist are reported and skipped; the rest still go through.</>}
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
@@ -243,7 +243,9 @@ export default function MasterUpload({
               ? " a new code is added; an existing code is updated."
               : meta.kind === "pair-rate"
                 ? " the party and item must already exist; the net rate is added."
-                : " the record must already exist; its rate is set."}
+                : meta.kind === "pair"
+                  ? " the party and item must already exist; the assignment is recorded."
+                  : " the record must already exist; its rate is set."}
           </div>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {meta.formFields.map((f) => (
@@ -354,7 +356,7 @@ export default function MasterUpload({
               </div>
             ) : (
               <div className="flex flex-wrap gap-2">
-                <Stat n={preview.willUpdate ?? 0} label="rates updated" tone="accent" />
+                <Stat n={preview.willUpdate ?? 0} label={preview.kind === "pair" ? "assignments" : "rates updated"} tone="accent" />
                 {isFull && <Stat n={preview.willReset ?? 0} label="reset to default" tone="danger" />}
                 <Stat n={preview.notFound ?? 0} label="not found" tone="muted" />
               </div>
@@ -421,7 +423,9 @@ export default function MasterUpload({
                 ? `${result.inserted ?? 0} added, ${result.updated ?? 0} updated${
                     isFull ? `, ${result.deleted ?? 0} removed, ${result.protectedCount ?? 0} protected` : ""
                   }`
-                : `${result.updated ?? 0} rates updated${isFull ? `, ${result.reset ?? 0} reset` : ""}`}
+                : result.kind === "pair"
+                  ? `${result.updated ?? 0} assignments applied`
+                  : `${result.updated ?? 0} rates updated${isFull ? `, ${result.reset ?? 0} reset` : ""}`}
               {result.skipped ? `. ${result.skipped} skipped.` : "."}
             </div>
             {isFull && result.kind === "row" && (result.protectedSample?.length ?? 0) > 0 && (

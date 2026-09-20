@@ -26,8 +26,8 @@ async function enrichFill(code: string): Promise<Partial<LabelFill>> {
   try {
     const r = await fetch(`/api/erp/labels/abbrev?code=${encodeURIComponent(code)}`, { cache: "no-store" });
     const d = await r.json();
-    if (!d.ok || !d.found) return {};
-    return { abbr1: d.abbr1, abbr2: d.abbr2, unit: d.unit, singleQty: d.singleQty, masterQty: d.masterQty };
+    if (!d.ok || !d.found) return { sku_code: code };
+    return { sku_code: d.sku_code ?? code, abbr1: d.abbr1, abbr2: d.abbr2, unit: d.unit, singleQty: d.singleQty, masterQty: d.masterQty };
   } catch { return {}; }
 }
 

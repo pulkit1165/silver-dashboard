@@ -68,6 +68,17 @@ export function ensurePricingTables(): Promise<void> {
         note text DEFAULT '', created_by text,
         created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
       await sql`CREATE INDEX IF NOT EXISTS pinr_pair_idx ON party_item_net_rates (customer_id, sku_id, effective_at)`;
+      // Party × item FOC % matrix — the most specific FOC (supersedes the party
+      // FOC% for that party+item on an order). Append-only; SO reads latest/pair.
+      // Blank/none = fall back to the party-level FOC%. Same ledger pattern.
+      await sql`CREATE TABLE IF NOT EXISTS party_item_foc (
+        id serial PRIMARY KEY, customer_id integer NOT NULL, code text,
+        sku_id integer NOT NULL, sku_code text,
+        foc_pct double precision NOT NULL,
+        effective_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'),
+        note text DEFAULT '', created_by text,
+        created_at text DEFAULT to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))`;
+      await sql`CREATE INDEX IF NOT EXISTS pifoc_pair_idx ON party_item_foc (customer_id, sku_id, effective_at)`;
       await sql.unsafe(`ALTER TABLE skus
         ADD COLUMN IF NOT EXISTS item_net_rate double precision DEFAULT 0,
         ADD COLUMN IF NOT EXISTS foc_pct double precision DEFAULT 0`);

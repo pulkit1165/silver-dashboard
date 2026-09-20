@@ -15,6 +15,7 @@ const RUNTIME_TABLES_PROTECTED = [
   "print_jobs", "print_printers", "sku_aliases",
   "mrp_history", "foc_rates", "item_net_rates",
   "party_disc_history", "party_foc_history", "party_item_net_rates", "party_ogl_history",
+  "party_item_foc", "party_k_items",
   "catalog_kv",
   "quotations", "quotation_lines", "quotation_quotes", "indents", "indent_lines",
 ];

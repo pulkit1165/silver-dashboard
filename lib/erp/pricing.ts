@@ -17,8 +17,10 @@
  *      (a whole-K order, or the K-flagged lines of an O/K order). On a normal
  *      "O" (ours) order it never applies, even if the party carries an OGL %.
  *
- *   3. FOC DISCOUNT %  — a party-level % taken off whatever the steps above
- *        produced, applied LAST, on top of everything.
+ *   3. FOC DISCOUNT %  — a % taken off whatever the steps above produced,
+ *        applied LAST, on top of everything. Most specific wins:
+ *          a. PARTY × ITEM FOC — the party's own FOC for that item.
+ *          b. PARTY FOC        — the party-level FOC%.
  *        final = preFoc × (1 − focPct/100)
  *
  * All amounts are ex-GST net rates (GST is added later on the invoice). Every
@@ -34,6 +36,7 @@ export interface LineRateInput {
   itemNetRate?: number | null;     // global per-SKU net rate, or null/0 if none
   partyItemNetRate?: number | null;// party-specific net rate for this item (most specific)
   focPct?: number | null;          // party-level FOC %, applied last, or null/0
+  partyItemFocPct?: number | null; // party-specific FOC for this item — supersedes party FOC when set
 }
 
 export type NetRateSource = "party-item" | "item" | "none";
@@ -59,7 +62,10 @@ export function computeLineRate(input: LineRateInput): LineRateResult {
   // normal "O" order the party's OGL % is inert (this is the fix — OGL used to
   // leak onto every order that carried a party OGL %).
   const oglPct = input.isK ? clampPct(input.oglPct ?? 0) : 0;
-  const focPct = clampPct(input.focPct ?? 0);
+  // FOC: the party×item FOC (when set) supersedes the party-level FOC%.
+  const focPct = clampPct(
+    input.partyItemFocPct != null && input.partyItemFocPct > 0 ? input.partyItemFocPct : (input.focPct ?? 0),
+  );
   const partyItemNetRate = input.partyItemNetRate != null && input.partyItemNetRate > 0 ? Number(input.partyItemNetRate) : null;
   const itemNetRate = input.itemNetRate != null && input.itemNetRate > 0 ? Number(input.itemNetRate) : null;
 

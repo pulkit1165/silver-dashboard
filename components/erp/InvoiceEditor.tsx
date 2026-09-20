@@ -220,6 +220,9 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
       )}
 
       {/* ── Printable tax invoice ─────────────────────────────────────── */}
+      {/* Force A4 PORTRAIT for the invoice (the global @page sets no orientation, so
+          it would otherwise inherit the printer/browser default, e.g. landscape). */}
+      <style dangerouslySetInnerHTML={{ __html: `@media print { @page { size: A4 portrait; margin: 8mm; } }` }} />
       <section className="print-area inv-doc">
         <div className="border border-black bg-white p-3 text-[11px] leading-tight text-black">
           {/* Header — GST/State/QR box · company letterhead · invoice marker */}
@@ -234,7 +237,7 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
               </div>
             </div>
             <div className="flex-1 text-center">
-              <div className="text-lg font-extrabold tracking-wide">{company.legal_name}</div>
+              <div className="text-2xl font-extrabold tracking-wide" style={{ color: "#c1121f" }}>{company.legal_name}</div>
               {company.trade_name && <div className="font-semibold">{company.trade_name}</div>}
               <div>{company.address}{company.city ? `, ${company.city}` : ""}{company.pincode ? ` - ${company.pincode}` : ""}</div>
               {(company.phone || company.email) && <div>{company.phone ? `Ph.: ${company.phone}` : ""}{company.phone && company.email ? " · " : ""}{company.email ? `E-mail: ${company.email}` : ""}</div>}
@@ -242,6 +245,10 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
             <div className="w-28 shrink-0 text-right">
               <div className="text-sm font-extrabold">INVOICE</div>
               <div className="text-[9px] text-gray-500">1 of 1</div>
+              <div className="mt-1 inline-block rounded border-2 px-2 py-0.5 text-right leading-none" style={{ borderColor: "#c1121f" }}>
+                <div className="text-base font-extrabold" style={{ color: "#c1121f" }}>SILVER UP</div>
+                <div className="text-[7px] font-bold tracking-[0.2em]" style={{ color: "#c1121f" }}>AUTO PARTS</div>
+              </div>
             </div>
           </div>
 
@@ -286,8 +293,8 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
               <tr className="border-b border-black [&>th]:border-r [&>th]:border-black [&>th]:px-1 [&>th]:py-0.5 [&>th]:text-left">
                 <th className="w-8">S.No</th>
                 <th>Code</th>
-                <th>Description</th>
-                <th>HSN / GST%</th>
+                <th>Description of Goods/Services</th>
+                <th>HSN Code / GST Rate</th>
                 <th className="!text-right">Qty</th>
                 <th>Unit</th>
                 <th className="!text-right">Mrp</th>
@@ -349,7 +356,9 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
                 {inr(computed.mrpTotal)} − {inr(computed.discountTotal)} = {inr(computed.taxableTotal)} + {inr(computed.igst + computed.cgst + computed.sgst)}
                 {uniformGstRate != null ? ` (@ ${uniformGstRate})` : ""} = {inr(computed.grandTotal - computed.roundOff)}
               </div>
-              {company.terms && <div className="mt-2 whitespace-pre-line text-[9px] text-gray-700">{company.terms}</div>}
+              <div className="mt-0.5 font-semibold">
+                Disc. on GST {uniformGstRate ?? 18} @ {computed.mrpTotal > 0 ? Math.round((computed.discountTotal / computed.mrpTotal) * 1000) / 10 : 0} % + GST
+              </div>
             </div>
             <div className="min-w-[210px]">
               <Row k="Net Taxable" v={inr(computed.taxableTotal)} bold />
@@ -360,9 +369,21 @@ export default function InvoiceEditor({ data, canEdit, qrImage }: { data: Invoic
               <div className="mt-1 border-t-2 border-black pt-1">
                 <Row k="Grand Total" v={inr(computed.grandTotal)} bold big />
               </div>
-              <div className="mt-6 text-right text-[10px]">For {company.legal_name}</div>
+              <div className="mt-6 text-right text-[11px] font-bold" style={{ color: "#c1121f" }}>For {company.legal_name}</div>
               <div className="mt-4 text-right text-[10px]">Authorised Sign.</div>
             </div>
+          </div>
+
+          {/* Terms & Conditions / E.&O.E. footer */}
+          <div className="mt-2 flex items-end justify-between gap-3 border-t border-black pt-1">
+            <div className="max-w-[55%] text-[9px] leading-snug">
+              <div className="font-bold">TERMS &amp; CONDITIONS</div>
+              <div className="whitespace-pre-line">
+                {company.terms || "1. Goods once sold will not be taken back.\n2. Subject to Ludhiana jurisdiction only.\n3. 18% Interest will be charged if the bill is not paid within 30 days."}
+              </div>
+            </div>
+            <div className="text-[10px] font-semibold">E. &amp; O.E.</div>
+            <div className="text-[10px]">Prepared By</div>
           </div>
         </div>
       </section>
