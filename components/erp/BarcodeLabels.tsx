@@ -561,16 +561,16 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
     const unitQty = m?.unitQty && m.unitQty > 0 ? m.unitQty : undefined;
     return { name, unit, ...(unitQty ? { singleQty: unitQty, masterQty: unitQty } : {}) };
   }
-  async function quickPrintOne(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number): Promise<{ ok: boolean; text: string }> {
-    if (!brPrinterId) return { ok: false, text: "Pick a printer above." };
-    const nm = brPrinters.find((x) => x.id === brPrinterId)?.name || "";
+  async function quickPrintOne(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number, printerId: string | null): Promise<{ ok: boolean; text: string }> {
+    if (!printerId) return { ok: false, text: "No printer online for this size." };
+    const nm = printerId.slice(printerId.indexOf("::") + 2);
     const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(nm) ? 300 : 203;
     const dp = dpi === 203 ? 8 : dpi / 25.4;
     await ensureFontsLoaded(doc);
     const bmp = await renderDocToTSPL(doc, fill, dp);
     const r = await fetch("/api/erp/labels/print-raster", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
+      body: JSON.stringify({ printerId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
     });
     const d = await r.json();
     if (d.ok) {
@@ -693,14 +693,6 @@ export default function BarcodeLabels({ items }: { items: Item[] }) {
             </button>
           ))}
         </div>
-        {quickTab === "quick" && (
-          <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">Printer
-            <select value={brPrinterId ?? ""} onChange={(e) => setBrPrinterId(e.target.value || null)} className="rounded-lg border border-[var(--border)] bg-[var(--surface)] px-3 py-2 text-sm">
-              <option value="">Pick a printer…</option>
-              {brPrinters.map((p) => <option key={p.id} value={p.id}>{p.code || p.name}</option>)}
-            </select>
-          </label>
-        )}
       </div>
 
       {quickTab === "quick" && (

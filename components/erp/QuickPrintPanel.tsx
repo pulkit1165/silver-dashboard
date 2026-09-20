@@ -17,6 +17,21 @@ export type QuickSkuData = {
 };
 
 type Size = { id: string; label: string; w: number; h: number };
+type Printer = { id: string; pc: string; name: string; online: boolean };
+
+// Each physical stock lives on a dedicated PC/printer — this is a hardware
+// fact, not a preference, so a picked SIZE should pick its printer by
+// default. Matched by computer name (+ a model hint where one PC has more
+// than one printer registered, e.g. both a "Plus" and a "Pro" on the same
+// box) against the live bridge printer list; falls back gracefully if that
+// PC isn't online. Keyed by the BASE size id (sticker-* strips its prefix
+// before lookup, since the printer assignment is about the physical stock).
+const AUTO_PRINTER_BY_SIZE: Record<string, { pc: string; modelHint?: string }> = {
+  "small-50x30": { pc: "DESKTOP-M3P9SLE" },
+  "big-95x70": { pc: "DESKTOP-U8693H8" },
+  "red-85x55": { pc: "DESKTOP-U8693H8" },
+  "med-70x40": { pc: "DESKTOP-CII1LAK", modelHint: "plus" },
+};
 
 // Fast, single-SKU print: pick a SKU, lot auto-suggests from live inventory
 // (rack comes along with it — rack is a property of the (SKU, lot) pair, not
@@ -37,7 +52,7 @@ export default function QuickPrintPanel({
   fetchSkuData: (value: number) => Promise<QuickSkuData | null>;
   /** Layer extra LabelFill fields on top of the shared baseline (e.g. stickers' abbr1/abbr2). */
   extendFill?: (data: QuickSkuData) => Partial<LabelFill>;
-  onPrint: (data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number) => Promise<{ ok: boolean; text: string }>;
+  onPrint: (data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number, printerId: string | null) => Promise<{ ok: boolean; text: string }>;
 }) {
   const [skuValue, setSkuValue] = useState<number | null>(null);
   const [data, setData] = useState<QuickSkuData | null>(null);
@@ -51,6 +66,33 @@ export default function QuickPrintPanel({
   const [printingSizeId, setPrintingSizeId] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const canvasRefs = useRef<Record<string, HTMLCanvasElement | null>>({});
+  const [printers, setPrinters] = useState<Printer[]>([]);
+  const [printerOverride, setPrinterOverride] = useState<string>(""); // "" = Auto
+
+  useEffect(() => {
+    fetch("/api/erp/print/printers", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setPrinters(d.printers || d || []))
+      .catch(() => {});
+  }, []);
+
+  // The dedicated printer for a size's physical stock, falling back to the
+  // first online printer if that PC isn't reachable, else null.
+  function resolveAutoPrinter(sizeId: string): string | null {
+    const base = sizeId.replace(/^sticker-/, "");
+    const rule = AUTO_PRINTER_BY_SIZE[base];
+    if (rule) {
+      const onThatPc = printers.filter((p) => p.pc === rule.pc && (!rule.modelHint || p.name.toLowerCase().includes(rule.modelHint)));
+      const match = onThatPc.find((p) => p.online) ?? onThatPc[0];
+      if (match) return match.id;
+    }
+    return printers.find((p) => p.online)?.id ?? null;
+  }
+  function printerLabelFor(sizeId: string): string {
+    const id = printerOverride || resolveAutoPrinter(sizeId);
+    const p = printers.find((x) => x.id === id);
+    return p ? `${p.pc}${p.online ? "" : " (offline)"}` : "no printer online";
+  }
 
   // Designs are per-size, not per-SKU — fetch all of them once up front so
   // every thumbnail can render as soon as a SKU is picked.
@@ -136,9 +178,11 @@ export default function QuickPrintPanel({
   async function handlePrint(sizeId: string) {
     const doc = docsBySize[sizeId];
     if (!doc || !data || !fill || printingSizeId) return;
+    const printerId = printerOverride || resolveAutoPrinter(sizeId);
+    if (!printerId) { setMsg({ ok: false, text: "No printer online — pick one below or start the print agent." }); return; }
     setPrintingSizeId(sizeId); setMsg(null);
     try {
-      const res = await onPrint(data, sizeId, doc, fill, copies);
+      const res = await onPrint(data, sizeId, doc, fill, copies, printerId);
       setMsg(res);
     } catch (e) {
       setMsg({ ok: false, text: String(e) });
@@ -182,6 +226,12 @@ export default function QuickPrintPanel({
           <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">Copies
             <input type="number" min={1} value={copies} onChange={(e) => setCopies(Math.max(1, Math.round(Number(e.target.value)) || 1))} className={`${inp} w-20`} />
           </label>
+          <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">Printer
+            <select value={printerOverride} onChange={(e) => setPrinterOverride(e.target.value)} className={inp}>
+              <option value="">Auto — picks the right printer per size</option>
+              {printers.map((p) => <option key={p.id} value={p.id}>{p.pc}{p.online ? "" : " (offline)"}</option>)}
+            </select>
+          </label>
           {loadingData && <span className="text-xs text-[var(--muted)]">Loading…</span>}
           {data && data.locations.length === 0 && <span className="text-xs font-semibold text-[var(--warn,#b45309)]">No current stock location for this SKU — rack left blank, printing still works.</span>}
         </div>
@@ -212,6 +262,7 @@ export default function QuickPrintPanel({
               >
                 <canvas ref={(el) => { canvasRefs.current[s.id] = el; }} className="rounded border border-[var(--border)] bg-white" style={{ maxWidth: 220, maxHeight: 160 }} />
                 <div className="text-xs font-semibold">{s.label}</div>
+                <div className="text-[10px] text-[var(--muted)]">→ {printerLabelFor(s.id)}</div>
                 {busy && <div className="text-xs text-[var(--accent)]">Printing…</div>}
               </button>
             );

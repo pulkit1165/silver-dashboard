@@ -152,15 +152,15 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
       address: companyAddress,
     };
   }
-  async function printOneSticker(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number): Promise<{ ok: boolean; text: string }> {
-    if (!brPrinterId) return { ok: false, text: "Pick a printer." };
-    const name = brPrinters.find((p) => p.id === brPrinterId)?.name || "";
+  async function printOneSticker(data: QuickSkuData, sizeId: string, doc: LabelDoc, fill: LabelFill, copies: number, printerId: string | null): Promise<{ ok: boolean; text: string }> {
+    if (!printerId) return { ok: false, text: "No printer online for this size." };
+    const name = printerId.slice(printerId.indexOf("::") + 2);
     const dpi = /\b34[5-9]\b|300\s*?dpi/i.test(name) ? 300 : 203;
     const dp = dpi === 203 ? 8 : dpi / 25.4;
     const bmp = await renderDocToTSPL(doc, fill, dp);
     const r = await fetch("/api/erp/labels/print-raster", {
       method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({ printerId: brPrinterId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
+      body: JSON.stringify({ printerId, sizeId, w: doc.w, h: doc.h, copies, skuCode: data.sku_code, speed: Number(speed) || 4, density: 10, ...bmp }),
     });
     const d = await r.json();
     return d.ok ? { ok: true, text: `🖨 Sent ${copies} sticker(s) to the printer.` } : { ok: false, text: d.error || "Print failed." };
@@ -178,14 +178,6 @@ export default function StickerPrint({ items, companyAddress = "" }: { items: Ab
             </button>
           ))}
         </div>
-        {mode === "quick" && (
-          <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">Printer
-            <select value={brPrinterId} onChange={(e) => setBrPrinterId(e.target.value)} className={inp}>
-              <option value="">Pick a printer…</option>
-              {brPrinters.map((p) => <option key={p.id} value={p.id} disabled={!p.online}>{(p.code || p.name)}{p.online ? "" : " (offline)"}</option>)}
-            </select>
-          </label>
-        )}
       </div>
 
       {mode === "quick" && (
