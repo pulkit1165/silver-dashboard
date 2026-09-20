@@ -45,6 +45,7 @@ export default function QuickPrintPanel({
   const [lotIdx, setLotIdx] = useState(0);
   const [lot, setLot] = useState("");
   const [rack, setRack] = useState("");
+  const [tier, setTier] = useState<"single" | "master">("single");
   const [copies, setCopies] = useState(1);
   const [docsBySize, setDocsBySize] = useState<Record<string, LabelDoc | null>>({});
   const [printingSizeId, setPrintingSizeId] = useState<string | null>(null);
@@ -101,12 +102,13 @@ export default function QuickPrintPanel({
     if (!data) return null;
     const base: LabelFill = {
       sku_code: data.sku_code, name: data.name, header: data.header, price: data.price,
-      unit: data.unit, singleQty: data.singleQty, masterQty: data.masterQty, tier: "single",
+      unit: data.unit, singleQty: data.singleQty, masterQty: data.masterQty, tier,
       lot, rack, pkd: data.pkd,
-      qrSvg: data.qrSvgSingle, qrMatrix: data.qrMatrixSingle,
+      qrSvg: tier === "master" ? (data.qrSvgMaster ?? data.qrSvgSingle) : data.qrSvgSingle,
+      qrMatrix: tier === "master" ? (data.qrMatrixMaster ?? data.qrMatrixSingle) : data.qrMatrixSingle,
     };
     return { ...base, ...(extendFill ? extendFill(data) : {}) };
-  }, [data, lot, rack, extendFill]);
+  }, [data, lot, rack, tier, extendFill]);
 
   // Live-render every size's thumbnail whenever the fill (SKU/lot/rack) or the
   // designs change — this is the "photo of the label" the operator clicks.
@@ -168,6 +170,15 @@ export default function QuickPrintPanel({
           <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">Rack
             <input value={rack} onChange={(e) => setRack(e.target.value)} placeholder="picked automatically" className={`${inp} w-32`} />
           </label>
+          <div className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">Label Type
+            <div className="flex overflow-hidden rounded-lg border border-[var(--border)]">
+              {(["single", "master"] as const).map((t) => (
+                <button key={t} type="button" onClick={() => setTier(t)} className={`px-3 py-2 text-sm font-bold ${tier === t ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)]"}`}>
+                  {t === "single" ? "Single" : "Master"}
+                </button>
+              ))}
+            </div>
+          </div>
           <label className="flex flex-col gap-1 text-xs font-semibold text-[var(--muted)]">Copies
             <input type="number" min={1} value={copies} onChange={(e) => setCopies(Math.max(1, Math.round(Number(e.target.value)) || 1))} className={`${inp} w-20`} />
           </label>

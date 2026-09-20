@@ -13,6 +13,8 @@ type Props = {
   manual?: boolean;
   /** audible beep + haptic buzz on a successful scan (default on) */
   beep?: boolean;
+  /** phone-friendly: put the Scan button ON the camera, hide the photo/capture buttons */
+  compact?: boolean;
 };
 
 type CamState = "idle" | "starting" | "running" | "denied" | "error" | "unsupported";
@@ -28,7 +30,7 @@ function toGrayscale(img: ImageData): Uint8ClampedArray {
   return gray;
 }
 
-export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500, manual = false, beep = true }: Props) {
+export default function Scanner({ onDetect, continuous = false, cooldownMs = 2500, manual = false, beep = true, compact = false }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -472,6 +474,14 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
           </div>
         )}
 
+        {/* compact/phone: the Scan button lives ON the camera (bottom-centre) */}
+        {state === "running" && manual && compact && (
+          <button onClick={scanOnce} disabled={capturing}
+            className="absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full bg-[var(--accent)] px-8 py-3 text-base font-extrabold text-white shadow-lg ring-4 ring-white/30 hover:bg-[var(--accent-strong)] disabled:opacity-60">
+            🔍 Scan
+          </button>
+        )}
+
         {state !== "running" && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-6 text-center text-white">
             {state === "starting" ? (
@@ -496,23 +506,24 @@ export default function Scanner({ onDetect, continuous = false, cooldownMs = 250
 
       {/* MANUAL tap-to-scan — the big deliberate button: line up the box, tap,
           hear the beep. Only shows in manual mode. */}
-      {state === "running" && manual && (
+      {state === "running" && manual && !compact && (
         <button onClick={scanOnce} disabled={capturing}
           className="rounded-xl bg-[var(--accent)] px-4 py-4 text-lg font-extrabold text-white shadow-sm hover:bg-[var(--accent-strong)] disabled:opacity-60">
           🔍 Scan box
         </button>
       )}
 
-      {/* NATIVE-camera photo scan — the reliable mobile path. Always available,
-          works even without starting the live camera. */}
+      {/* NATIVE-camera photo scan — the reliable mobile path (hidden in compact mode). */}
       <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) scanFromFile(f); e.target.value = ""; }} />
-      <button onClick={() => fileInputRef.current?.click()} disabled={capturing}
-        className="rounded-lg bg-[var(--accent-2)] px-4 py-3 text-sm font-extrabold text-white shadow-sm hover:brightness-95 disabled:opacity-60">
-        {capturing ? "Reading photo…" : "📸 Take a photo of the QR — most reliable"}
-      </button>
+      {!compact && (
+        <button onClick={() => fileInputRef.current?.click()} disabled={capturing}
+          className="rounded-lg bg-[var(--accent-2)] px-4 py-3 text-sm font-extrabold text-white shadow-sm hover:brightness-95 disabled:opacity-60">
+          {capturing ? "Reading photo…" : "📸 Take a photo of the QR — most reliable"}
+        </button>
+      )}
 
-      {state === "running" && (
+      {state === "running" && !compact && (
         <button onClick={captureAndScan} disabled={capturing}
           className="rounded-lg bg-[var(--accent)] px-4 py-2.5 text-sm font-extrabold text-white shadow-sm hover:bg-[var(--accent-strong)] disabled:opacity-60">
           {capturing ? "Capturing…" : "📷 Capture & scan (if live scan won't catch it)"}

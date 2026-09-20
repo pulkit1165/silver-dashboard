@@ -64,17 +64,8 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
   const [hdr, setHdr] = useState<Header>(emptyHeader());
   const [activeCaseNo, setActiveCaseNo] = useState<number | null>(null);
   const [activeRows, setActiveRows] = useState<Row[]>([]);
-  // A scan is previewed here first; it's only added to the case when the user
-  // clicks "Add scanned item" — this stops fast/repeat detections from inserting
-  // the same code multiple times.
-  const [pendingScan, setPendingScan] = useState<{
-    skuCode: string; name: string; unit: string; mrp: string;
-    tier: "single" | "master"; addQty: number; orderedStr: string; unknown: boolean;
-  } | null>(null);
   const [completed, setCompleted] = useState<Case[]>([]);
   const [pickCase, setPickCase] = useState<number>(1);
-  // "scan" = camera/QR into the case; "manual" = pick SKUs & type Qty Dispatched (no scanning).
-  const [scanMode, setScanMode] = useState<"scan" | "manual">("scan");
   const [slips, setSlips] = useState<SlipMeta[]>([]);
   const [slipId, setSlipId] = useState<number | null>(null);
   const [save, setSave] = useState<"idle" | "saving" | "saved">("idle");
@@ -280,6 +271,28 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
   const slipOrdered = useMemo(() => slipItems.reduce((a, it) => a + it.ordered, 0), [slipItems]);
   const slipDispatched = useMemo(() => slipItems.reduce((a, it) => a + it.dispatched, 0), [slipItems]);
 
+  // Packing summary — for a linked Sales Order, every ordered line with how much
+  // has been packed so far this slip (completed cases), flagged fully/partly/not
+  // packed. This is the "what I packed" recap shown after cases are closed.
+  const packSummary = useMemo(() => {
+    if (!soLines.length) return null;
+    const dispByCode: Record<string, number> = {};
+    for (const c of completed) for (const r of c.rows) dispByCode[r.itemCode] = (dispByCode[r.itemCode] ?? 0) + num(r.quantity);
+    let full = 0, partial = 0, pending = 0, totalOrdered = 0, totalPacked = 0;
+    const items = soLines.map((l) => {
+      const ordered = l.qty;
+      const packed = (l.dispatched_qty || 0) + (dispByCode[l.sku_code ?? ""] ?? 0);
+      totalOrdered += ordered; totalPacked += packed;
+      const st: "full" | "partial" | "pending" = packed <= 0 ? "pending" : packed >= ordered ? "full" : "partial";
+      if (st === "full") full++; else if (st === "partial") partial++; else pending++;
+      return { code: l.sku_code ?? "", name: l.sku_name ?? "", ordered, packed, st };
+    });
+    // Items packed that are NOT on the order (wrong-item scans that were kept).
+    const extraCodes = Object.keys(dispByCode).filter((code) => !soLines.some((l) => l.sku_code === code));
+    const extras = extraCodes.map((code) => ({ code, name: "", ordered: 0, packed: dispByCode[code], st: "extra" as const }));
+    return { items, extras, full, partial, pending, totalOrdered, totalPacked, boxes: completed.length };
+  }, [soLines, completed]);
+
   const setHeader = (field: keyof Header, value: string) => { setHdr((h) => ({ ...h, [field]: value })); touch(); };
 
   // Already-entered qty for a SKU across cases closed so far this session —
@@ -305,65 +318,74 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
     packedRowsRef.current.clear(); // fresh case → nothing packed yet
     setActiveCaseNo(pickCase); setActiveRows(seeded); touch();
   }
-  // A scan only PREVIEWS the item — it is not added to the case until the user
-  // clicks "Add scanned item" (confirmScan). This prevents the same QR being
-  // inserted multiple times from rapid/continuous detections.
+  // A scan (camera tap or typed code) adds straight into the active case, with two
+  // guard confirms: (1) WRONG ITEM — the code isn't on this Sales Order; (2)
+  // OVER-DISPATCH — dispatching more than was ordered. The scanned row then turns
+  // orange (partly packed) / green (fully packed) in the list below.
   async function handleScan(code: string) {
-    if (!activeCaseNo) return;
+    if (!activeCaseNo) { flash(false, "Start a case first, then scan."); return; }
+    let sku: { sku_code: string; name?: string; unit?: string; price?: number; qr_token?: string } | null = null;
+    let tier: "single" | "master" = "single";
+    let addQty = 1;
     try {
       const r = await fetch("/api/erp/scan/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code }) });
       const d = await r.json();
       if (d.ok && d.sku) {
+        sku = d.sku;
         if (d.sku.qr_token) setQrByCode((m) => ({ ...m, [d.sku.sku_code]: d.sku.qr_token }));
-        // A master QR adds a full carton (master_qty); a single QR adds single_qty.
-        const tier = d.tier === "master" ? "master" : "single";
-        const addQty = tier === "master" ? (Number(d.sku.master_qty) || 1) : (Number(d.sku.single_qty) || 1);
-        const skuCode = d.sku.sku_code as string;
-        const soLine = soLines.find((l) => l.sku_code === skuCode);
-        setPendingScan({
-          skuCode, name: d.sku.name || "", unit: d.sku.unit || "",
-          mrp: d.sku.price != null ? String(d.sku.price) : "",
-          tier, addQty, orderedStr: soLine ? String(soLine.qty) : "", unknown: false,
-        });
-      } else {
-        setPendingScan({ skuCode: code, name: "", unit: "", mrp: "", tier: "single", addQty: 1, orderedStr: "", unknown: true });
+        tier = d.tier === "master" ? "master" : "single";
+        addQty = tier === "master" ? (Number(d.sku.master_qty) || 1) : (Number(d.sku.single_qty) || 1);
       }
-    } catch {
-      setPendingScan({ skuCode: code, name: "", unit: "", mrp: "", tier: "single", addQty: 1, orderedStr: "", unknown: true });
-    }
-  }
+    } catch { /* fall through as unknown */ }
 
-  // Insert the previewed scan into the active case.
-  function confirmScan() {
-    const p = pendingScan;
-    if (!p || !activeCaseNo) return;
-    touch();
-    if (p.unknown) {
-      setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: p.skuCode }]);
-      flash(false, `Not in master — added "${p.skuCode}" to fill manually`);
-    } else {
-      setActiveRows((rows) => {
-        const idx = rows.findIndex((row) => row.itemCode === p.skuCode);
-        if (idx >= 0) {
-          return rows.map((row, i) => {
-            if (i !== idx) return row;
-            const disp = num(row.qtyDispatched) + p.addQty;
-            const ordered = row.qtyOrdered || p.orderedStr;
-            return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ordered, pendingQty: String(num(ordered) - disp) };
-          });
-        }
-        return [...rows, {
-          ...blankRow(activeCaseNo),
-          fromMaster: true,
-          itemCode: p.skuCode, itemDesc: p.name, unit: p.unit,
-          mrp: p.mrp, mMrp: p.mrp,
-          qtyOrdered: p.orderedStr, qtyDispatched: String(p.addQty), quantity: String(p.addQty),
-          pendingQty: String(num(p.orderedStr) - p.addQty),
-        }];
-      });
-      flash(true, `${p.skuCode}: +${p.addQty} dispatched (${p.tier})`);
+    // Unknown code — not in the SKU master.
+    if (!sku) {
+      if (!confirm(`"${code}" is not a known item (not in the SKU master).\n\nAdd it as a blank row to fill in manually?`)) return;
+      setActiveRows((rows) => [...rows, { ...blankRow(activeCaseNo), itemCode: code }]);
+      flash(false, `Added "${code}" — fill it in manually.`);
+      touch();
+      return;
     }
-    setPendingScan(null);
+
+    const skuCode = sku.sku_code;
+    const soLine = soLines.find((l) => l.sku_code === skuCode);
+
+    // (1) WRONG ITEM — scanned an item that isn't on this Sales Order.
+    if (soId && !soLine) {
+      if (!confirm(`⚠ Wrong item scanned\n\n${skuCode}${sku.name ? ` — ${sku.name}` : ""} is NOT on this sales order.\n\nDo you want to continue and add it anyway?`)) return;
+    }
+
+    // (2) OVER-DISPATCH — would exceed the ordered qty for this line.
+    const existing = activeRows.find((r) => r.itemCode === skuCode);
+    const orderedStr = existing?.qtyOrdered || (soLine ? String(soLine.qty) : "");
+    const ordered = num(orderedStr);
+    const newDisp = num(existing?.qtyDispatched ?? "") + addQty;
+    if (ordered > 0 && newDisp > ordered) {
+      if (!confirm(`⚠ More than ordered\n\n${skuCode}: dispatching ${newDisp} but only ${ordered} were ordered.\n\nContinue anyway?`)) return;
+    }
+
+    // Add / merge into the case.
+    setActiveRows((rows) => {
+      const idx = rows.findIndex((row) => row.itemCode === skuCode);
+      if (idx >= 0) {
+        return rows.map((row, i) => {
+          if (i !== idx) return row;
+          const disp = num(row.qtyDispatched) + addQty;
+          const ord = row.qtyOrdered || orderedStr;
+          return { ...row, qtyDispatched: String(disp), quantity: String(disp), qtyOrdered: ord, pendingQty: String(num(ord) - disp) };
+        });
+      }
+      return [...rows, {
+        ...blankRow(activeCaseNo),
+        fromMaster: true,
+        itemCode: skuCode, itemDesc: sku!.name || "", unit: sku!.unit || "",
+        mrp: sku!.price != null ? String(sku!.price) : "", mMrp: sku!.price != null ? String(sku!.price) : "",
+        qtyOrdered: orderedStr, qtyDispatched: String(addQty), quantity: String(addQty),
+        pendingQty: String(num(orderedStr) - addQty),
+      }];
+    });
+    flash(true, `${skuCode}: +${addQty} dispatched (${tier})`);
+    touch();
   }
   const updateRow = (id: string, key: keyof Row, value: string) => {
     setActiveRows((rows) => rows.map((r) => {
@@ -560,20 +582,6 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
         </div>
       )}
 
-      {/* mode toggle: scan the boxes, or build the slip manually (no scanning) */}
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
-        <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Mode</span>
-        <div className="flex items-center gap-1 rounded-lg border border-[var(--border)] p-0.5">
-          <button onClick={() => setScanMode("scan")} className={`rounded-md px-3 py-1.5 text-sm font-bold ${scanMode === "scan" ? "bg-[var(--accent)] text-white" : "text-[var(--muted)] hover:bg-[var(--surface-2)]"}`}>▣ With scan</button>
-          <button onClick={() => setScanMode("manual")} className={`rounded-md px-3 py-1.5 text-sm font-bold ${scanMode === "manual" ? "bg-[var(--accent)] text-white" : "text-[var(--muted)] hover:bg-[var(--surface-2)]"}`}>✎ Without scan</button>
-        </div>
-        <span className="text-xs text-[var(--muted)]">
-          {scanMode === "scan"
-            ? "Scan each box's QR/barcode — Qty Dispatched fills by single/master."
-            : "No scanning — open or upload a Sales Order, then search & add items and type Qty Dispatched. Same gap, done-case and export logic."}
-        </span>
-      </div>
-
       {/* slip bar: open existing / new / save status */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-3">
         <span className="text-xs font-bold uppercase tracking-wide text-[var(--muted)]">Open slip</span>
@@ -653,7 +661,7 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
                 </select>
               </Field>
               <button onClick={startCase} disabled={available.length === 0} className="rounded-lg bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white hover:bg-[var(--accent-strong)] disabled:opacity-50">Start Case {pickCase}</button>
-              <span className="text-xs text-[var(--muted)]">Pick a case, then {scanMode === "scan" ? "scan" : "add"} items into it.</span>
+              <span className="text-xs text-[var(--muted)]">Pick a case, then scan or add items into it.</span>
               {completed.length > 0 && (
                 <span className="w-full text-xs text-[var(--muted)]">
                   Already done (can&apos;t reuse — use <b>Edit</b> to change): {completed.map((c) => `Case ${c.caseNo}`).join(", ")}
@@ -663,39 +671,17 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
           ) : (
             <div className="grid grid-cols-1 gap-4 lg:grid-cols-[320px_1fr]">
               <div>
-                {scanMode === "scan" ? (
-                  <>
-                    <Scanner onDetect={handleScan} continuous manual beep cooldownMs={800} />
+                {/* Scan a box (tap the Scan button on the camera) — it's added straight
+                    away, turning the row orange/green below. */}
+                <Scanner onDetect={handleScan} continuous manual beep cooldownMs={800} compact />
 
-                    {/* Scan preview — nothing is added until "Add scanned item" is clicked */}
-                    {pendingScan ? (
-                      <div className={`mt-3 rounded-xl border-2 p-3 ${pendingScan.unknown ? "border-[var(--danger)] bg-[var(--danger-bg)]" : "border-[var(--accent-2)] bg-[var(--accent-2-bg)]"}`}>
-                        <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--muted)]">Scanned — review, then add</div>
-                        <div className="mt-1 text-sm font-extrabold">{pendingScan.skuCode}</div>
-                        {pendingScan.unknown ? (
-                          <div className="text-xs text-[var(--danger)]">Not in master — will be added as a manual row to fill in.</div>
-                        ) : (
-                          <div className="text-xs text-[var(--ink-2)]">
-                            {pendingScan.name}
-                            <div className="mt-0.5 font-semibold">+{pendingScan.addQty} to dispatch ({pendingScan.tier})</div>
-                          </div>
-                        )}
-                        <div className="mt-2 flex gap-2">
-                          <button onClick={confirmScan} className="rounded-lg bg-[var(--accent-2)] px-4 py-2 text-sm font-bold text-white hover:opacity-90">✓ Add scanned item</button>
-                          <button onClick={() => setPendingScan(null)} className="rounded-lg border border-[var(--border)] bg-white px-3 py-2 text-sm font-bold text-[var(--muted)] hover:bg-[var(--surface-2)]">Clear</button>
-                        </div>
-                      </div>
-                    ) : (
-                      <p className="mt-2 text-xs text-[var(--muted)]">Line up the box in the frame, tap <b>🔍 Scan box</b> (you&apos;ll hear a beep), review it, then click <b>Add scanned item</b> to insert it below.</p>
-                    )}
-                  </>
-                ) : (
-                  <div className="rounded-xl border-2 border-dashed border-[var(--accent)] bg-[var(--accent-bg)] p-3">
-                    <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--accent-strong)]">Add item manually (no scan)</div>
-                    <p className="mb-2 mt-1 text-xs text-[var(--muted)]">Search the SKU master by code or name; it&apos;s added as a row — then type its Qty Dispatched.</p>
-                    <ManualPicker onPick={addManualItem} />
-                  </div>
-                )}
+                {/* Dispatch without scanning — type/paste a code above and Enter, or
+                    search the item master here and add it, then type its qty. */}
+                <div className="mt-3 rounded-xl border-2 border-dashed border-[var(--accent)] bg-[var(--accent-bg)] p-3">
+                  <div className="text-[10px] font-bold uppercase tracking-wide text-[var(--accent-strong)]">Add without scanning</div>
+                  <p className="mb-2 mt-1 text-xs text-[var(--muted)]">Search the item master by code or name; it&apos;s added as a row — then type its Qty Dispatched.</p>
+                  <ManualPicker onPick={addManualItem} />
+                </div>
 
                 <div className="mt-3 flex flex-wrap gap-2">
                   <button onClick={() => { setActiveRows((r) => [...r, blankRow(activeCaseNo)]); touch(); }} className="rounded-lg border border-[var(--border)] bg-white px-3 py-1.5 text-xs font-bold hover:bg-[var(--surface-2)]">+ Manual row</button>
@@ -708,8 +694,15 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
                     <thead><tr><th>#</th>{VISIBLE_COLS.map((c) => <th key={c.key}>{c.label}{REQUIRED_ROW_FIELDS.includes(c.key) && <span className="text-[var(--accent)]"> *</span>}</th>)}<th></th></tr></thead>
                     <tbody>
                       {activeRows.length === 0 && <tr><td colSpan={VISIBLE_COLS.length + 2} className="!py-6 text-center text-[var(--muted)]">Scan an item or add a manual row.</td></tr>}
-                      {activeRows.map((r, i) => (
-                        <tr key={r.id}>
+                      {activeRows.map((r, i) => {
+                        // Row status: orange once anything is dispatched, green when the
+                        // full ordered qty is dispatched. Drives the colour cue the packer sees.
+                        const _disp = num(r.qtyDispatched), _ord = num(r.qtyOrdered);
+                        const rowTone: "" | "orange" | "green" = _disp <= 0 ? "" : (_ord > 0 && _disp >= _ord ? "green" : "orange");
+                        const toneBar = rowTone === "green" ? "var(--accent-2)" : rowTone === "orange" ? "#f59e0b" : undefined;
+                        const toneBg = rowTone === "green" ? "var(--accent-2-bg)" : rowTone === "orange" ? "var(--warn-bg, #fff7ed)" : undefined;
+                        return (
+                        <tr key={r.id} style={{ boxShadow: toneBar ? `inset 4px 0 0 ${toneBar}` : undefined, background: toneBg }}>
                           <td className="text-[var(--muted)]">{i + 1}</td>
                           {VISIBLE_COLS.map((c) => {
                             const cellStyle = { minWidth: c.w };
@@ -723,7 +716,7 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
                               if (!editing) {
                                 return (
                                   <td key={c.key} style={cellStyle} onDoubleClick={() => setEditCell(`${r.id}:qtyDispatched`)} title="Auto-filled by scanning · double-click to edit">
-                                    <div className={`${cellCls} flex cursor-pointer items-center font-bold ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : "bg-[var(--surface-2)]"}`} style={cellStyle}>{r[c.key] || "0"}</div>
+                                    <div className={`${cellCls} flex cursor-pointer items-center font-bold ${cellMissing(r, c.key) ? "!border-[var(--danger)] !bg-[var(--danger-bg)]" : "bg-[var(--surface-2)]"}`} style={{ ...cellStyle, background: toneBg }}>{r[c.key] || "0"}</div>
                                   </td>
                                 );
                               }
@@ -746,7 +739,8 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
                           })}
                           <td><button onClick={() => deleteRow(r.id)} className="rounded px-2 py-1 text-xs font-bold text-[var(--danger)] hover:bg-[var(--danger-bg)]">✕</button></td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -785,6 +779,51 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
           ))}
         </div>
       </section>
+
+      {/* PACKING SUMMARY — what has been packed against the Sales Order */}
+      {packSummary && completed.length > 0 && (
+        <section className="panel">
+          <div className="panel-hd">Packing Summary — {hdr.salesOrderNo || "this order"}</div>
+          <div className="p-4">
+            <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+              <SummaryStat n={packSummary.full} label="fully packed" bg="var(--accent-2-bg)" fg="var(--accent-2)" />
+              <SummaryStat n={packSummary.partial} label="partly packed" bg="var(--warn-bg, #fff7ed)" fg="#b45309" />
+              <SummaryStat n={packSummary.pending} label="not packed" bg="var(--surface-2)" fg="var(--muted)" />
+              <SummaryStat n={packSummary.boxes} label="boxes" bg="var(--surface-2)" fg="var(--foreground)" />
+              <SummaryStat n={`${packSummary.totalPacked}/${packSummary.totalOrdered}`} label="qty packed" bg="var(--accent-bg)" fg="var(--accent-strong)" />
+            </div>
+            <div className="overflow-x-auto rounded-lg border border-[var(--border)]">
+              <table className="rtable" style={{ minWidth: "520px" }}>
+                <thead><tr><th></th><th>Item</th><th className="!text-right">Ordered</th><th className="!text-right">Packed</th><th className="!text-right">Left</th></tr></thead>
+                <tbody>
+                  {packSummary.items.map((it) => {
+                    const dot = it.st === "full" ? "var(--accent-2)" : it.st === "partial" ? "#f59e0b" : "var(--border)";
+                    return (
+                      <tr key={it.code} style={{ boxShadow: `inset 4px 0 0 ${dot}` }}>
+                        <td><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: dot }} /></td>
+                        <td><span className="font-mono text-xs font-bold">{it.code}</span>{it.name ? <span className="text-[var(--muted)]"> · {it.name}</span> : null}</td>
+                        <td className="text-right tabular-nums">{it.ordered}</td>
+                        <td className="text-right tabular-nums font-bold">{it.packed}</td>
+                        <td className="text-right tabular-nums">{Math.max(0, it.ordered - it.packed) || "—"}</td>
+                      </tr>
+                    );
+                  })}
+                  {packSummary.extras.map((it) => (
+                    <tr key={it.code} style={{ boxShadow: "inset 4px 0 0 var(--danger)" }}>
+                      <td><span className="inline-block h-2.5 w-2.5 rounded-full" style={{ background: "var(--danger)" }} /></td>
+                      <td><span className="font-mono text-xs font-bold">{it.code}</span> <span className="text-[var(--danger)]">· not on order</span></td>
+                      <td className="text-right tabular-nums">—</td>
+                      <td className="text-right tabular-nums font-bold">{it.packed}</td>
+                      <td className="text-right tabular-nums">—</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="mt-2 text-xs text-[var(--muted)]"><span className="font-bold text-[var(--accent-2)]">● green</span> = fully packed · <span className="font-bold" style={{ color: "#b45309" }}>● orange</span> = part packed · ○ grey = not yet · <span className="font-bold text-[var(--danger)]">● red</span> = wrong item (not on the order).</p>
+          </div>
+        </section>
+      )}
 
       {/* FINAL PACKING SLIP — item-wise, matches the printed slip */}
       {slipItems.length > 0 && (
@@ -834,6 +873,15 @@ export default function PackingSlip({ orders = [], parties = [], canBill = false
           </div>
         </section>
       )}
+    </div>
+  );
+}
+
+function SummaryStat({ n, label, bg, fg }: { n: number | string; label: string; bg: string; fg: string }) {
+  return (
+    <div className="rounded-lg border border-[var(--border)] px-3 py-2" style={{ background: bg }}>
+      <div className="text-lg font-extrabold tabular-nums" style={{ color: fg }}>{n}</div>
+      <div className="text-[10px] font-bold uppercase tracking-wide" style={{ color: fg }}>{label}</div>
     </div>
   );
 }

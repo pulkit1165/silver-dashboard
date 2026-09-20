@@ -12,10 +12,7 @@ export default async function PackingSlipPage() {
   const [orders, customers] = await Promise.all([getPackableOrders(), getCustomers()]);
   return (
     <>
-      <PageHeader
-        title="Pack & Dispatch"
-        subtitle="Pick a Sales Order, then pack it case-by-case — scan each item OR switch to Manual and type the qty (scanning is optional). Packing deducts stock and creates the Delivery Order; export the packing slip, then verify the DO to make it billable."
-      />
+      <PageHeader title="Pack & Dispatch" />
       <PackingSlip
         orders={orders.map((o) => ({ id: o.id, so_no: o.so_no, customer_name: o.customer_name, status: o.status }))}
         parties={customers.map((c) => c.name).filter((n): n is string => Boolean(n))}
