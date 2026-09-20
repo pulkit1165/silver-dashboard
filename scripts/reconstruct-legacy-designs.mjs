@@ -55,11 +55,28 @@ function smallDesign() {
 }
 
 // Sticker remap: header->abbr1, name->abbr2 — same rule as
-// scripts/copy-labels-to-stickers.mjs. Neither of these two reconstructed
-// docs has a "header" element (the old template never split header/name), so
-// the sticker side only gets abbr2 populated — leave abbr1 for manual fill.
+// scripts/copy-labels-to-stickers.mjs.
 function remapToSticker(doc) {
   return { ...doc, elements: doc.elements.map((e) => (e.field === "header" ? { ...e, field: "abbr1" } : e.field === "name" ? { ...e, field: "abbr2" } : e)) };
+}
+
+// small-50x30's label-side design has only ONE "name" field (the old TSPL
+// template for this size never split header/name) — a plain remap leaves
+// Line 1 (abbr1, trade name) with no element at all, so it silently never
+// prints. Stickers genuinely need two lines, so give the sticker version its
+// own proper abbr1 (trade name, bigger) + abbr2 (variant, smaller) pair in
+// the same footprint the single name box used, matching the convention the
+// sticker module's own default layout uses (lib/erp/labelDoc.ts defaultAbbrevDoc).
+function smallStickerDesign(labelDoc) {
+  const kept = labelDoc.elements.filter((e) => e.field !== "name");
+  return {
+    ...labelDoc,
+    elements: [
+      ...kept,
+      el("text", { field: "abbr1", x: 4, y: 4, w: 25, h: 4.5, font: "Arial", sizeMM: 3.4, bold: true, align: "left", fit: true }),
+      el("text", { field: "abbr2", x: 4, y: 8.7, w: 25, h: 3.8, font: "Arial", sizeMM: 2.6, bold: true, align: "left", fit: true }),
+    ],
+  };
 }
 
 async function saveDraft(sizeId, doc) {
@@ -102,7 +119,7 @@ if (redRow?.draft_doc) {
 // today, so there's nothing to regress, same reasoning as red above.
 const small = smallDesign();
 await saveDraft("small-50x30", small);
-await saveApproved("sticker-small-50x30", remapToSticker(small));
+await saveApproved("sticker-small-50x30", smallStickerDesign(small));
 
 await sql.end();
 console.log("\nDone. Nothing currently printing was changed:");
