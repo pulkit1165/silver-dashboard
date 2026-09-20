@@ -1,15 +1,18 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import PageHeader from "@/components/PageHeader";
-import IndentActions from "@/components/erp/IndentActions";
-import { getIndent } from "@/lib/erp/purchaseQuotations";
+import PurchaseCycle from "@/components/erp/PurchaseCycle";
+import { getIndent, getQuotation } from "@/lib/erp/purchaseQuotations";
+import { ensureVendorItems } from "@/lib/erp/vendorCatalog";
+import { getSql } from "@/lib/erp/db";
 import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
 const ALLOWED = new Set(["admin", "purchase", "accounts"]);
-const inr = (n: number) => `₹${Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
 
+// One screen for the whole indent -> quotation -> approval -> PO lifecycle —
+// see components/erp/PurchaseCycle.tsx for the section-by-section UI.
 export default async function IndentDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await getCurrentUser();
@@ -17,50 +20,28 @@ export default async function IndentDetailPage({ params }: { params: Promise<{ i
   const data = await getIndent(Number(id));
   if (!data) notFound();
 
-  // group by vendor for display
-  const byVendor = new Map<number, typeof data.lines>();
-  for (const l of data.lines) (byVendor.get(l.vendor_id) ?? byVendor.set(l.vendor_id, []).get(l.vendor_id)!).push(l);
-  const pending = data.lines.filter((l) => !l.po_id).length;
-  const canOrder = (canWrite(user, "purchase") || user.role === "admin");
+  const quotation = data.ind.quotation_id ? await getQuotation(data.ind.quotation_id) : null;
+  // vendors.credit_days/lead_days are added defensively by vendorCatalog.ts —
+  // ensure that's run before relying on them (a fresh DB may not have them yet).
+  await ensureVendorItems();
+  const vrows = (await getSql()`SELECT id, COALESCE(name, '#'||id) AS name, credit_days, lead_days FROM vendors ORDER BY name`) as unknown as { id: number; name: string; credit_days: number | null; lead_days: number | null }[];
+  const vendors = vrows.map((v) => ({ id: v.id, name: v.name, creditDays: v.credit_days ?? null, leadDays: v.lead_days ?? null }));
 
   return (
     <>
       <PageHeader
         title={`Indent ${data.ind.indent_no}`}
-        subtitle={`from ${data.ind.quo_no || "—"} · status: ${data.ind.status}`}
+        subtitle={`${quotation ? `${quotation.quo.quo_no} · ` : ""}status: ${data.ind.status}`}
         right={<Link href="/erp/purchase/indents" className="text-sm font-semibold text-[var(--accent)]">← All indents</Link>}
       />
-
-      {canOrder && pending > 0 && <IndentActions indentId={data.ind.id} pending={pending} vendors={byVendor.size} />}
-
-      {[...byVendor.entries()].map(([vid, ls]) => {
-        const total = ls.reduce((s, l) => s + l.qty * l.unit_price, 0);
-        return (
-          <section key={vid} className="panel mb-4 !p-0 overflow-hidden">
-            <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--surface-2)] px-4 py-2">
-              <h3 className="text-sm font-extrabold">{ls[0].vendor_name}</h3>
-              <span className="text-xs text-[var(--muted)]">{ls.length} line(s) · {inr(total)} · credit {ls[0].credit_days}d · lead {ls[0].lead_days}d</span>
-            </div>
-            <div className="overflow-x-auto">
-              <table className="rtable">
-                <thead><tr><th>SKU</th><th>Item</th><th className="!text-right">Qty</th><th className="!text-right">Rate</th><th className="!text-right">Amount</th><th>PO</th></tr></thead>
-                <tbody>
-                  {ls.map((l) => (
-                    <tr key={l.id}>
-                      <td className="font-mono text-xs font-bold text-[var(--muted)]">{l.sku_code || "—"}</td>
-                      <td>{l.item_name}</td>
-                      <td className="num-cell">{l.qty}</td>
-                      <td className="num-cell">{inr(l.unit_price)}</td>
-                      <td className="num-cell font-semibold">{inr(l.qty * l.unit_price)}</td>
-                      <td>{l.po_no ? <span className="rounded bg-teal-100 px-2 py-0.5 text-[11px] font-bold text-teal-800">{l.po_no}</span> : <span className="text-xs text-[var(--muted-2)]">—</span>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        );
-      })}
+      <PurchaseCycle
+        indent={data.ind}
+        indentLines={data.lines}
+        quotation={quotation}
+        vendors={vendors}
+        canEdit={canWrite(user, "purchase")}
+        isAdmin={user.role === "admin"}
+      />
     </>
   );
 }

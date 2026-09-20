@@ -6,6 +6,7 @@ import {
   createQuotation, addLine, deleteLine, addQuote, deleteQuote, selectQuote,
   submitForApproval, decideQuotation, generatePOsFromIndent,
 } from "@/lib/erp/purchaseQuotations";
+import { createIndentFromAnalysis } from "@/lib/erp/purchaseIndent";
 
 export const dynamic = "force-dynamic";
 const num = (v: unknown) => Number(v) || 0;
@@ -20,10 +21,17 @@ export async function POST(req: Request) {
 
   try {
     switch (action) {
+      case "generateIndent": {
+        if (!canPurchase) return NextResponse.json({ ok: false, error: "Not allowed." }, { status: 403 });
+        const r = await createIndentFromAnalysis(user.name, b.windowDays ? num(b.windowDays) : 90);
+        await logActivity({ actor: user.name, actorRole: user.role, action: "indent.generate", entity: "indent", entityId: r.id, summary: `Generated indent ${r.indentNo} from sales/stock analysis — ${r.lines} line(s)` });
+        return NextResponse.json({ ok: true, ...r });
+      }
       case "create": {
         if (!canPurchase) return NextResponse.json({ ok: false, error: "Not allowed." }, { status: 403 });
-        const r = await createQuotation({ department: String(b.department || ""), title: String(b.title || ""), createdBy: user.name });
-        await logActivity({ actor: user.name, actorRole: user.role, action: "quotation.create", entity: "quotation", entityId: r.id, summary: `Raised quotation ${r.quoNo}${b.department ? ` for ${b.department}` : ""}` });
+        if (!num(b.indentId)) return NextResponse.json({ ok: false, error: "indentId required." }, { status: 400 });
+        const r = await createQuotation({ indentId: num(b.indentId), title: String(b.title || ""), createdBy: user.name });
+        await logActivity({ actor: user.name, actorRole: user.role, action: "quotation.create", entity: "quotation", entityId: r.id, summary: `Raised quotation ${r.quoNo} from indent #${num(b.indentId)}` });
         return NextResponse.json({ ok: true, ...r });
       }
       case "addLine":
@@ -37,7 +45,7 @@ export async function POST(req: Request) {
       case "addQuote":
         if (!canPurchase) return NextResponse.json({ ok: false, error: "Not allowed." }, { status: 403 });
         if (!num(b.vendorId)) return NextResponse.json({ ok: false, error: "Pick a vendor." }, { status: 400 });
-        await addQuote(num(b.lineId), { vendorId: num(b.vendorId), unitPrice: num(b.unitPrice), creditDays: num(b.creditDays), leadDays: num(b.leadDays), moq: num(b.moq), note: String(b.note || "") });
+        await addQuote(num(b.lineId), { vendorId: num(b.vendorId), unitPrice: num(b.unitPrice), creditDays: num(b.creditDays), leadDays: num(b.leadDays), moq: num(b.moq), note: String(b.note || ""), skuId: b.skuId ? num(b.skuId) : null });
         return NextResponse.json({ ok: true });
       case "deleteQuote":
         if (!canPurchase) return NextResponse.json({ ok: false, error: "Not allowed." }, { status: 403 });
