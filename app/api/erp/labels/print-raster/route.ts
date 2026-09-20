@@ -49,10 +49,23 @@ export async function POST(req: Request) {
   if (Math.abs(heightDots - expectH) > Math.max(8, expectH * 0.08))
     return NextResponse.json({ ok: false, error: `Bitmap was rendered for a different resolution — reopen the designer and reprint.` }, { status: 400 });
 
+  // The 50×30 stock is physically a 2-UP roll (two die-cuts side by side per
+  // pitch) — see lib/erp/printnode.ts's `twoUp` logic, which this mirrors so
+  // labels/stickers at this size print the SAME content on both die-cuts in
+  // one job (declared SIZE = double width) instead of leaving the second one
+  // blank or drifting out of alignment with the roll's real pitch.
+  const twoUp = w === 50 && h === 30;
+  const sizeW = twoUp ? w * 2 : w;
+  const pitchDots = Math.round(w * dp);
+
   const header = Buffer.from(
-    [`SIZE ${w} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`,
-     `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, `BITMAP 0,0,${widthBytes},${heightDots},0,`].join("\r\n"),
+    [`SIZE ${sizeW} mm, ${h} mm`, `GAP 3 mm, 0 mm`, `DENSITY ${density}`, `SPEED ${speed}`,
+     `DIRECTION 0`, `REFERENCE 0,0`, `CLS`, ``].join("\r\n"),
     "ascii");
+  const bitmapCmd = (xOffDots: number) => Buffer.from(`BITMAP ${xOffDots},0,${widthBytes},${heightDots},0,`, "ascii");
+  const body = twoUp
+    ? Buffer.concat([bitmapCmd(0), raw, Buffer.from("\r\n"), bitmapCmd(pitchDots), raw])
+    : Buffer.concat([bitmapCmd(0), raw]);
 
   // SPEED: send the bitmap ONCE per job and let the printer stamp out up to CHUNK
   // copies from it (PRINT 1,n). A larger chunk = fewer jobs = fewer agent hand-offs,
@@ -64,7 +77,7 @@ export async function POST(req: Request) {
   while (remaining > 0) {
     const n = Math.min(CHUNK, remaining);
     const trailer = Buffer.from(`\r\nPRINT 1,${n}\r\n`, "ascii");
-    jobs.push({ title: `Design label ${skuCode || ""}`.trim(), tspl_b64: Buffer.concat([header, raw, trailer]).toString("base64") });
+    jobs.push({ title: `Design label ${skuCode || ""}`.trim(), tspl_b64: Buffer.concat([header, body, trailer]).toString("base64") });
     remaining -= n;
   }
   const ids = await enqueueJobs(printerId, jobs, user.name);
