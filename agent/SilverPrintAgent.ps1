@@ -3,11 +3,14 @@
 # pull label jobs, print them raw. Self-heals (never exits) and logs to agent.log.
 
 $ErrorActionPreference = "Continue"
+# Default home. Overridable per-PC via "baseUrl" in config.json — set that instead
+# of editing this file when the app moves host (e.g. a Vercel outage stopgap), so
+# self-update (below) doesn't have to fight a server it can no longer reach.
 $BaseUrl = "https://silver-dashboard-eight.vercel.app"
 # Bump this on every agent change. The running agent compares it against the
 # version in the served copy and self-updates when they differ (see TrySelfUpdate),
 # so PCs pick up new agent code automatically — no manual re-install after this one.
-$AgentVersion = "2026.09.10-1"
+$AgentVersion = "2026.09.24-1"
 # Printer name filter. Default "TSC" (matches the TSC TTP-244 fleet). Set
 # "printerFilter" in config.json to override — use "" to register EVERY printer on
 # this PC (useful when the label printer isn't named "TSC"). Read below once cfg loads.
@@ -30,6 +33,9 @@ $Token = ("" + $cfg.token).Trim()
 $Pc    = $env:COMPUTERNAME
 # Honour an explicit printerFilter from config.json (including "" = all printers).
 if ($cfg.PSObject.Properties['printerFilter']) { $Filter = "" + $cfg.printerFilter }
+# Honour an explicit baseUrl from config.json (e.g. pointed at a stopgap host while
+# the usual one is down) — falls back to the compiled-in default above.
+if ($cfg.PSObject.Properties['baseUrl'] -and -not [string]::IsNullOrWhiteSpace("" + $cfg.baseUrl)) { $BaseUrl = ("" + $cfg.baseUrl).TrimEnd("/") }
 Log "=== agent starting on $Pc (base $BaseUrl) ==="
 if ([string]::IsNullOrWhiteSpace($Token)) { Log "NO TOKEN in config.json - stopping"; exit 1 }
 

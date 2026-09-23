@@ -52,3 +52,6 @@ next-env.d.ts
 * copy [0-9].*
 .icloud
 *.icloud
+
+# Local Netlify folder
+.netlify
