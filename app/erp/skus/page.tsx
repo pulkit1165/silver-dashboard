@@ -10,7 +10,9 @@ import { getCurrentUser } from "@/lib/erp/session";
 import { canWrite } from "@/lib/erp/rbac";
 
 export const dynamic = "force-dynamic";
-const PAGE_CAP = 1000;
+// Comfortably above the current catalogue size so "no search" shows everything,
+// not just a truncated head of it (was 1000 — silently hid real items).
+const PAGE_CAP = 8000;
 
 // Item Master — the single item file. Combines the SKU list with MRP editing +
 // history (from the old MRP Master), plus per-item category change and an

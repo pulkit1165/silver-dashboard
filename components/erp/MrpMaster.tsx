@@ -35,6 +35,10 @@ function todayStr(): string {
 export default function MrpMaster({ rows: initialRows, editable, basePath = "/erp/masters/mrp" }: { rows: MrpRow[]; editable: boolean; basePath?: string }) {
   const router = useRouter();
   const [rows, setRows] = useState<MrpRow[]>(initialRows);
+  // The server re-runs the search/filter on navigation (e.g. typing in the Search
+  // box above), but this component stays mounted across that soft navigation —
+  // without this, `rows` would freeze at whatever was on the page on first load.
+  useEffect(() => { setRows(initialRows); }, [initialRows]);
   const [edit, setEdit] = useState<Record<number, { value: string; busy: boolean; err: string | null }>>({});
   const [openId, setOpenId] = useState<number | null>(null);
   const [history, setHistory] = useState<Record<number, MrpHistoryRow[]>>({});
@@ -50,7 +54,9 @@ export default function MrpMaster({ rows: initialRows, editable, basePath = "/er
   const [cat, setCat] = useState("all");
   const [sort, setSort] = useState<"code" | "mrp_desc" | "mrp_asc" | "recent">("code");
   const [quick, setQuick] = useState("");
-  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("all");
+  // Default to active-only — archived/inactive items are real data (kept for
+  // history/reactivation) but shouldn't clutter the default view.
+  const [activeFilter, setActiveFilter] = useState<"all" | "active" | "inactive">("active");
   // Inline category editing: id → the value being typed (null = not editing).
   const [catEdit, setCatEdit] = useState<Record<number, string>>({});
 

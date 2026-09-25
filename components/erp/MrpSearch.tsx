@@ -17,7 +17,7 @@ export default function MrpSearch({ initial = "", basePath = "/erp/masters/mrp" 
   const [hi, setHi] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
 
-  // Debounced fetch.
+  // Debounced fetch for the autocomplete dropdown.
   useEffect(() => {
     const term = q.trim();
     if (term.length < 1) { setResults([]); setOpen(false); return; }
@@ -30,6 +30,18 @@ export default function MrpSearch({ initial = "", basePath = "/erp/masters/mrp" 
       } catch { /* ignore */ } finally { setBusy(false); }
     }, 200);
     return () => clearTimeout(id);
+  }, [q]);
+
+  // Debounced: also filter the list below as you type (previously this only
+  // happened on Enter/picking a suggestion, so typing looked like it did nothing).
+  useEffect(() => {
+    const term = q.trim();
+    if (term === (initial ?? "").trim()) return;
+    const id = setTimeout(() => {
+      router.replace(term ? `${basePath}?q=${encodeURIComponent(term)}` : basePath, { scroll: false });
+    }, 300);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q]);
 
   // Close on outside click.
